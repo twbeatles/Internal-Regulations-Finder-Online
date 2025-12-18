@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="사내 규정 검색기 - AI 기반 하이브리드 검색 시스템">
+    <meta name="robots" content="noindex, nofollow">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline';">
+    <title>사내 규정 검색기</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap"
+        rel="stylesheet">
+</head>
+
+<body>
+    <!-- 스킵 네비게이션 (접근성) -->
+    <a href="#search-input" class="skip-link">검색으로 건너뛰기</a>
+
+    <div class="app-container">
+        <!-- 헤더 -->
+        <header class="header" role="banner">
+            <div class="header-content">
+                <div class="logo">
+                    <span class="logo-icon" aria-hidden="true">📚</span>
+                    <h1>사내 규정 검색기</h1>
+                </div>
+                <div class="header-info">
+                    <button id="theme-toggle" class="theme-toggle" title="테마 변경" aria-label="다크/라이트 테마 전환">🌙</button>
+                    <span id="status-badge" class="status-badge loading" role="status" aria-live="polite">
+                        <span class="status-dot" aria-hidden="true"></span>
+                        <span id="status-text">연결 중...</span>
+                    </span>
+                    <a href="/admin" class="admin-link" aria-label="관리자 페이지로 이동">⚙️ 관리</a>
+                </div>
+            </div>
+        </header>
+
+        <!-- 메인 컨텐츠 -->
+        <main class="main-content" role="main" id="main-content">
+            <!-- 검색 섹션 -->
+            <section class="search-section" aria-labelledby="search-title">
+                <h2 id="search-title" class="sr-only">규정 검색</h2>
+                <div class="search-container">
+                    <div class="search-box" role="search">
+                        <input type="search" id="search-input" placeholder="검색어를 입력하세요... (예: 휴가 규정, 복리후생)"
+                            autocomplete="off" minlength="2" maxlength="200" aria-label="규정 검색어 입력"
+                            aria-describedby="search-hint" spellcheck="false">
+                        <span id="search-hint" class="sr-only">최소 2자 이상 입력하세요. Ctrl+K로 언제든 검색창에 포커스할 수 있습니다.</span>
+                        <button id="search-btn" class="search-btn" disabled aria-label="검색 실행">
+                            <span class="btn-icon" aria-hidden="true">🔍</span>
+                            <span class="btn-text">검색</span>
+                        </button>
+                    </div>
+                    <div class="search-options">
+                        <label class="option-item">
+                            <span>결과 개수:</span>
+                            <select id="result-count">
+                                <option value="5" selected>5개</option>
+                                <option value="10">10개</option>
+                                <option value="20">20개</option>
+                            </select>
+                        </label>
+                        <label class="option-item">
+                            <span>파일 필터:</span>
+                            <select id="filter-file">
+                                <option value="">전체 파일</option>
+                            </select>
+                        </label>
+                        <label class="option-item">
+                            <span>정렬:</span>
+                            <select id="sort-by">
+                                <option value="relevance">관련도순</option>
+                                <option value="filename">파일명순</option>
+                                <option value="length">길이순</option>
+                            </select>
+                        </label>
+                        <label class="option-item checkbox">
+                            <input type="checkbox" id="hybrid-search" checked>
+                            <span>하이브리드 검색</span>
+                        </label>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 결과 섹션 -->
+            <section class="results-section" aria-labelledby="results-title">
+                <h2 id="results-title" class="sr-only">검색 결과</h2>
+                <div id="results-container" class="results-container" role="region" aria-live="polite"
+                    aria-atomic="false">
+                    <div class="welcome-message">
+                        <div class="welcome-icon" aria-hidden="true">👋</div>
+                        <h2>사내 규정을 검색해보세요</h2>
+                        <p>휴가, 복리후생, 근무 규정 등 다양한 사내 규정을 빠르게 찾아볼 수 있습니다.</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- 푸터 -->
+        <footer class="footer">
+            <p>© 2024 사내 규정 검색기 - AI 기반 규정 검색 시스템</p>
+        </footer>
+    </div>
+
+    <!-- 토스트 알림 -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+
+</html>

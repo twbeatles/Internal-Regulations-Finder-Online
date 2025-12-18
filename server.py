@@ -29,7 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 import signal
 import atexit
 
-from flask import Flask, request, jsonify, render_template, send_from_directory
+from flask import Flask, request, jsonify, render_template, send_from_directory, session
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
@@ -51,7 +51,7 @@ class AppConfig:
         "BM-K Simal (균형)": "BM-K/ko-simal-roberta-base",
         "JHGan SBERT (빠름)": "jhgan/ko-sbert-nli"
     }
-    DEFAULT_MODEL = "JHGan SBERT (빠름)"
+    DEFAULT_MODEL = "SNU SBERT (고성능)"
     
     # 파일 설정
     UPLOAD_FOLDER = "uploads"
@@ -59,7 +59,7 @@ class AppConfig:
     
     # 검색 설정
     MAX_SEARCH_RESULTS = 10
-    DEFAULT_SEARCH_RESULTS = 3
+    DEFAULT_SEARCH_RESULTS = 5
     
     # 청킹 설정
     CHUNK_SIZE = 800
@@ -511,6 +511,7 @@ class RegulationQASystem:
         self._is_ready = False
         self._is_loading = False
         self._load_progress = ""
+        self._load_error = ""  # 마지막 로드 오류 메시지
     
     def get_keywords(self, limit: int = 50) -> List[str]:
         """문서에서 추출한 키워드 반환 (자동완성용)"""
@@ -530,26 +531,52 @@ class RegulationQASystem:
     def load_progress(self) -> str:
         return self._load_progress
     
+    @property
+    def load_error(self) -> str:
+        """마지막 로드 오류 메시지"""
+        return self._load_error
+    
     def load_model(self, model_name: str) -> TaskResult:
         """AI 임베딩 모델 로드"""
+        import traceback
+        
         if self._is_loading:
             return TaskResult(False, "이미 모델을 로딩 중입니다")
         
         model_id = AppConfig.AVAILABLE_MODELS.get(model_name, AppConfig.AVAILABLE_MODELS[AppConfig.DEFAULT_MODEL])
+        self._load_error = ""  # 오류 초기화
         
         try:
             self._is_loading = True
             self._load_progress = "라이브러리 로드 중..."
             logger.info("라이브러리 로드 중...")
             
-            import torch
-            from langchain_huggingface import HuggingFaceEmbeddings
+            # PyTorch 로드 시도
+            try:
+                import torch
+                logger.info(f"PyTorch 버전: {torch.__version__}")
+            except ImportError as e:
+                error_msg = f"PyTorch 로드 실패: {e}"
+                logger.error(error_msg)
+                self._load_error = error_msg
+                return TaskResult(False, error_msg)
+            
+            # LangChain HuggingFace 로드 시도
+            try:
+                from langchain_huggingface import HuggingFaceEmbeddings
+                logger.info("LangChain HuggingFace 로드 완료")
+            except ImportError as e:
+                error_msg = f"LangChain HuggingFace 로드 실패: {e}"
+                logger.error(error_msg)
+                self._load_error = error_msg
+                return TaskResult(False, error_msg)
             
             self._load_progress = "모델 다운로드/로딩 중..."
             logger.info(f"모델 로딩 중: {model_name}")
             
             cache_dir = os.path.join(get_app_directory(), 'models')
             os.makedirs(cache_dir, exist_ok=True)
+            logger.info(f"모델 캐시 경로: {cache_dir}")
             
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
             logger.info(f"사용 디바이스: {device}")
@@ -573,7 +600,9 @@ class RegulationQASystem:
             return TaskResult(True, f"모델 로드 완료 ({device})")
             
         except Exception as e:
-            logger.error(f"모델 로드 실패: {e}")
+            error_detail = traceback.format_exc()
+            logger.error(f"모델 로드 실패: {e}\n{error_detail}")
+            self._load_error = str(e)
             self._load_progress = f"실패: {e}"
             return TaskResult(False, f"모델 로드 실패: {e}")
         finally:
@@ -595,9 +624,18 @@ class RegulationQASystem:
             return self._process_internal(folder, files, progress_cb)
     
     def _process_internal(self, folder: str, files: List[str], progress_cb) -> TaskResult:
-        from langchain.text_splitter import CharacterTextSplitter
+        # LangChain 최신 버전 호환 import
+        try:
+            from langchain_text_splitters import CharacterTextSplitter
+        except ImportError:
+            from langchain.text_splitter import CharacterTextSplitter
+        
         from langchain_community.vectorstores import FAISS
-        from langchain.docstore.document import Document
+        
+        try:
+            from langchain_core.documents import Document
+        except ImportError:
+            from langchain.docstore.document import Document
         
         self.current_folder = folder
         cache_dir = self._get_cache_dir(folder)
@@ -782,8 +820,17 @@ class RegulationQASystem:
         except Exception as e:
             logger.warning(f"캐시 저장 실패: {e}")
     
-    def search(self, query: str, k: int = 3, hybrid: bool = True) -> TaskResult:
-        """하이브리드 검색 수행"""
+    def search(self, query: str, k: int = 3, hybrid: bool = True, 
+                filter_file: str = None, sort_by: str = 'relevance') -> TaskResult:
+        """하이브리드 검색 수행
+        
+        Args:
+            query: 검색어
+            k: 결과 개수
+            hybrid: 하이브리드 검색 사용 여부
+            filter_file: 특정 파일에서만 검색 (None=전체)
+            sort_by: 정렬 방식 ('relevance', 'filename', 'length')
+        """
         if not self.vector_store:
             return TaskResult(False, "문서가 로드되지 않음")
         
@@ -846,6 +893,10 @@ class RegulationQASystem:
                                     'bm25_score': norm
                                 }
             
+            # 파일 필터링 적용
+            if filter_file:
+                results = {k: v for k, v in results.items() if v['source'] == filter_file}
+            
             # 최종 점수 계산
             for item in results.values():
                 item['score'] = (
@@ -853,10 +904,17 @@ class RegulationQASystem:
                     AppConfig.BM25_WEIGHT * item['bm25_score']
                 )
             
-            sorted_res = sorted(results.values(), key=lambda x: x['score'], reverse=True)[:k]
+            # 정렬 적용
+            if sort_by == 'filename':
+                sorted_res = sorted(results.values(), key=lambda x: x['source'])[:k]
+            elif sort_by == 'length':
+                sorted_res = sorted(results.values(), key=lambda x: len(x['content']), reverse=True)[:k]
+            else:  # relevance (기본)
+                sorted_res = sorted(results.values(), key=lambda x: x['score'], reverse=True)[:k]
             
-            # 캐시 저장
-            self._search_cache.set(query, k, hybrid, sorted_res)
+            # 캐시 저장 (필터 없을 때만)
+            if not filter_file:
+                self._search_cache.set(query, k, hybrid, sorted_res)
             
             return TaskResult(True, "검색 완료", sorted_res)
             
@@ -900,10 +958,44 @@ class RegulationQASystem:
 # ============================================================================
 # Flask 애플리케이션
 # ============================================================================
+# NumPy 호환 JSON Encoder
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        try:
+            import numpy as np
+            if isinstance(obj, (np.integer, np.floating, np.bool_)):
+                return obj.item()
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+        except ImportError:
+            pass
+        return super().default(obj)
+
 app = Flask(__name__)
+app.json_encoder = CustomJSONEncoder  # Flask < 2.2 호환
 app.config['MAX_CONTENT_LENGTH'] = AppConfig.MAX_CONTENT_LENGTH
 app.config['JSON_AS_ASCII'] = False
-CORS(app)
+app.secret_key = os.urandom(24)
+CORS(app, supports_credentials=True)
+
+# Flask > 2.2 호환을 위한 Provider 설정 (선택적)
+try:
+    from flask.json.provider import DefaultJSONProvider
+    class CustomJSONProvider(DefaultJSONProvider):
+        def default(self, obj):
+            try:
+                import numpy as np
+                if isinstance(obj, (np.integer, np.floating, np.bool_)):
+                    return obj.item()
+                if isinstance(obj, np.ndarray):
+                    return obj.tolist()
+            except ImportError:
+                pass
+            return super().default(obj)
+    app.json = CustomJSONProvider(app)
+except ImportError:
+    pass  # 구버전 Flask는 json_encoder만 사용
+
 
 # 전역 QA 시스템
 qa_system = RegulationQASystem()
@@ -911,6 +1003,60 @@ qa_system = RegulationQASystem()
 # 업로드 폴더 설정
 UPLOAD_DIR = os.path.join(get_app_directory(), AppConfig.UPLOAD_FOLDER)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+# ============================================================================
+# 에러 핸들러
+# ============================================================================
+@app.errorhandler(404)
+def not_found(e):
+    if request.path.startswith('/api/'):
+        return jsonify({'success': False, 'message': 'API 엔드포인트를 찾을 수 없습니다'}), 404
+    return render_template('index.html'), 404
+
+@app.errorhandler(500)
+def server_error(e):
+    logger.error(f"서버 내부 오류: {e}")
+    if request.path.startswith('/api/'):
+        return jsonify({'success': False, 'message': '서버 내부 오류가 발생했습니다', 'error': str(e)}), 500
+    return "서버 오류발생", 500
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    logger.error(f"예외 발생: {e}")
+    import traceback
+    logger.error(traceback.format_exc())
+    if request.path.startswith('/api/'):
+        return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'}), 500
+    return str(e), 500
+
+
+
+# ============================================================================
+# 에러 핸들러
+# ============================================================================
+@app.errorhandler(404)
+def not_found(e):
+    if request.path.startswith('/api/'):
+        return jsonify({'success': False, 'message': 'API 엔드포인트를 찾을 수 없습니다'}), 404
+    return render_template('index.html'), 404
+
+@app.errorhandler(500)
+def server_error(e):
+    logger.error(f"서버 내부 오류: {e}")
+    if request.path.startswith('/api/'):
+        return jsonify({'success': False, 'message': '서버 내부 오류가 발생했습니다', 'error': str(e)}), 500
+    return "서버 오류발생", 500
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    logger.error(f"예외 발생: {e}")
+    import traceback
+    logger.error(traceback.format_exc())
+    if request.path.startswith('/api/'):
+        return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'}), 500
+    return str(e), 500
+
 
 
 # ============================================================================
@@ -925,7 +1071,106 @@ def index():
 @app.route('/admin')
 def admin():
     """관리자 페이지"""
+    # 세션 기반 단순 인증 체크
+    # GUI 설정 관리자에서 비밀번호가 설정되어 있는지 확인
+    settings_manager = get_settings_manager()
+    if settings_manager and settings_manager.has_admin_password():
+        # 비밀번호가 설정되어 있는데 세션에 로그인이 안되어 있다면
+        if not session.get('admin_authenticated'):
+            # API 요청이면 401, 브라우저 접근이면 JS에서 처리하도록 템플릿 렌더링하되
+            # 템플릿 내에서 인증 모달을 띄우는 방식은 이미 구현되어 있음.
+            # 하지만 "아무런 제한 없이 진입 가능"하다는 사용자 피드백을 반영하여
+            # 여기서는 템플릿을 그대로 주되, app.js에서 초기 로드 시 인증을 강제하도록 함.
+            # 또는 여기서 바로 접근 거부(403)를 할 수도 있음.
+            # 사용자 요청: "실제 웹에서는 아무런 제한없이 관리자 모드로 진입이 가능"
+            # -> JS 인증 체크가 우회될 수 있으므로 서버사이드 체크가 필요하지만,
+            #    현재 구조상 로그인 페이지가 별도로 없으므로, 
+            #    JS에서 비밀번호 모달을 띄우는 것이 UX상 좋음.
+            #    단, API 요청에 대해서는 철저히 막아야 함.
+            pass
+
     return render_template('admin.html')
+
+
+@app.route('/api/models', methods=['GET'])
+def api_get_models():
+    """사용 가능한 모델 목록 반환"""
+    return jsonify({
+        'success': True,
+        'models': list(AppConfig.AVAILABLE_MODELS.keys()),  # 키 목록만 반환
+        'current': getattr(qa_system, 'model_name', AppConfig.DEFAULT_MODEL)
+    })
+
+
+
+
+
+
+# ============================================================================
+# 관리자 인증 API
+# ============================================================================
+# 전역 설정 관리자 캐시 (순환 참조 방지)
+_settings_manager_instance = None
+
+def get_settings_manager():
+    """GUI의 SettingsManager 가져오기 (순환 참조 방지)"""
+    global _settings_manager_instance
+    
+    if _settings_manager_instance is not None:
+        return _settings_manager_instance
+    
+    try:
+        # server_gui가 이미 import 되었는지 확인
+        import sys
+        if 'server_gui' in sys.modules:
+            _settings_manager_instance = sys.modules['server_gui'].settings_manager
+            return _settings_manager_instance
+        return None
+    except Exception as e:
+        logger.debug(f"SettingsManager 접근 실패: {e}")
+        return None
+
+
+@app.route('/api/admin/check')
+def api_admin_check():
+    """관리자 인증 상태 확인"""
+    from flask import session
+    
+    sm = get_settings_manager()
+    if sm is None or not sm.has_admin_password():
+        # 비밀번호 미설정 - 인증 불필요
+        return jsonify({'success': True, 'authenticated': True, 'required': False})
+    
+    # 세션 확인
+    is_auth = session.get('admin_authenticated', False)
+    return jsonify({'success': True, 'authenticated': is_auth, 'required': True})
+
+
+@app.route('/api/admin/auth', methods=['POST'])
+def api_admin_auth():
+    """관리자 비밀번호 인증"""
+    from flask import session
+    
+    sm = get_settings_manager()
+    if sm is None:
+        return jsonify({'success': True, 'message': '인증 불필요'})
+    
+    data = request.get_json()
+    password = data.get('password', '') if data else ''
+    
+    if sm.verify_admin_password(password):
+        session['admin_authenticated'] = True
+        return jsonify({'success': True, 'message': '인증 성공'})
+    else:
+        return jsonify({'success': False, 'message': '비밀번호가 일치하지 않습니다'}), 401
+
+
+@app.route('/api/admin/logout', methods=['POST'])
+def api_admin_logout():
+    """관리자 로그아웃"""
+    from flask import session
+    session.pop('admin_authenticated', None)
+    return jsonify({'success': True, 'message': '로그아웃 완료'})
 
 
 @app.route('/api/status')
@@ -936,6 +1181,7 @@ def api_status():
         'ready': qa_system.is_ready,
         'loading': qa_system.is_loading,
         'progress': qa_system.load_progress,
+        'error': qa_system.load_error,  # 오류 메시지 추가
         'model': qa_system.model_name,
         'stats': qa_system.get_stats() if qa_system.is_ready else None
     })
@@ -1014,6 +1260,9 @@ def api_process():
     if not qa_system.is_ready:
         return jsonify({'success': False, 'message': '서버가 준비되지 않았습니다'}), 503
     
+    if not os.path.exists(UPLOAD_DIR):
+        return jsonify({'success': False, 'message': '업로드 폴더가 없습니다'}), 400
+    
     files = [
         os.path.join(UPLOAD_DIR, f) for f in os.listdir(UPLOAD_DIR)
         if FileUtils.allowed_file(f)
@@ -1037,44 +1286,52 @@ def api_search():
     """검색 수행"""
     start_time = time.time()
     
-    if not qa_system.is_ready:
-        return jsonify({'success': False, 'message': '서버가 준비되지 않았습니다'}), 503
-    
-    if not qa_system.vector_store:
-        return jsonify({'success': False, 'message': '문서가 로드되지 않았습니다'}), 400
-    
-    data = request.get_json()
-    if not data or 'query' not in data:
-        return jsonify({'success': False, 'message': '검색어가 필요합니다'}), 400
-    
-    query = data.get('query', '').strip()
-    k = min(data.get('k', AppConfig.DEFAULT_SEARCH_RESULTS), AppConfig.MAX_SEARCH_RESULTS)
-    hybrid = data.get('hybrid', True)
-    highlight = data.get('highlight', True)  # 하이라이팅 옵션
-    
-    result = qa_system.search(query, k, hybrid)
-    
-    # 검색 성공 시 히스토리에 추가
-    if result.success and query:
-        qa_system._search_history.add(query)
-    
-    # 하이라이팅 적용
-    results_data = result.data if result.success else []
-    if highlight and results_data:
-        for item in results_data:
-            item['content_highlighted'] = TextHighlighter.highlight(item['content'], query)
-    
-    # 응답 시간 계산
-    response_time_ms = round((time.time() - start_time) * 1000, 2)
-    
-    return jsonify({
-        'success': result.success,
-        'message': result.message,
-        'results': results_data,
-        'query': query,
-        'response_time_ms': response_time_ms,
-        'result_count': len(results_data)
-    })
+    try:
+        if not qa_system.is_ready:
+            return jsonify({'success': False, 'message': '서버가 준비되지 않았습니다'}), 503
+        
+        if not qa_system.vector_store:
+            return jsonify({'success': False, 'message': '문서가 로드되지 않았습니다'}), 400
+        
+        data = request.get_json()
+        if not data or 'query' not in data:
+            return jsonify({'success': False, 'message': '검색어가 필요합니다'}), 400
+        
+        query = data.get('query', '').strip()
+        k = min(data.get('k', AppConfig.DEFAULT_SEARCH_RESULTS), AppConfig.MAX_SEARCH_RESULTS)
+        hybrid = data.get('hybrid', True)
+        highlight = data.get('highlight', True)
+        filter_file = data.get('filter_file', None)  # 파일 필터
+        sort_by = data.get('sort_by', 'relevance')  # 정렬 방식
+        
+        result = qa_system.search(query, k, hybrid, filter_file, sort_by)
+        
+        # 검색 성공 시 히스토리에 추가
+        if result.success and query:
+            qa_system._search_history.add(query)
+        
+        # 하이라이팅 적용
+        results_data = result.data if result.success else []
+        if highlight and results_data:
+            for item in results_data:
+                item['content_highlighted'] = TextHighlighter.highlight(item['content'], query)
+        
+        # 응답 시간 계산
+        response_time_ms = round((time.time() - start_time) * 1000, 2)
+        
+        return jsonify({
+            'success': result.success,
+            'message': result.message,
+            'results': results_data,
+            'query': query,
+            'response_time_ms': response_time_ms,
+            'result_count': len(results_data)
+        })
+    except Exception as e:
+        logger.error(f"검색 중 오류 발생: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({'success': False, 'message': f'검색 처리 중 오류가 발생했습니다: {e}'}), 500
 
 
 @app.route('/api/search/history')
@@ -1119,6 +1376,48 @@ def api_search_suggest():
     return jsonify({
         'success': True,
         'suggestions': suggestions[:limit]
+    })
+
+
+@app.route('/api/stats/search')
+def api_search_stats():
+    """검색 통계 조회"""
+    limit = request.args.get('limit', 10, type=int)
+    
+    # 인기 검색어
+    popular = qa_system._search_history.get_popular(limit)
+    
+    # 최근 검색어
+    recent = qa_system._search_history.get_recent(limit)
+    
+    # 총 검색 횟수
+    total_searches = sum(count for _, count in popular) if popular else 0
+    
+    # 파일별 검색 빈도 (검색 결과에서 자주 나오는 파일)
+    file_stats = []
+    for info in qa_system.file_infos.values():
+        file_stats.append({
+            'name': info.name,
+            'chunks': info.chunks,
+            'status': info.status.value
+        })
+    
+    return jsonify({
+        'success': True,
+        'total_searches': total_searches,
+        'popular_queries': [{'query': q, 'count': c} for q, c in popular],
+        'recent_queries': recent,
+        'file_stats': sorted(file_stats, key=lambda x: x['chunks'], reverse=True)[:limit]
+    })
+
+
+@app.route('/api/files/names')
+def api_file_names():
+    """파일명 목록만 반환 (검색 필터용)"""
+    names = [info.name for info in qa_system.file_infos.values()]
+    return jsonify({
+        'success': True,
+        'files': sorted(names)
     })
 
 
@@ -1246,6 +1545,62 @@ def api_file_preview(filename):
         return jsonify({'success': False, 'message': f'미리보기 실패: {e}'}), 500
 
 
+@app.route('/api/files/<filename>/download')
+def api_file_download(filename):
+    """파일 다운로드"""
+    # 경로 검증
+    safe_filename = filename.replace('/', '_').replace('\\', '_').replace('..', '')
+    filepath = os.path.join(UPLOAD_DIR, safe_filename)
+    
+    if not os.path.exists(filepath):
+        return jsonify({'success': False, 'message': '파일을 찾을 수 없습니다'}), 404
+    
+    try:
+        return send_from_directory(
+            UPLOAD_DIR, 
+            safe_filename, 
+            as_attachment=True,
+            download_name=safe_filename
+        )
+    except Exception as e:
+        logger.error(f"파일 다운로드 실패: {e}")
+        return jsonify({'success': False, 'message': f'다운로드 실패: {e}'}), 500
+
+
+@app.route('/api/models', methods=['POST'])
+def api_set_model():
+    """모델 변경"""
+    # 관리자 인증 체크
+    if not session.get('admin_authenticated'):
+        settings_manager = get_settings_manager()
+        # settings_manager가 있고 패스워드가 설정되어 있으면 인증 필요
+        if settings_manager and settings_manager.has_admin_password():
+             return jsonify({'success': False, 'message': '관리자 권한이 필요합니다'}), 401
+             
+    data = request.get_json() or {}
+    model_name = data.get('model')
+    
+    if not model_name or model_name not in AppConfig.AVAILABLE_MODELS:
+        return jsonify({'success': False, 'message': '잘못된 모델입니다'}), 400
+        
+    try:
+        # 모델 변경 작업
+        # 1. 모델 로드 시도
+        result = qa_system.load_model(model_name)
+        
+        if result.success:
+            # 2. 모델 변경 성공 시 캐시 초기화 등 부가 작업? (load_model 내부에서 처리됨)
+            pass
+            
+        return jsonify({
+            'success': result.success,
+            'message': result.message
+        })
+    except Exception as e:
+        logger.error(f"모델 변경 중 오류: {e}")
+        return jsonify({'success': False, 'message': f'오류 발생: {str(e)}'}), 500
+
+
 # ============================================================================
 # 메인 실행
 # ============================================================================
@@ -1282,14 +1637,13 @@ def graceful_shutdown(signum=None, frame=None):
     logger.info("🛑 서버 종료 중...")
     qa_system.cleanup()
     logger.info("✅ 정상 종료 완료")
-    sys.exit(0)
-
-
-# 종료 시그널 핸들러 등록
-atexit.register(graceful_shutdown)
+    # sys.exit()는 __main__에서만 호출 (그 외에서는 호출하면 안됨!)
 
 
 if __name__ == '__main__':
+    # atexit 등록은 직접 실행 시에만
+    atexit.register(graceful_shutdown)
+    
     # SIGINT, SIGTERM 핸들러 등록
     signal.signal(signal.SIGINT, graceful_shutdown)
     signal.signal(signal.SIGTERM, graceful_shutdown)

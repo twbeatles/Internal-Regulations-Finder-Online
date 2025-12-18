@@ -2,6 +2,7 @@
 """
 사내 규정 검색기 - 서버 GUI (PyQt6)
 시스템 트레이 + Windows 시작 프로그램 등록 지원
+로그 기능 강화 + 관리자 비밀번호 설정
 """
 
 import sys
@@ -10,15 +11,20 @@ import threading
 import webbrowser
 import winreg
 import ctypes
+import json
+import hashlib
+import logging
 from typing import Optional
+from datetime import datetime
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QSystemTrayIcon, QMenu, QMessageBox,
-    QCheckBox, QGroupBox, QTextEdit, QFrame
+    QCheckBox, QGroupBox, QTextEdit, QFrame, QLineEdit, QDialog,
+    QDialogButtonBox, QFormLayout, QFileDialog
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
-from PyQt6.QtGui import QIcon, QAction, QFont, QColor, QPalette, QCloseEvent
+from PyQt6.QtGui import QIcon, QAction, QFont, QColor, QPalette, QCloseEvent, QTextCharFormat
 
 # 서버 모듈 import
 from server import (
@@ -30,29 +36,221 @@ from server import (
 # 상수
 # ============================================================================
 APP_NAME = "사내 규정 검색기 서버"
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 REGISTRY_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
 REGISTRY_VALUE_NAME = "RegulationSearchServer"
+
+
+# ============================================================================
+# 설정 관리자
+# ============================================================================
+class SettingsManager:
+    """설정 파일 관리 (비밀번호 등)"""
+    
+    def __init__(self):
+        self.settings_dir = os.path.join(
+            os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) 
+            else os.path.dirname(os.path.abspath(__file__)),
+            'config'
+        )
+        os.makedirs(self.settings_dir, exist_ok=True)
+        self.settings_file = os.path.join(self.settings_dir, 'settings.json')
+        self._settings = self._load()
+    
+    def _load(self) -> dict:
+        if os.path.exists(self.settings_file):
+            try:
+                with open(self.settings_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+        return {'admin_password_hash': '', 'server_port': 8080}
+    
+    def _save(self):
+        try:
+            with open(self.settings_file, 'w', encoding='utf-8') as f:
+                json.dump(self._settings, f, ensure_ascii=False, indent=2)
+        except IOError as e:
+            logger.error(f"설정 저장 실패: {e}")
+    
+    def get_server_port(self) -> int:
+        """서버 포트 반환 (기본값: 8080)"""
+        return self._settings.get('server_port', 8080)
+    
+    def set_server_port(self, port: int):
+        """서버 포트 설정"""
+        self._settings['server_port'] = port
+        self._save()
+    
+    def set_admin_password(self, password: str):
+        """관리자 비밀번호 설정 (해시로 저장)"""
+        if password:
+            pw_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
+            self._settings['admin_password_hash'] = pw_hash
+        else:
+            self._settings['admin_password_hash'] = ''
+        self._save()
+    
+    def verify_admin_password(self, password: str) -> bool:
+        """관리자 비밀번호 검증"""
+        stored_hash = self._settings.get('admin_password_hash', '')
+        if not stored_hash:
+            return True  # 비밀번호 미설정 시 통과
+        pw_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
+        return pw_hash == stored_hash
+    
+    def has_admin_password(self) -> bool:
+        """비밀번호 설정 여부"""
+        return bool(self._settings.get('admin_password_hash', ''))
+    
+    def get_password_hash(self) -> str:
+        """저장된 비밀번호 해시 반환"""
+        return self._settings.get('admin_password_hash', '')
+
+
+# 전역 설정 관리자
+settings_manager = SettingsManager()
+
+
+# ============================================================================
+# 비밀번호 설정 다이얼로그
+# ============================================================================
+class PasswordDialog(QDialog):
+    def __init__(self, parent=None, is_change: bool = False):
+        super().__init__(parent)
+        self.setWindowTitle("관리자 비밀번호 설정")
+        self.setMinimumWidth(350)
+        
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        
+        if is_change:
+            self.current_pw = QLineEdit()
+            self.current_pw.setEchoMode(QLineEdit.EchoMode.Password)
+            self.current_pw.setPlaceholderText("현재 비밀번호 입력")
+            form.addRow("현재 비밀번호:", self.current_pw)
+        else:
+            self.current_pw = None
+        
+        self.new_pw = QLineEdit()
+        self.new_pw.setEchoMode(QLineEdit.EchoMode.Password)
+        self.new_pw.setPlaceholderText("새 비밀번호 입력")
+        form.addRow("새 비밀번호:", self.new_pw)
+        
+        self.confirm_pw = QLineEdit()
+        self.confirm_pw.setEchoMode(QLineEdit.EchoMode.Password)
+        self.confirm_pw.setPlaceholderText("비밀번호 확인")
+        form.addRow("비밀번호 확인:", self.confirm_pw)
+        
+        layout.addLayout(form)
+        
+        # 안내
+        hint = QLabel("비밀번호를 비워두면 보호가 해제됩니다.")
+        hint.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(hint)
+        
+        # 버튼
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.validate_and_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+    
+    def validate_and_accept(self):
+        # 현재 비밀번호 확인 (변경 시)
+        if self.current_pw and settings_manager.has_admin_password():
+            if not settings_manager.verify_admin_password(self.current_pw.text()):
+                QMessageBox.warning(self, "오류", "현재 비밀번호가 일치하지 않습니다.")
+                return
+        
+        # 새 비밀번호 확인
+        if self.new_pw.text() != self.confirm_pw.text():
+            QMessageBox.warning(self, "오류", "새 비밀번호가 일치하지 않습니다.")
+            return
+        
+        self.accept()
+    
+    def get_password(self) -> str:
+        return self.new_pw.text()
+
+
+# ============================================================================
+# 포트 설정 다이얼로그
+# ============================================================================
+class PortDialog(QDialog):
+    def __init__(self, parent=None, current_port: int = 8080):
+        super().__init__(parent)
+        self.setWindowTitle("서버 포트 설정")
+        self.setMinimumWidth(300)
+        
+        layout = QVBoxLayout(self)
+        
+        form = QFormLayout()
+        self.port_edit = QLineEdit(str(current_port))
+        self.port_edit.setPlaceholderText("예: 8080")
+        form.addRow("서버 포트:", self.port_edit)
+        layout.addLayout(form)
+        
+        # 안내
+        hint = QLabel("포트 변경 후에는 서버를 재시작해야 적용됩니다.\n(기본값: 8080)")
+        hint.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(hint)
+        
+        # 버튼
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.validate_and_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+    
+    def validate_and_accept(self):
+        try:
+            port = int(self.port_edit.text())
+            if not (1024 <= port <= 65535):
+                raise ValueError("포트는 1024~65535 사이여야 합니다.")
+            if is_port_in_use(port) and port != settings_manager.get_server_port():
+                QMessageBox.warning(self, "오류", f"포트 {port}는 이미 사용 중입니다.")
+                return
+            self.accept()
+        except ValueError as e:
+            QMessageBox.warning(self, "오류", "올바른 포트 번호를 입력하세요 (1024~65535).")
+    
+    def get_port(self) -> int:
+        return int(self.port_edit.text())
+
 
 
 # ============================================================================
 # 로그 시그널 핸들러
 # ============================================================================
 class LogSignal(QObject):
-    log_received = pyqtSignal(str)
+    log_received = pyqtSignal(str, str)  # message, level
 
 
 log_signal = LogSignal()
 
 
-class QtLogHandler:
-    """Qt 시그널로 로그 전송"""
-    def write(self, message):
-        if message.strip():
-            log_signal.log_received.emit(message.strip())
+class QtLogHandler(logging.Handler):
+    """Qt 시그널로 로그 전송 (logging.Handler 상속)"""
     
-    def flush(self):
-        pass
+    def __init__(self):
+        super().__init__()
+        self.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            log_signal.log_received.emit(msg, record.levelname)
+        except Exception:
+            pass
+
+
+# logger에 QtLogHandler 연결
+qt_handler = QtLogHandler()
+qt_handler.setLevel(logging.DEBUG)
+logger.addHandler(qt_handler)
 
 
 # ============================================================================
@@ -135,6 +333,23 @@ class AutoStartManager:
 
 
 # ============================================================================
+# 포트 체크 함수
+# ============================================================================
+def is_port_in_use(port: int, host: str = '127.0.0.1') -> bool:
+    """포트가 사용 중인지 확인 (connect 기반)"""
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1)
+    try:
+        result = sock.connect_ex((host, port))
+        sock.close()
+        # 0이면 연결 성공 = 포트 사용 중
+        return result == 0
+    except Exception:
+        return False
+
+
+# ============================================================================
 # 서버 스레드
 # ============================================================================
 class ServerThread(threading.Thread):
@@ -144,34 +359,59 @@ class ServerThread(threading.Thread):
         self.port = port
         self.server = None
         self._stop_event = threading.Event()
+        self._running = False
+        self._error = None
+    
+    @property
+    def is_running(self) -> bool:
+        return self._running and self.is_alive()
+    
+    @property 
+    def last_error(self) -> Optional[str]:
+        return self._error
     
     def run(self):
-        # 서버 초기화
-        initialize_server()
-        
-        # Waitress로 실행
         try:
-            from waitress import serve
-            logger.info(f"🚀 서버 시작: http://localhost:{self.port}")
-            serve(
-                app,
-                host=self.host,
-                port=self.port,
-                threads=8,
-                _quiet=True
-            )
-        except ImportError:
-            logger.warning("Waitress 없음 - Flask 개발 서버 사용")
-            app.run(
-                host=self.host,
-                port=self.port,
-                debug=False,
-                threaded=True,
-                use_reloader=False
-            )
+            logger.info(f"🚀 서버 스레드 시작 (포트: {self.port})")
+            logger.info(f"🚀 서버 초기화 시작 (백그라운드)...")
+            
+            # 서버 초기화 (비동기 실행)
+            # 모델 로딩 등으로 인해 시간이 걸리므로 별도 스레드로 실행
+            # 그래야 서버 포트가 즉시 열림
+            init_thread = threading.Thread(target=initialize_server, daemon=True)
+            init_thread.start()
+            
+            self._running = True
+            
+            # Waitress로 실행
+            try:
+                from waitress import serve
+                logger.info(f"✅ 서버 시작: http://localhost:{self.port}")
+                serve(
+                    app,
+                    host=self.host,
+                    port=self.port,
+                    threads=8,
+                    _quiet=True
+                )
+            except ImportError:
+                logger.warning("Waitress 없음 - Flask 개발 서버 사용")
+                app.run(
+                    host=self.host,
+                    port=self.port,
+                    debug=False,
+                    threaded=True,
+                    use_reloader=False
+                )
+        except Exception as e:
+            import traceback
+            self._error = str(e)
+            self._running = False
+            logger.error(f"❌ 서버 시작 실패: {e}\n{traceback.format_exc()}")
     
     def stop(self):
         self._stop_event.set()
+        self._running = False
 
 
 # ============================================================================
@@ -216,6 +456,10 @@ QPushButton#dangerBtn {
 QPushButton#dangerBtn:hover {
     background: #ef4444;
 }
+QPushButton#smallBtn {
+    padding: 6px 12px;
+    font-size: 11px;
+}
 QLabel {
     color: #eaeaea;
 }
@@ -252,6 +496,20 @@ QTextEdit {
     font-family: Consolas, monospace;
     font-size: 11px;
 }
+QLineEdit {
+    background: #0f3460;
+    border: 1px solid #2a2a5e;
+    border-radius: 4px;
+    padding: 8px;
+    color: #eaeaea;
+}
+QLineEdit:focus {
+    border-color: #e94560;
+}
+QDialog {
+    background-color: #1a1a2e;
+    color: #eaeaea;
+}
 """
 
 
@@ -263,6 +521,7 @@ class ServerWindow(QMainWindow):
         super().__init__()
         self.server_thread: Optional[ServerThread] = None
         self.start_minimized = start_minimized
+        self.log_buffer: list = []  # 로그 버퍼
         
         self._init_ui()
         self._init_tray()
@@ -273,10 +532,23 @@ class ServerWindow(QMainWindow):
         else:
             self.show()
     
+    def _get_local_ip(self) -> str:
+        """로컬 네트워크 IP 주소 가져오기"""
+        import socket
+        try:
+            # 외부 연결 시도하여 사용 중인 IP 찾기
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return "127.0.0.1"
+    
     def _init_ui(self):
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
-        self.setMinimumSize(500, 400)
-        self.resize(550, 450)
+        self.setMinimumSize(550, 550)
+        self.resize(600, 600)
         
         central = QWidget()
         self.setCentralWidget(central)
@@ -301,11 +573,19 @@ class ServerWindow(QMainWindow):
         info_group = QGroupBox("서버 정보")
         info_layout = QVBoxLayout(info_group)
         
-        self.url_label = QLabel(f"🌐 URL: http://localhost:{AppConfig.SERVER_PORT}")
-        self.url_label.setFont(QFont("", 12))
+        # 로컬 IP 가져오기
+        local_ip = self._get_local_ip()
+        
+        self.url_label = QLabel(f"🌐 로컬: http://localhost:{settings_manager.get_server_port()}")
+        self.url_label.setFont(QFont("", 11))
         info_layout.addWidget(self.url_label)
         
-        self.admin_label = QLabel(f"⚙️ 관리자: http://localhost:{AppConfig.SERVER_PORT}/admin")
+        self.network_label = QLabel(f"🔗 네트워크: http://{local_ip}:{settings_manager.get_server_port()}")
+        self.network_label.setFont(QFont("", 11))
+        self.network_label.setStyleSheet("color: #3b82f6;")  # 파란색으로 강조
+        info_layout.addWidget(self.network_label)
+        
+        self.admin_label = QLabel(f"⚙️ 관리자: http://localhost:{settings_manager.get_server_port()}/admin")
         info_layout.addWidget(self.admin_label)
         
         layout.addWidget(info_group)
@@ -327,6 +607,15 @@ class ServerWindow(QMainWindow):
         settings_group = QGroupBox("설정")
         settings_layout = QVBoxLayout(settings_group)
         
+        # 포트 설정 버튼 추가
+        port_layout = QHBoxLayout()
+        self.port_btn = QPushButton("🔌 포트 설정")
+        self.port_btn.setObjectName("smallBtn")
+        self.port_btn.clicked.connect(self._show_port_dialog)
+        port_layout.addWidget(self.port_btn)
+        port_layout.addStretch()
+        settings_layout.addLayout(port_layout)
+        
         self.autostart_check = QCheckBox("Windows 시작 시 자동 실행")
         self.autostart_check.setChecked(AutoStartManager.is_enabled())
         self.autostart_check.stateChanged.connect(self._toggle_autostart)
@@ -336,24 +625,60 @@ class ServerWindow(QMainWindow):
         self.minimize_check.setChecked(True)
         settings_layout.addWidget(self.minimize_check)
         
+        # 비밀번호 설정 버튼
+        pw_layout = QHBoxLayout()
+        self.pw_btn = QPushButton("🔑 관리자 비밀번호 설정")
+        self.pw_btn.setObjectName("smallBtn")
+        self.pw_btn.clicked.connect(self._show_password_dialog)
+        pw_layout.addWidget(self.pw_btn)
+        
+        self.pw_status = QLabel("🔓 비보호" if not settings_manager.has_admin_password() else "🔒 보호됨")
+        pw_layout.addWidget(self.pw_status)
+        pw_layout.addStretch()
+        settings_layout.addLayout(pw_layout)
+        
         layout.addWidget(settings_group)
         
-        # 로그
+        # 로그 (확장된 영역)
         log_group = QGroupBox("서버 로그")
         log_layout = QVBoxLayout(log_group)
         
+        # 로그 버튼들
+        log_btn_layout = QHBoxLayout()
+        
+        self.save_log_btn = QPushButton("💾 저장")
+        self.save_log_btn.setObjectName("smallBtn")
+        self.save_log_btn.clicked.connect(self._save_log)
+        log_btn_layout.addWidget(self.save_log_btn)
+        
+        self.clear_log_btn = QPushButton("🗑️ 지우기")
+        self.clear_log_btn.setObjectName("smallBtn")
+        self.clear_log_btn.clicked.connect(self._clear_log)
+        log_btn_layout.addWidget(self.clear_log_btn)
+        
+        log_btn_layout.addStretch()
+        log_layout.addLayout(log_btn_layout)
+        
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setMaximumHeight(120)
+        self.log_text.setMinimumHeight(150)
         log_layout.addWidget(self.log_text)
         
         layout.addWidget(log_group)
         
-        # 종료 버튼
-        self.quit_btn = QPushButton("🛑 서버 종료")
+        # 서버 제어 버튼
+        server_btn_layout = QHBoxLayout()
+        
+        self.restart_btn = QPushButton("🔄 서버 재시작")
+        self.restart_btn.clicked.connect(self._restart_server)
+        server_btn_layout.addWidget(self.restart_btn)
+        
+        self.quit_btn = QPushButton("🛑 프로그램 종료")
         self.quit_btn.setObjectName("dangerBtn")
         self.quit_btn.clicked.connect(self._quit_app)
-        layout.addWidget(self.quit_btn)
+        server_btn_layout.addWidget(self.quit_btn)
+        
+        layout.addLayout(server_btn_layout)
         
         # 로그 시그널 연결
         log_signal.log_received.connect(self._append_log)
@@ -407,11 +732,59 @@ class ServerWindow(QMainWindow):
     
     def _start_server(self):
         """서버 시작"""
+        port = settings_manager.get_server_port()
+        
+        # 포트 체크
+        if is_port_in_use(port):
+            logger.error(f"❌ 포트 {port}가 이미 사용 중입니다. 다른 프로그램이 사용 중인지 확인하세요.")
+            self.status_label.setText("❌ 포트 사용 중")
+            self.status_label.setProperty("status", "error")
+            return
+        
+        # AppConfig 업데이트 (서버 모듈의 설정도 변경 필요)
+        AppConfig.SERVER_PORT = port
+        
         self.server_thread = ServerThread(
             AppConfig.SERVER_HOST,
-            AppConfig.SERVER_PORT
+            port
         )
         self.server_thread.start()
+        logger.info(f"🚀 서버 스레드 시작 (포트: {port})")
+    
+    def _show_port_dialog(self):
+        """포트 설정 다이얼로그"""
+        current_port = settings_manager.get_server_port()
+        dialog = PortDialog(self, current_port)
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_port = dialog.get_port()
+            if new_port != current_port:
+                settings_manager.set_server_port(new_port)
+                
+                # 라벨 업데이트
+                local_ip = self._get_local_ip()
+                self.url_label.setText(f"🌐 로컬: http://localhost:{new_port}")
+                self.network_label.setText(f"🔗 네트워크: http://{local_ip}:{new_port}")
+                self.admin_label.setText(f"⚙️ 관리자: http://localhost:{new_port}/admin")
+                
+                QMessageBox.information(
+                    self, "알림", 
+                    "포트가 변경되었습니다.\n서버를 재시작해야 적용됩니다."
+                )
+    
+    def _restart_server(self):
+        """서버 재시작"""
+        logger.info("🔄 서버 재시작 중...")
+        self.status_label.setText("🔄 재시작 중...")
+        
+        # 기존 서버 정리
+        if self.server_thread and self.server_thread.is_alive():
+            self.server_thread.stop()
+            # 스레드 종료 대기 (Waitress는 즉시 종료 불가)
+            logger.warning("⚠️ 서버 스레드는 다음 요청 후 종료됩니다")
+        
+        # 새 서버 스레드 시작
+        self._start_server()
     
     def _update_status(self):
         """상태 업데이트"""
@@ -424,6 +797,13 @@ class ServerWindow(QMainWindow):
                 f"✅ 준비 완료 | 📄 {stats['files']}개 파일 | 📊 {stats['chunks']} 청크"
             )
             self.status_label.setProperty("status", "ready")
+        elif qa_system.load_error:
+            # 오류 상태 표시
+            error_msg = qa_system.load_error
+            if len(error_msg) > 30:
+                error_msg = error_msg[:30] + "..."
+            self.status_label.setText(f"❌ 오류: {error_msg}")
+            self.status_label.setProperty("status", "error")
         else:
             self.status_label.setText("⏳ 대기 중...")
             self.status_label.setProperty("status", "loading")
@@ -434,18 +814,80 @@ class ServerWindow(QMainWindow):
             style.unpolish(self.status_label)
             style.polish(self.status_label)
     
-    def _append_log(self, message: str):
-        """로그 추가"""
-        self.log_text.append(message)
+    def _append_log(self, message: str, level: str = "INFO"):
+        """로그 추가 (레벨별 색상)"""
+        # 색상 설정
+        color_map = {
+            "ERROR": "#ef4444",
+            "WARNING": "#f59e0b", 
+            "INFO": "#a0a0b0",
+            "DEBUG": "#666666"
+        }
+        color = color_map.get(level, "#a0a0b0")
+        
+        # HTML 형식으로 추가
+        html = f'<span style="color: {color}">{message}</span>'
+        self.log_text.append(html)
+        
+        # 버퍼에 저장
+        self.log_buffer.append(message)
+        if len(self.log_buffer) > 1000:
+            self.log_buffer = self.log_buffer[-500:]
+        
         # 스크롤 맨 아래로
         scrollbar = self.log_text.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
     
+    def _save_log(self):
+        """로그 파일로 저장"""
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "로그 저장",
+            f"server_log_{datetime.now():%Y%m%d_%H%M%S}.txt",
+            "Text Files (*.txt);;All Files (*)"
+        )
+        if filename:
+            try:
+                with open(filename, 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(self.log_buffer))
+                self.tray_icon.showMessage(
+                    APP_NAME, "로그가 저장되었습니다",
+                    QSystemTrayIcon.MessageIcon.Information, 2000
+                )
+            except IOError as e:
+                QMessageBox.warning(self, "오류", f"저장 실패: {e}")
+    
+    def _clear_log(self):
+        """로그 지우기"""
+        self.log_text.clear()
+        self.log_buffer.clear()
+    
+    def _show_password_dialog(self):
+        """비밀번호 설정 다이얼로그"""
+        is_change = settings_manager.has_admin_password()
+        dialog = PasswordDialog(self, is_change)
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            password = dialog.get_password()
+            settings_manager.set_admin_password(password)
+            
+            if password:
+                self.pw_status.setText("🔒 보호됨")
+                self.tray_icon.showMessage(
+                    APP_NAME, "관리자 비밀번호가 설정되었습니다",
+                    QSystemTrayIcon.MessageIcon.Information, 2000
+                )
+            else:
+                self.pw_status.setText("🔓 비보호")
+                self.tray_icon.showMessage(
+                    APP_NAME, "비밀번호 보호가 해제되었습니다",
+                    QSystemTrayIcon.MessageIcon.Information, 2000
+                )
+    
     def _open_search(self):
-        webbrowser.open(f"http://localhost:{AppConfig.SERVER_PORT}")
+        webbrowser.open(f"http://localhost:{settings_manager.get_server_port()}")
     
     def _open_admin(self):
-        webbrowser.open(f"http://localhost:{AppConfig.SERVER_PORT}/admin")
+        webbrowser.open(f"http://localhost:{settings_manager.get_server_port()}/admin")
     
     def _toggle_autostart(self, state):
         if state == Qt.CheckState.Checked.value:
@@ -500,6 +942,11 @@ class ServerWindow(QMainWindow):
 def main():
     # 명령행 인자 확인
     start_minimized = '--minimized' in sys.argv or '-m' in sys.argv
+    
+    # server 모듈에 settings_manager 주입 (순환 참조 문제 해결 및 Main 모듈 인식 문제 해결)
+    # server.py의 get_settings_manager()가 올바른 인스턴스를 반환하도록 함
+    import server
+    server._settings_manager_instance = settings_manager
     
     app = QApplication(sys.argv)
     app.setStyle('Fusion')

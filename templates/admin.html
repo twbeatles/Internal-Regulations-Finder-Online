@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="사내 규정 검색기 관리자 페이지">
+    <meta name="robots" content="noindex, nofollow">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline';">
+    <title>관리자 - 사내 규정 검색기</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap"
+        rel="stylesheet">
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- 헤더 -->
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">
+                    <span class="logo-icon">⚙️</span>
+                    <h1>관리자 페이지</h1>
+                </div>
+                <div class="header-info">
+                    <button id="theme-toggle" class="theme-toggle" title="테마 변경">🌙</button>
+                    <span id="status-badge" class="status-badge loading">
+                        <span class="status-dot"></span>
+                        <span id="status-text">연결 중...</span>
+                    </span>
+                    <a href="/" class="admin-link">🔍 검색</a>
+                </div>
+            </div>
+        </header>
+
+        <!-- 메인 컨텐츠 -->
+        <main class="main-content admin-page">
+            <!-- 상태 카드들 -->
+            <section class="stats-section">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">📄</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="stat-files">0</span>
+                            <span class="stat-label">파일</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">📊</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="stat-chunks">0</span>
+                            <span class="stat-label">청크</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">💾</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="stat-size">0 B</span>
+                            <span class="stat-label">용량</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon">🤖</div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="stat-model">-</span>
+                            <span class="stat-label">모델</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- AI 모델 설정 섹션 -->
+            <section class="model-section card admin-only" style="display: none;">
+                <h2 class="section-title">🤖 AI 모델 설정</h2>
+                <div class="model-settings">
+                    <div class="form-group">
+                        <label for="model-select">사용할 AI 모델</label>
+                        <select id="model-select" class="form-select">
+                            <option value="" disabled selected>모델 불러오는 중...</option>
+                        </select>
+                        <p class="form-hint" style="margin-top: 8px; color: var(--text-secondary); font-size: 0.9em;">
+                            ⚠️ 모델 변경 시 서버가 잠시 멈추며, 메모리 사용량이 변할 수 있습니다.
+                        </p>
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center; margin-top: 15px;">
+                        <button id="change-model-btn" class="btn btn-primary">변경 적용</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 파일 업로드 섹션 -->
+            <section class="upload-section card admin-only" style="display: none;">
+                <h2 class="section-title">📁 규정 파일 업로드</h2>
+                <div class="upload-area" id="upload-area">
+                    <div class="upload-content">
+                        <div class="upload-icon">📤</div>
+                        <p class="upload-text">파일을 드래그하거나 클릭하여 업로드</p>
+                        <p class="upload-hint">지원 형식: .txt, .docx, .pdf (최대 50MB)</p>
+                    </div>
+                    <input type="file" id="file-input" multiple accept=".txt,.docx,.pdf" hidden aria-label="파일 선택">
+                </div>
+                <div id="upload-progress" class="upload-progress hidden">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill"></div>
+                    </div>
+                    <p class="progress-text" id="progress-text">업로드 중...</p>
+                </div>
+            </section>
+
+            <!-- 파일 목록 섹션 -->
+            <section class="files-section card admin-only" style="display: none;">
+                <div class="section-header">
+                    <h2 class="section-title">📋 로드된 파일 목록</h2>
+                    <div class="section-actions">
+                        <button id="refresh-btn" class="btn btn-secondary">
+                            🔄 새로고침
+                        </button>
+                        <button id="reprocess-btn" class="btn btn-secondary">
+                            ⚡ 재처리
+                        </button>
+                        <button id="clear-cache-btn" class="btn btn-danger">
+                            🗑️ 캐시 삭제
+                        </button>
+                    </div>
+                </div>
+                <div class="files-table-container">
+                    <table class="files-table" id="files-table">
+                        <thead>
+                            <tr>
+                                <th>상태</th>
+                                <th>파일명</th>
+                                <th>크기</th>
+                                <th>청크</th>
+                                <th>관리</th>
+                            </tr>
+                        </thead>
+                        <tbody id="files-tbody">
+                            <tr class="empty-row">
+                                <td colspan="5">로드된 파일이 없습니다</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- 서버 정보 -->
+            <section class="info-section card">
+                <h2 class="section-title">ℹ️ 서버 정보</h2>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">API 상태</span>
+                        <code>/api/status</code>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">검색 API</span>
+                        <code>POST /api/search</code>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">업로드 API</span>
+                        <code>POST /api/upload</code>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">파일 목록</span>
+                        <code>/api/files</code>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- 푸터 -->
+        <footer class="footer">
+            <p>© 2024 사내 규정 검색기 - 관리자 페이지</p>
+        </footer>
+    </div>
+
+    <!-- 비밀번호 인증 모달 -->
+    <div id="auth-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content auth-modal">
+            <div class="modal-header">
+                <h3>🔒 관리자 인증</h3>
+            </div>
+            <div class="modal-body">
+                <p>관리자 페이지에 접근하려면 비밀번호를 입력하세요.</p>
+                <input type="password" id="auth-password" class="auth-input" placeholder="비밀번호 입력" autofocus>
+                <p id="auth-error" class="auth-error" style="display: none;"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="location.href='/'">취소</button>
+                <button class="btn btn-primary" onclick="submitAdminAuth()">확인</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 토스트 알림 -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="/static/app.js"></script>
+    <script>
+        // 관리자 페이지 초기화
+        document.addEventListener('DOMContentLoaded', () => {
+            initAdmin();
+        });
+
+        // 비밀번호 입력 시 엔터 키 처리
+        document.getElementById('auth-password')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                submitAdminAuth();
+            }
+        });
+    </script>
+</body>
+
+</html>

@@ -13,6 +13,8 @@ PyQt6>=6.4.0
 # AI/ML
 torch>=2.0.0
 langchain>=0.1.0
+langchain-core>=0.1.0
+langchain-text-splitters>=0.0.1
 langchain-huggingface>=0.0.3
 langchain-community>=0.0.20
 faiss-cpu>=1.7.0
@@ -25,4 +27,7 @@ pypdf>=3.0.0
 # 유틸리티
 transformers>=4.30.0
 huggingface-hub>=0.20.0
+
+# 문서 처리 의존성 (추가)
+lxml>=4.9.0
 

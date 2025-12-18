@@ -2,6 +2,13 @@
 """
 사내 규정 검색기 - GUI 버전 PyInstaller Spec
 빌드: pyinstaller server_gui.spec
+
+버전: 1.3 (2024-12-18)
+수정 사항:
+- 문서 처리 라이브러리 hidden import 추가
+- LangChain 하위 모듈 추가
+- Flask session 지원 추가
+- 검색 필터/정렬/북마크 기능 추가에 따른 업데이트
 """
 
 import os
@@ -15,115 +22,80 @@ project_dir = os.path.dirname(os.path.abspath(SPEC))
 
 # 데이터 파일 수집
 datas = [
-    # 템플릿 및 정적 파일
     (os.path.join(project_dir, 'templates'), 'templates'),
     (os.path.join(project_dir, 'static'), 'static'),
 ]
 
+# config 폴더가 있으면 포함
+config_dir = os.path.join(project_dir, 'config')
+if os.path.exists(config_dir):
+    datas.append((config_dir, 'config'))
+
 # 숨겨진 import 수집
 hiddenimports = [
     # Flask
-    'flask',
-    'flask_cors',
-    'werkzeug',
-    'werkzeug.utils',
-    'jinja2',
-    'markupsafe',
+    'flask', 'flask.sessions', 'flask_cors',
+    'werkzeug', 'werkzeug.utils', 'werkzeug.security',
+    'jinja2', 'markupsafe',
     
-    # Waitress (프로덕션 서버)
-    'waitress',
+    # Waitress
+    'waitress', 'waitress.server',
     
-    # PyQt6 (GUI)
-    'PyQt6',
-    'PyQt6.QtCore',
-    'PyQt6.QtGui',
-    'PyQt6.QtWidgets',
-    'PyQt6.sip',
+    # PyQt6
+    'PyQt6', 'PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets', 'PyQt6.sip',
     
-    # LangChain 관련
-    'langchain',
-    'langchain.text_splitter',
-    'langchain.docstore',
-    'langchain.docstore.document',
-    'langchain_community',
-    'langchain_community.vectorstores',
-    'langchain_community.vectorstores.faiss',
-    'langchain_huggingface',
+    # LangChain
+    'langchain', 'langchain.schema',
+    'langchain_community', 'langchain_community.vectorstores',
+    'langchain_huggingface', 'langchain_huggingface.embeddings',
+    'langchain_text_splitters',
+    'langchain_core', 'langchain_core.documents',
     
     # HuggingFace
-    'transformers',
-    'sentence_transformers',
-    'huggingface_hub',
-    'tokenizers',
+    'transformers', 'sentence_transformers',
+    'huggingface_hub', 'tokenizers',
     
     # FAISS
     'faiss',
     
     # PyTorch
-    'torch',
-    'torch.nn',
-    'torch.utils',
+    'torch', 'torch.nn', 'torch.utils',
     
     # 문서 처리
-    'docx',
-    'pypdf',
+    'docx', 'docx.document', 'docx.opc', 'docx.oxml',
+    'pypdf', 'pypdf.generic',
+    'lxml', 'lxml.etree',
     
-    # 시스템 모니터링 (선택적)
-    'psutil',
-    
-    # 기타
-    'numpy',
-    'tqdm',
-    'requests',
-    'urllib3',
-    'certifi',
-    'charset_normalizer',
-    'idna',
-    'packaging',
-    'regex',
-    'safetensors',
-    'filelock',
-    'fsspec',
-    'yaml',
-    'pyyaml',
+    # 유틸리티
+    'psutil', 'numpy', 'tqdm', 'requests',
+    'hashlib', 'json', 'dataclasses',
 ]
 
-# sentence_transformers 하위 모듈 수집
+# 동적 모듈 수집
 try:
     hiddenimports += collect_submodules('sentence_transformers')
-except Exception:
-    pass
-
-# transformers 하위 모듈 수집
-try:
     hiddenimports += collect_submodules('transformers')
-except Exception:
-    pass
-
-# PyQt6 하위 모듈 수집
-try:
     hiddenimports += collect_submodules('PyQt6')
+    hiddenimports += collect_submodules('langchain')
+    hiddenimports += collect_submodules('langchain_community')
+    hiddenimports += collect_submodules('langchain_huggingface')
+    hiddenimports += collect_submodules('langchain_text_splitters')
+    hiddenimports += collect_submodules('langchain_core')
+    hiddenimports += collect_submodules('docx')
+    hiddenimports += collect_submodules('pypdf')
+    hiddenimports += collect_submodules('lxml')
 except Exception:
     pass
 
-# torch 데이터 파일 수집
+# 데이터 파일 수집
 try:
     datas += collect_data_files('torch')
-except Exception:
-    pass
-
-# transformers 데이터 파일 수집
-try:
     datas += collect_data_files('transformers')
-except Exception:
-    pass
-
-# sentence_transformers 데이터 파일 수집
-try:
     datas += collect_data_files('sentence_transformers')
 except Exception:
     pass
 
+# Analysis
 a = Analysis(
     ['server_gui.py'],
     pathex=[project_dir],
@@ -134,16 +106,8 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # 불필요한 모듈 제외
-        'tkinter',
-        'matplotlib',
-        'PIL',
-        'cv2',
-        'scipy',
-        'pandas',
-        'IPython',
-        'notebook',
-        'jupyter',
+        'tkinter', 'matplotlib', 'PIL', 'cv2', 'scipy',
+        'pandas', 'IPython', 'notebook', 'jupyter', 'pytest',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -151,12 +115,10 @@ a = Analysis(
     noarchive=False,
 )
 
-pyz = PYZ(
-    a.pure,
-    a.zipped_data,
-    cipher=block_cipher
-)
+# PYZ Archive
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# Executable
 exe = EXE(
     pyz,
     a.scripts,
@@ -167,15 +129,16 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,  # GUI 모드: 콘솔 창 숨김
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # 아이콘 경로 (옵션): 'icon.ico'
+    icon=None,
 )
 
+# Collect
 coll = COLLECT(
     exe,
     a.binaries,
