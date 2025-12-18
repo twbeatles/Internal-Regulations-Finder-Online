@@ -1,0 +1,28 @@
+# 사내 규정 검색기 웹 서버 - 필수 패키지
+
+# Flask 웹 프레임워크
+flask>=2.3.0
+flask-cors>=4.0.0
+
+# 프로덕션 서버 (권장)
+waitress>=2.1.0
+
+# GUI (시스템 트레이)
+PyQt6>=6.4.0
+
+# AI/ML
+torch>=2.0.0
+langchain>=0.1.0
+langchain-huggingface>=0.0.3
+langchain-community>=0.0.20
+faiss-cpu>=1.7.0
+sentence-transformers>=2.2.0
+
+# 문서 처리
+python-docx>=0.8.11
+pypdf>=3.0.0
+
+# 유틸리티
+transformers>=4.30.0
+huggingface-hub>=0.20.0
+
