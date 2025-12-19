@@ -3,12 +3,13 @@
 사내 규정 검색기 - GUI 버전 PyInstaller Spec
 빌드: pyinstaller server_gui.spec
 
-버전: 1.3 (2024-12-18)
+버전: 1.4 (2024-12-19)
 수정 사항:
-- 문서 처리 라이브러리 hidden import 추가
-- LangChain 하위 모듈 추가
-- Flask session 지원 추가
-- 검색 필터/정렬/북마크 기능 추가에 따른 업데이트
+- v1.3 다중 사용자 최적화 반영
+- Rate Limiter, Search Queue 지원
+- 병렬 문서 처리 (ThreadPoolExecutor) 지원
+- 파일 작업 락 추가
+- concurrent.futures 모듈 추가
 """
 
 import os
@@ -69,6 +70,9 @@ hiddenimports = [
     # 유틸리티
     'psutil', 'numpy', 'tqdm', 'requests',
     'hashlib', 'json', 'dataclasses',
+    
+    # 멀티스레딩 (v1.3 추가)
+    'concurrent', 'concurrent.futures',
 ]
 
 # 동적 모듈 수집

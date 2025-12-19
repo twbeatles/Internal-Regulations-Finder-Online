@@ -263,12 +263,35 @@ const ExportResults = {
 // ============================================================================
 const API = {
     baseUrl: '',
+    pendingRequests: new Map(),  // 진행 중인 요청 추적
+    maxRetries: 3,  // 최대 재시도 횟수
 
     async fetch(endpoint, options = {}) {
+        // 중복 요청 방지 (POST 요청에 대해서만)
+        const requestKey = `${options.method || 'GET'}-${endpoint}-${JSON.stringify(options.body || '')}`;
+
+        if (options.method === 'POST' && this.pendingRequests.has(requestKey)) {
+            console.log('Duplicate request prevented:', endpoint);
+            return this.pendingRequests.get(requestKey);
+        }
+
         const controller = new AbortController();
         const timeout = options.timeout || 30000; // 30초 기본 타임아웃
         const timeoutId = setTimeout(() => controller.abort(), timeout);
 
+        const requestPromise = this._executeRequest(endpoint, options, controller, timeoutId);
+
+        if (options.method === 'POST') {
+            this.pendingRequests.set(requestKey, requestPromise);
+            requestPromise.finally(() => {
+                this.pendingRequests.delete(requestKey);
+            });
+        }
+
+        return requestPromise;
+    },
+
+    async _executeRequest(endpoint, options, controller, timeoutId, retryCount = 0) {
         try {
             const response = await fetch(this.baseUrl + endpoint, {
                 headers: {
@@ -279,6 +302,21 @@ const API = {
                 ...options
             });
             clearTimeout(timeoutId);
+
+            // Rate Limit 처리 (429)
+            if (response.status === 429) {
+                const data = await response.json().catch(() => ({}));
+                const retryAfter = data.retry_after || 60;
+                Toast.warning('요청 제한', `잠시 후 다시 시도해주세요 (${retryAfter}초)`);
+                return { success: false, message: '요청이 너무 많습니다. 잠시 후 다시 시도해주세요.', retry_after: retryAfter };
+            }
+
+            // 서버 과부하 (503) - 재시도
+            if (response.status === 503 && retryCount < this.maxRetries) {
+                console.log(`Server busy, retrying... (${retryCount + 1}/${this.maxRetries})`);
+                await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+                return this._executeRequest(endpoint, options, controller, timeoutId, retryCount + 1);
+            }
 
             const contentType = response.headers.get('content-type');
             if (contentType && contentType.includes('application/json')) {
@@ -297,12 +335,21 @@ const API = {
         } catch (error) {
             clearTimeout(timeoutId);
             console.error('API Error:', error);
+
+            // 네트워크 오류 시 재시도
+            if (error.name !== 'AbortError' && retryCount < this.maxRetries) {
+                console.log(`Network error, retrying... (${retryCount + 1}/${this.maxRetries})`);
+                await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+                return this._executeRequest(endpoint, options, controller, timeoutId, retryCount + 1);
+            }
+
             if (error.name === 'AbortError') {
                 return { success: false, message: '요청 시간이 초과되었습니다' };
             }
             return { success: false, message: error.message || '서버 연결 실패' };
         }
     },
+
 
     getStatus() {
         return this.fetch('/api/status');

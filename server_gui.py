@@ -391,7 +391,7 @@ class ServerThread(threading.Thread):
                     app,
                     host=self.host,
                     port=self.port,
-                    threads=8,
+                    threads=16,
                     _quiet=True
                 )
             except ImportError:

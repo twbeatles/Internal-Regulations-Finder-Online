@@ -68,9 +68,11 @@ class AppConfig:
     BM25_WEIGHT = 0.3
     
     # 동시성 설정
-    MAX_WORKERS = 4
-    REQUEST_TIMEOUT = 60
-    SEARCH_CACHE_SIZE = 100
+    MAX_WORKERS = 8
+    REQUEST_TIMEOUT = 30
+    SEARCH_CACHE_SIZE = 200
+    MAX_CONCURRENT_SEARCHES = 10
+    RATE_LIMIT_PER_MINUTE = 60
 
 
 class FileStatus(Enum):
@@ -377,6 +379,116 @@ class SearchCache:
         with self._lock:
             self.cache.clear()
 
+
+# ============================================================================
+# Rate Limiter (IP 기반 요청 제한)
+# ============================================================================
+class RateLimiter:
+    """IP 기반 요청 제한으로 서버 과부하 방지"""
+    
+    def __init__(self, requests_per_minute: int = 60):
+        self.requests: Dict[str, List[float]] = {}  # ip -> [timestamps]
+        self.limit = requests_per_minute
+        self._lock = threading.Lock()
+        self._cleanup_interval = 60  # 정리 주기 (초)
+        self._last_cleanup = time.time()
+    
+    def is_allowed(self, ip: str) -> bool:
+        """요청이 허용되는지 확인"""
+        current_time = time.time()
+        
+        with self._lock:
+            # 주기적 정리
+            if current_time - self._last_cleanup > self._cleanup_interval:
+                self._cleanup(current_time)
+                self._last_cleanup = current_time
+            
+            if ip not in self.requests:
+                self.requests[ip] = []
+            
+            # 1분 이내 요청만 유지
+            cutoff = current_time - 60
+            self.requests[ip] = [t for t in self.requests[ip] if t > cutoff]
+            
+            # 제한 확인
+            if len(self.requests[ip]) >= self.limit:
+                logger.warning(f"Rate limit exceeded for IP: {ip}")
+                return False
+            
+            # 새 요청 기록
+            self.requests[ip].append(current_time)
+            return True
+    
+    def _cleanup(self, current_time: float):
+        """오래된 기록 정리"""
+        cutoff = current_time - 60
+        expired_ips = []
+        for ip, timestamps in self.requests.items():
+            self.requests[ip] = [t for t in timestamps if t > cutoff]
+            if not self.requests[ip]:
+                expired_ips.append(ip)
+        for ip in expired_ips:
+            del self.requests[ip]
+    
+    def get_remaining(self, ip: str) -> int:
+        """남은 요청 수 반환"""
+        with self._lock:
+            current_time = time.time()
+            cutoff = current_time - 60
+            if ip not in self.requests:
+                return self.limit
+            recent = [t for t in self.requests[ip] if t > cutoff]
+            return max(0, self.limit - len(recent))
+
+
+# ============================================================================
+# 검색 요청 큐 (동시 검색 수 제한)
+# ============================================================================
+class SearchQueue:
+    """동시 검색 수를 제한하여 서버 안정성 확보"""
+    
+    def __init__(self, max_concurrent: int = 10):
+        self._semaphore = threading.Semaphore(max_concurrent)
+        self._active_count = 0
+        self._lock = threading.Lock()
+        self._total_processed = 0
+        self._total_rejected = 0
+    
+    def acquire(self, timeout: float = 30.0) -> bool:
+        """검색 슬롯 획득 (타임아웃 지원)"""
+        acquired = self._semaphore.acquire(timeout=timeout)
+        if acquired:
+            with self._lock:
+                self._active_count += 1
+        else:
+            with self._lock:
+                self._total_rejected += 1
+            logger.warning("Search queue full, request rejected")
+        return acquired
+    
+    def release(self):
+        """검색 슬롯 반환"""
+        self._semaphore.release()
+        with self._lock:
+            self._active_count = max(0, self._active_count - 1)
+            self._total_processed += 1
+    
+    def get_stats(self) -> Dict:
+        """큐 상태 반환"""
+        with self._lock:
+            return {
+                'active': self._active_count,
+                'processed': self._total_processed,
+                'rejected': self._total_rejected
+            }
+
+
+# 전역 Rate Limiter 및 Search Queue 인스턴스
+rate_limiter = RateLimiter(AppConfig.RATE_LIMIT_PER_MINUTE)
+search_queue = SearchQueue(AppConfig.MAX_CONCURRENT_SEARCHES)
+
+# 파일 작업 락 (동시 파일 업로드/삭제 보호)
+file_operation_lock = threading.Lock()
 
 # ============================================================================
 # 검색 히스토리 (최근 검색어 + 인기 검색어)
@@ -708,25 +820,57 @@ class RegulationQASystem:
         )
         failed, new_docs, new_cache_info = [], [], {}
         
-        for i, fp in enumerate(to_process):
+        # 병렬 문서 추출 함수
+        def extract_file(fp: str) -> Tuple[str, str, Optional[str], Optional[Dict]]:
+            """파일에서 텍스트 추출 (병렬 처리용)"""
             fname = os.path.basename(fp)
-            if progress_cb:
-                progress_cb(15 + int((i / len(to_process)) * 55), f"처리: {fname}")
-            self.file_infos[fp].status = FileStatus.PROCESSING
-            
             try:
                 content, error = self.extractor.extract(fp)
-                if error:
-                    failed.append(f"{fname} ({error})")
-                    self.file_infos[fp].status = FileStatus.FAILED
-                    self.file_infos[fp].error = error
-                    continue
-                if not content.strip():
-                    failed.append(f"{fname} (빈 파일)")
-                    self.file_infos[fp].status = FileStatus.FAILED
-                    self.file_infos[fp].error = "빈 파일"
-                    continue
-                
+                meta = FileUtils.get_metadata(fp)
+                return fp, fname, content, error, meta
+            except Exception as e:
+                return fp, fname, None, str(e), None
+        
+        # ThreadPoolExecutor로 병렬 문서 추출
+        extracted_results = []
+        if progress_cb:
+            progress_cb(15, f"문서 추출 중... (병렬 처리)")
+        
+        with ThreadPoolExecutor(max_workers=min(AppConfig.MAX_WORKERS, len(to_process))) as executor:
+            futures = {executor.submit(extract_file, fp): fp for fp in to_process}
+            completed = 0
+            for future in futures:
+                try:
+                    result = future.result(timeout=60)  # 파일당 60초 타임아웃
+                    extracted_results.append(result)
+                    completed += 1
+                    if progress_cb and completed % 5 == 0:
+                        progress = 15 + int((completed / len(to_process)) * 30)
+                        progress_cb(progress, f"추출 완료: {completed}/{len(to_process)}")
+                except Exception as e:
+                    fp = futures[future]
+                    fname = os.path.basename(fp)
+                    extracted_results.append((fp, fname, None, f"추출 타임아웃: {e}", None))
+        
+        # 추출 결과 처리 및 청킹
+        if progress_cb:
+            progress_cb(50, "텍스트 청킹 중...")
+        
+        for fp, fname, content, error, meta in extracted_results:
+            self.file_infos[fp].status = FileStatus.PROCESSING
+            
+            if error:
+                failed.append(f"{fname} ({error})")
+                self.file_infos[fp].status = FileStatus.FAILED
+                self.file_infos[fp].error = error
+                continue
+            if not content or not content.strip():
+                failed.append(f"{fname} (빈 파일)")
+                self.file_infos[fp].status = FileStatus.FAILED
+                self.file_infos[fp].error = "빈 파일"
+                continue
+            
+            try:
                 chunks = splitter.split_text(content)
                 chunk_count = 0
                 for chunk in chunks:
@@ -742,7 +886,6 @@ class RegulationQASystem:
                 self.file_infos[fp].status = FileStatus.SUCCESS
                 self.file_infos[fp].chunks = chunk_count
                 
-                meta = FileUtils.get_metadata(fp)
                 if meta:
                     new_cache_info[fname] = {
                         'size': meta['size'],
@@ -753,6 +896,7 @@ class RegulationQASystem:
                 failed.append(f"{fname} ({e})")
                 self.file_infos[fp].status = FileStatus.FAILED
                 self.file_infos[fp].error = str(e)
+
         
         if not new_docs and not self.vector_store:
             return TaskResult(False, "처리 가능한 문서 없음", failed_items=failed)
@@ -1033,33 +1177,6 @@ def handle_exception(e):
 
 
 # ============================================================================
-# 에러 핸들러
-# ============================================================================
-@app.errorhandler(404)
-def not_found(e):
-    if request.path.startswith('/api/'):
-        return jsonify({'success': False, 'message': 'API 엔드포인트를 찾을 수 없습니다'}), 404
-    return render_template('index.html'), 404
-
-@app.errorhandler(500)
-def server_error(e):
-    logger.error(f"서버 내부 오류: {e}")
-    if request.path.startswith('/api/'):
-        return jsonify({'success': False, 'message': '서버 내부 오류가 발생했습니다', 'error': str(e)}), 500
-    return "서버 오류발생", 500
-
-@app.errorhandler(Exception)
-def handle_exception(e):
-    logger.error(f"예외 발생: {e}")
-    import traceback
-    logger.error(traceback.format_exc())
-    if request.path.startswith('/api/'):
-        return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'}), 500
-    return str(e), 500
-
-
-
-# ============================================================================
 # API 라우트
 # ============================================================================
 @app.route('/')
@@ -1214,7 +1331,7 @@ def api_health():
 
 @app.route('/api/upload', methods=['POST'])
 def api_upload():
-    """파일 업로드 및 처리"""
+    """파일 업로드 및 처리 (동시 업로드 보호)"""
     if not qa_system.is_ready:
         return jsonify({'success': False, 'message': '서버가 준비되지 않았습니다'}), 503
     
@@ -1225,33 +1342,63 @@ def api_upload():
     if not files or files[0].filename == '':
         return jsonify({'success': False, 'message': '파일이 선택되지 않았습니다'}), 400
     
+    # 파일 저장 (락 사용)
     saved_files = []
-    for file in files:
-        if file and FileUtils.allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            # 한글 파일명 보존
-            if filename != file.filename:
-                filename = file.filename.replace('/', '_').replace('\\', '_')
-            filepath = os.path.join(UPLOAD_DIR, filename)
-            file.save(filepath)
-            saved_files.append(filepath)
-            logger.info(f"파일 업로드: {filename}")
+    save_errors = []
+    
+    with file_operation_lock:
+        for file in files:
+            if file and FileUtils.allowed_file(file.filename):
+                try:
+                    filename = secure_filename(file.filename)
+                    # 한글 파일명 보존
+                    if filename != file.filename:
+                        filename = file.filename.replace('/', '_').replace('\\', '_').replace('..', '')
+                    
+                    # 파일명 중복 처리
+                    base_filepath = os.path.join(UPLOAD_DIR, filename)
+                    filepath = base_filepath
+                    counter = 1
+                    while os.path.exists(filepath) and counter < 100:
+                        name, ext = os.path.splitext(filename)
+                        filepath = os.path.join(UPLOAD_DIR, f"{name}_{counter}{ext}")
+                        counter += 1
+                    
+                    file.save(filepath)
+                    saved_files.append(filepath)
+                    logger.info(f"파일 업로드: {os.path.basename(filepath)}")
+                except Exception as e:
+                    save_errors.append(f"{file.filename}: {e}")
+                    logger.error(f"파일 저장 실패: {file.filename} - {e}")
     
     if not saved_files:
-        return jsonify({'success': False, 'message': '지원되는 파일이 없습니다'}), 400
+        error_msg = '지원되는 파일이 없습니다'
+        if save_errors:
+            error_msg += f' (오류: {", ".join(save_errors[:3])})'
+        return jsonify({'success': False, 'message': error_msg}), 400
     
     # 문서 처리
     def progress_cb(percent, msg):
         logger.info(f"처리 진행: {percent}% - {msg}")
     
-    result = qa_system.process_documents(UPLOAD_DIR, saved_files, progress_cb)
-    
-    return jsonify({
-        'success': result.success,
-        'message': result.message,
-        'data': result.data,
-        'failed': result.failed_items
-    })
+    try:
+        result = qa_system.process_documents(UPLOAD_DIR, saved_files, progress_cb)
+        
+        return jsonify({
+            'success': result.success,
+            'message': result.message,
+            'data': result.data,
+            'failed': result.failed_items,
+            'save_errors': save_errors if save_errors else None
+        })
+    except Exception as e:
+        logger.error(f"문서 처리 중 오류: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'문서 처리 중 오류: {e}',
+            'saved_count': len(saved_files)
+        }), 500
+
 
 
 @app.route('/api/process', methods=['POST'])
@@ -1285,6 +1432,24 @@ def api_process():
 def api_search():
     """검색 수행"""
     start_time = time.time()
+    
+    # Rate Limiting 체크
+    client_ip = request.remote_addr or '127.0.0.1'
+    if not rate_limiter.is_allowed(client_ip):
+        return jsonify({
+            'success': False, 
+            'message': '요청이 너무 많습니다. 잠시 후 다시 시도해주세요.',
+            'retry_after': 60,
+            'remaining_requests': 0
+        }), 429
+    
+    # 검색 큐 슬롯 획득
+    if not search_queue.acquire(timeout=AppConfig.REQUEST_TIMEOUT):
+        return jsonify({
+            'success': False,
+            'message': '서버가 바쁩니다. 잠시 후 다시 시도해주세요.',
+            'queue_stats': search_queue.get_stats()
+        }), 503
     
     try:
         if not qa_system.is_ready:
@@ -1332,6 +1497,10 @@ def api_search():
         import traceback
         logger.error(traceback.format_exc())
         return jsonify({'success': False, 'message': f'검색 처리 중 오류가 발생했습니다: {e}'}), 500
+    finally:
+        # 검색 큐 슬롯 반환
+        search_queue.release()
+
 
 
 @app.route('/api/search/history')
@@ -1450,7 +1619,7 @@ def api_models():
 
 @app.route('/api/files/<filename>', methods=['DELETE'])
 def api_delete_file(filename):
-    """개별 파일 삭제"""
+    """개별 파일 삭제 (스레드 안전)"""
     if not qa_system.is_ready:
         return jsonify({'success': False, 'message': '서버가 준비되지 않았습니다'}), 503
     
@@ -1466,35 +1635,41 @@ def api_delete_file(filename):
     if not os.path.exists(filepath):
         return jsonify({'success': False, 'message': '파일을 찾을 수 없습니다'}), 404
     
-    try:
-        # 파일 삭제
-        os.remove(filepath)
-        logger.info(f"파일 삭제: {safe_filename}")
-        
-        # 인덱스에서 해당 파일 관련 데이터 제거
-        if filepath in qa_system.file_infos:
-            del qa_system.file_infos[filepath]
-        
-        # 검색 캐시 무효화
-        qa_system._search_cache.clear()
-        qa_system._keyword_cache.clear()
-        
-        # 남은 파일로 인덱스 재구성 필요 알림
-        remaining_files = [
-            os.path.join(UPLOAD_DIR, f) for f in os.listdir(UPLOAD_DIR)
-            if FileUtils.allowed_file(f)
-        ]
-        
-        return jsonify({
-            'success': True,
-            'message': f'{safe_filename} 삭제 완료',
-            'remaining_files': len(remaining_files),
-            'reindex_required': True  # 프론트엔드에서 재처리 안내
-        })
-        
-    except OSError as e:
-        logger.error(f"파일 삭제 실패: {e}")
-        return jsonify({'success': False, 'message': f'삭제 실패: {e}'}), 500
+    # 파일 삭제 (락 사용)
+    with file_operation_lock:
+        try:
+            # 파일 삭제
+            os.remove(filepath)
+            logger.info(f"파일 삭제: {safe_filename}")
+            
+            # 인덱스에서 해당 파일 관련 데이터 제거
+            if filepath in qa_system.file_infos:
+                del qa_system.file_infos[filepath]
+            
+            # 검색 캐시 무효화
+            qa_system._search_cache.clear()
+            qa_system._keyword_cache.clear()
+            
+            # 남은 파일로 인덱스 재구성 필요 알림
+            remaining_files = [
+                os.path.join(UPLOAD_DIR, f) for f in os.listdir(UPLOAD_DIR)
+                if FileUtils.allowed_file(f)
+            ]
+            
+            return jsonify({
+                'success': True,
+                'message': f'{safe_filename} 삭제 완료',
+                'remaining_files': len(remaining_files),
+                'reindex_required': True  # 프론트엔드에서 재처리 안내
+            })
+            
+        except OSError as e:
+            logger.error(f"파일 삭제 실패: {e}")
+            return jsonify({'success': False, 'message': f'삭제 실패: {e}'}), 500
+        except Exception as e:
+            logger.error(f"파일 삭제 중 예외: {e}")
+            return jsonify({'success': False, 'message': f'예외 발생: {e}'}), 500
+
 
 
 @app.route('/api/files/<filename>/preview')
