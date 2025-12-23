@@ -3,8 +3,12 @@
 사내 규정 검색기 - GUI 버전 PyInstaller Spec
 빌드: pyinstaller server_gui.spec
 
-버전: 1.4 (2024-12-19)
+버전: 1.5 (2024-12-23)
 수정 사항:
+- v1.4 UI/UX 개선 반영
+- 시스템 메트릭 모니터링 (psutil 필수)
+- 로그 필터링 기능 추가
+- GUI 앱 v1.2 업데이트
 - v1.3 다중 사용자 최적화 반영
 - Rate Limiter, Search Queue 지원
 - 병렬 문서 처리 (ThreadPoolExecutor) 지원

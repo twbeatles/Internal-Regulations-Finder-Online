@@ -37,8 +37,25 @@
 
         <!-- 메인 컨텐츠 -->
         <main class="main-content admin-page">
-            <!-- 상태 카드들 -->
+            <!-- 시스템 메트릭 -->
             <section class="stats-section">
+                <div class="metrics-grid">
+                    <div class="metric-card cpu">
+                        <span class="metric-icon">🖥️</span>
+                        <span class="metric-value" id="stat-cpu">0%</span>
+                        <span class="metric-label">CPU</span>
+                    </div>
+                    <div class="metric-card memory">
+                        <span class="metric-icon">💾</span>
+                        <span class="metric-value" id="stat-memory">0%</span>
+                        <span class="metric-label">메모리</span>
+                    </div>
+                    <div class="metric-card users">
+                        <span class="metric-icon">👥</span>
+                        <span class="metric-value" id="stat-active">0</span>
+                        <span class="metric-label">활성 검색</span>
+                    </div>
+                </div>
                 <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-icon">📄</div>

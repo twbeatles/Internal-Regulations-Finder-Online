@@ -1,6 +1,14 @@
 /**
- * 사내 규정 검색기 - 클라이언트 JavaScript
+ * 사내 규정 검색기 - 클라이언트 JavaScript v1.4
  * API 통신 및 UI 상호작용 처리
+ * 
+ * Features:
+ * - 하이브리드 검색 (Vector + BM25)
+ * - 검색어 자동완성 및 히스토리
+ * - 북마크 관리
+ * - 파일 관리 (업로드/삭제/미리보기)
+ * - 시스템 메트릭 모니터링
+ * - 다크/라이트 테마
  */
 
 // ============================================================================
@@ -1566,6 +1574,7 @@ async function loadStats() {
 
     const stats = result.stats || {};
 
+    // 기본 통계
     const filesEl = document.getElementById('stat-files');
     const chunksEl = document.getElementById('stat-chunks');
     const sizeEl = document.getElementById('stat-size');
@@ -1574,12 +1583,28 @@ async function loadStats() {
     if (chunksEl) chunksEl.textContent = stats.chunks || 0;
     if (sizeEl) sizeEl.textContent = stats.size_formatted || '0 B';
 
+    // 모델 정보
     const modelText = result.model || '-';
     const modelEl = document.getElementById('stat-model');
     if (modelEl) {
         // 모델명이 길면 줄임
         modelEl.textContent = modelText.length > 15 ? modelText.substring(0, 12) + '...' : modelText;
         modelEl.title = modelText;
+    }
+
+    // 시스템 메트릭 (CPU, 메모리, 활성 검색)
+    const cpuEl = document.getElementById('stat-cpu');
+    const memoryEl = document.getElementById('stat-memory');
+    const activeEl = document.getElementById('stat-active');
+
+    if (cpuEl && result.cpu_percent !== undefined) {
+        cpuEl.textContent = Math.round(result.cpu_percent) + '%';
+    }
+    if (memoryEl && result.memory_percent !== undefined) {
+        memoryEl.textContent = Math.round(result.memory_percent) + '%';
+    }
+    if (activeEl && result.search_queue) {
+        activeEl.textContent = result.search_queue.active || 0;
     }
 }
 
@@ -1736,6 +1761,12 @@ async function submitAdminAuth() {
 // 초기화
 // ============================================================================
 document.addEventListener('DOMContentLoaded', () => {
+    // 동적 년도 업데이트
+    const yearEl = document.getElementById('current-year');
+    if (yearEl) {
+        yearEl.textContent = new Date().getFullYear();
+    }
+
     // 메인 페이지인지 관리자 페이지인지 확인
     if (document.querySelector('.search-section')) {
         initSearch();

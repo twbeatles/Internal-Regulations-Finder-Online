@@ -1292,7 +1292,16 @@ def api_admin_logout():
 
 @app.route('/api/status')
 def api_status():
-    """서버 상태 조회"""
+    """서버 상태 조회 (시스템 메트릭 포함)"""
+    # 시스템 메트릭 수집
+    try:
+        import psutil
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        memory_percent = psutil.virtual_memory().percent
+    except ImportError:
+        cpu_percent = None
+        memory_percent = None
+    
     return jsonify({
         'success': True,
         'ready': qa_system.is_ready,
@@ -1300,7 +1309,12 @@ def api_status():
         'progress': qa_system.load_progress,
         'error': qa_system.load_error,  # 오류 메시지 추가
         'model': qa_system.model_name,
-        'stats': qa_system.get_stats() if qa_system.is_ready else None
+        'stats': qa_system.get_stats() if qa_system.is_ready else None,
+        # 시스템 메트릭
+        'cpu_percent': cpu_percent,
+        'memory_percent': memory_percent,
+        # 검색 큐 상태
+        'search_queue': search_queue.get_stats()
     })
 
 

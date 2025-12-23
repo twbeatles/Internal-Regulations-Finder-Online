@@ -36,7 +36,7 @@ from server import (
 # 상수
 # ============================================================================
 APP_NAME = "사내 규정 검색기 서버"
-APP_VERSION = "1.1"
+APP_VERSION = "1.2"
 REGISTRY_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
 REGISTRY_VALUE_NAME = "RegulationSearchServer"
 
@@ -603,6 +603,51 @@ class ServerWindow(QMainWindow):
         
         layout.addLayout(btn_layout)
         
+        # 시스템 메트릭
+        metrics_group = QGroupBox("시스템 상태")
+        metrics_layout = QHBoxLayout(metrics_group)
+        
+        # CPU 사용량
+        cpu_frame = QFrame()
+        cpu_layout = QVBoxLayout(cpu_frame)
+        cpu_layout.setContentsMargins(10, 5, 10, 5)
+        self.cpu_label = QLabel("🖥️ CPU")
+        self.cpu_label.setFont(QFont("", 10))
+        self.cpu_value = QLabel("0%")
+        self.cpu_value.setFont(QFont("", 14, QFont.Weight.Bold))
+        self.cpu_value.setStyleSheet("color: #3b82f6;")
+        cpu_layout.addWidget(self.cpu_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        cpu_layout.addWidget(self.cpu_value, alignment=Qt.AlignmentFlag.AlignCenter)
+        metrics_layout.addWidget(cpu_frame)
+        
+        # 메모리 사용량
+        mem_frame = QFrame()
+        mem_layout = QVBoxLayout(mem_frame)
+        mem_layout.setContentsMargins(10, 5, 10, 5)
+        self.mem_label = QLabel("💾 메모리")
+        self.mem_label.setFont(QFont("", 10))
+        self.mem_value = QLabel("0%")
+        self.mem_value.setFont(QFont("", 14, QFont.Weight.Bold))
+        self.mem_value.setStyleSheet("color: #f59e0b;")
+        mem_layout.addWidget(self.mem_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        mem_layout.addWidget(self.mem_value, alignment=Qt.AlignmentFlag.AlignCenter)
+        metrics_layout.addWidget(mem_frame)
+        
+        # 활성 검색 수
+        search_frame = QFrame()
+        search_layout = QVBoxLayout(search_frame)
+        search_layout.setContentsMargins(10, 5, 10, 5)
+        self.search_label = QLabel("🔍 활성 검색")
+        self.search_label.setFont(QFont("", 10))
+        self.search_value = QLabel("0")
+        self.search_value.setFont(QFont("", 14, QFont.Weight.Bold))
+        self.search_value.setStyleSheet("color: #10b981;")
+        search_layout.addWidget(self.search_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        search_layout.addWidget(self.search_value, alignment=Qt.AlignmentFlag.AlignCenter)
+        metrics_layout.addWidget(search_frame)
+        
+        layout.addWidget(metrics_group)
+        
         # 설정
         settings_group = QGroupBox("설정")
         settings_layout = QVBoxLayout(settings_group)
@@ -655,6 +700,27 @@ class ServerWindow(QMainWindow):
         self.clear_log_btn.setObjectName("smallBtn")
         self.clear_log_btn.clicked.connect(self._clear_log)
         log_btn_layout.addWidget(self.clear_log_btn)
+        
+        # 로그 필터 체크박스
+        log_btn_layout.addSpacing(20)
+        filter_label = QLabel("필터:")
+        filter_label.setStyleSheet("color: #888; font-size: 11px;")
+        log_btn_layout.addWidget(filter_label)
+        
+        self.log_filter_info = QCheckBox("INFO")
+        self.log_filter_info.setChecked(True)
+        self.log_filter_info.setStyleSheet("color: #a0a0b0;")
+        log_btn_layout.addWidget(self.log_filter_info)
+        
+        self.log_filter_warning = QCheckBox("WARNING")
+        self.log_filter_warning.setChecked(True)
+        self.log_filter_warning.setStyleSheet("color: #f59e0b;")
+        log_btn_layout.addWidget(self.log_filter_warning)
+        
+        self.log_filter_error = QCheckBox("ERROR")
+        self.log_filter_error.setChecked(True)
+        self.log_filter_error.setStyleSheet("color: #ef4444;")
+        log_btn_layout.addWidget(self.log_filter_error)
         
         log_btn_layout.addStretch()
         log_layout.addLayout(log_btn_layout)
@@ -808,6 +874,40 @@ class ServerWindow(QMainWindow):
             self.status_label.setText("⏳ 대기 중...")
             self.status_label.setProperty("status", "loading")
         
+        # 시스템 메트릭 업데이트
+        try:
+            import psutil
+            cpu = psutil.cpu_percent(interval=0)
+            mem = psutil.virtual_memory().percent
+            self.cpu_value.setText(f"{cpu:.0f}%")
+            self.mem_value.setText(f"{mem:.0f}%")
+            
+            # CPU 색상 변경 (높으면 빨강)
+            if cpu > 80:
+                self.cpu_value.setStyleSheet("color: #ef4444;")
+            elif cpu > 50:
+                self.cpu_value.setStyleSheet("color: #f59e0b;")
+            else:
+                self.cpu_value.setStyleSheet("color: #3b82f6;")
+            
+            # 메모리 색상 변경
+            if mem > 85:
+                self.mem_value.setStyleSheet("color: #ef4444;")
+            elif mem > 70:
+                self.mem_value.setStyleSheet("color: #f59e0b;")
+            else:
+                self.mem_value.setStyleSheet("color: #10b981;")
+        except ImportError:
+            pass
+        
+        # 활성 검색 수 업데이트
+        try:
+            from server import search_queue
+            queue_stats = search_queue.get_stats()
+            self.search_value.setText(str(queue_stats.get('active', 0)))
+        except (ImportError, AttributeError):
+            pass
+        
         # 스타일 새로고침 (안전하게)
         style = self.status_label.style()
         if style:
@@ -815,7 +915,28 @@ class ServerWindow(QMainWindow):
             style.polish(self.status_label)
     
     def _append_log(self, message: str, level: str = "INFO"):
-        """로그 추가 (레벨별 색상)"""
+        """로그 추가 (레벨별 색상, 필터 적용)"""
+        # 버퍼에 저장 (필터와 관계없이)
+        self.log_buffer.append((message, level))
+        if len(self.log_buffer) > 1000:
+            self.log_buffer = self.log_buffer[-500:]
+        
+        # 필터 체크
+        should_show = False
+        if level == "INFO" and hasattr(self, 'log_filter_info') and self.log_filter_info.isChecked():
+            should_show = True
+        elif level == "WARNING" and hasattr(self, 'log_filter_warning') and self.log_filter_warning.isChecked():
+            should_show = True
+        elif level == "ERROR" and hasattr(self, 'log_filter_error') and self.log_filter_error.isChecked():
+            should_show = True
+        elif level == "DEBUG":
+            should_show = True  # DEBUG는 항상 표시 (또는 별도 필터 추가 가능)
+        elif not hasattr(self, 'log_filter_info'):
+            should_show = True  # 필터 UI가 아직 없으면 모두 표시
+        
+        if not should_show:
+            return
+        
         # 색상 설정
         color_map = {
             "ERROR": "#ef4444",
@@ -828,11 +949,6 @@ class ServerWindow(QMainWindow):
         # HTML 형식으로 추가
         html = f'<span style="color: {color}">{message}</span>'
         self.log_text.append(html)
-        
-        # 버퍼에 저장
-        self.log_buffer.append(message)
-        if len(self.log_buffer) > 1000:
-            self.log_buffer = self.log_buffer[-500:]
         
         # 스크롤 맨 아래로
         scrollbar = self.log_text.verticalScrollBar()
@@ -848,7 +964,12 @@ class ServerWindow(QMainWindow):
         if filename:
             try:
                 with open(filename, 'w', encoding='utf-8') as f:
-                    f.write('\n'.join(self.log_buffer))
+                    # log_buffer는 이제 (message, level) 튜플 리스트
+                    for item in self.log_buffer:
+                        if isinstance(item, tuple):
+                            f.write(f"{item[0]}\n")
+                        else:
+                            f.write(f"{item}\n")
                 self.tray_icon.showMessage(
                     APP_NAME, "로그가 저장되었습니다",
                     QSystemTrayIcon.MessageIcon.Information, 2000
