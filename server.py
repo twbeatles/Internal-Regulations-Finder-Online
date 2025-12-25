@@ -38,12 +38,16 @@ from werkzeug.utils import secure_filename
 # ============================================================================
 class AppConfig:
     APP_NAME = "사내 규정 검색기"
-    APP_VERSION = "1.0 (웹 서버)"
+    APP_VERSION = "1.7 (웹 서버)"  # v1.7 디버깅 및 최적화
     
     # 서버 설정
     SERVER_HOST = "0.0.0.0"
     SERVER_PORT = 8080
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
+    
+    # 오프라인 모드 설정 (폐쇄망 지원)
+    OFFLINE_MODE = False  # True면 인터넷 연결 없이 로컬 모델만 사용
+    LOCAL_MODEL_PATH = ""  # 사전 다운로드된 모델 폴더 경로 (빈 문자열이면 기본 경로 사용)
     
     # AI 모델 설정
     AVAILABLE_MODELS: Dict[str, str] = {
@@ -648,12 +652,22 @@ class RegulationQASystem:
         """마지막 로드 오류 메시지"""
         return self._load_error
     
-    def load_model(self, model_name: str) -> TaskResult:
-        """AI 임베딩 모델 로드"""
+    def load_model(self, model_name: str, offline_mode: bool = None, local_model_path: str = None) -> TaskResult:
+        """AI 임베딩 모델 로드
+        
+        Args:
+            model_name: 모델 이름 (AVAILABLE_MODELS의 키)
+            offline_mode: 오프라인 모드 여부 (None이면 AppConfig 설정 사용)
+            local_model_path: 로컬 모델 경로 (None이면 AppConfig 설정 사용)
+        """
         import traceback
         
         if self._is_loading:
             return TaskResult(False, "이미 모델을 로딩 중입니다")
+        
+        # 오프라인 모드 설정 결정
+        is_offline = offline_mode if offline_mode is not None else AppConfig.OFFLINE_MODE
+        model_path_override = local_model_path if local_model_path is not None else AppConfig.LOCAL_MODEL_PATH
         
         model_id = AppConfig.AVAILABLE_MODELS.get(model_name, AppConfig.AVAILABLE_MODELS[AppConfig.DEFAULT_MODEL])
         self._load_error = ""  # 오류 초기화
@@ -683,20 +697,68 @@ class RegulationQASystem:
                 self._load_error = error_msg
                 return TaskResult(False, error_msg)
             
-            self._load_progress = "모델 다운로드/로딩 중..."
-            logger.info(f"모델 로딩 중: {model_name}")
-            
-            cache_dir = os.path.join(get_app_directory(), 'models')
+            # 모델 캐시 경로 결정
+            if model_path_override:
+                cache_dir = model_path_override
+            else:
+                cache_dir = os.path.join(get_app_directory(), 'models')
             os.makedirs(cache_dir, exist_ok=True)
-            logger.info(f"모델 캐시 경로: {cache_dir}")
+            
+            # 오프라인 모드 로깅 및 환경변수 설정
+            if is_offline:
+                self._load_progress = "오프라인 모드: 로컬 모델 로딩 중..."
+                logger.info(f"🔒 오프라인 모드 활성화: 로컬 모델만 사용")
+                logger.info(f"📂 모델 경로: {cache_dir}")
+                
+                # HuggingFace 오프라인 환경변수 설정 (네트워크 요청 방지)
+                os.environ['HF_HUB_OFFLINE'] = '1'
+                os.environ['TRANSFORMERS_OFFLINE'] = '1'
+                os.environ['HF_DATASETS_OFFLINE'] = '1'
+                
+                # 모델 디렉토리 존재 확인
+                model_subdir = os.path.join(cache_dir, model_id.replace('/', '--'))
+                if not os.path.exists(model_subdir):
+                    # HuggingFace 캐시 형식도 확인
+                    alt_dirs = [
+                        os.path.join(cache_dir, 'models--' + model_id.replace('/', '--')),
+                        cache_dir  # 직접 경로
+                    ]
+                    found = False
+                    for alt_dir in alt_dirs:
+                        if os.path.exists(alt_dir):
+                            found = True
+                            break
+                    
+                    if not found:
+                        error_msg = (
+                            f"오프라인 모드에서 모델을 찾을 수 없습니다.\n"
+                            f"모델 경로: {cache_dir}\n"
+                            f"예상 모델 폴더: {model_id.replace('/', '--')}\n\n"
+                            f"해결 방법:\n"
+                            f"1. 인터넷 연결된 환경에서 'python download_models.py' 실행\n"
+                            f"2. 생성된 models 폴더를 이 서버로 복사\n"
+                            f"3. 설정에서 '로컬 모델 경로'를 올바르게 지정"
+                        )
+                        logger.error(error_msg)
+                        self._load_error = error_msg
+                        return TaskResult(False, error_msg)
+            else:
+                self._load_progress = "모델 다운로드/로딩 중..."
+                logger.info(f"모델 로딩 중: {model_name}")
+                logger.info(f"모델 캐시 경로: {cache_dir}")
             
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
             logger.info(f"사용 디바이스: {device}")
             
+            # 모델 로드 옵션 설정
+            model_kwargs = {'device': device}
+            if is_offline:
+                model_kwargs['local_files_only'] = True
+            
             self.embedding_model = HuggingFaceEmbeddings(
                 model_name=model_id,
                 cache_folder=cache_dir,
-                model_kwargs={'device': device},
+                model_kwargs=model_kwargs,
                 encode_kwargs={'normalize_embeddings': True}
             )
             self.model_id = model_id
@@ -707,9 +769,10 @@ class RegulationQASystem:
             if device == 'cuda':
                 torch.cuda.empty_cache()
             
+            mode_str = "오프라인" if is_offline else "온라인"
             self._load_progress = "완료"
-            logger.info(f"모델 로드 완료: {model_name} ({device})")
-            return TaskResult(True, f"모델 로드 완료 ({device})")
+            logger.info(f"모델 로드 완료: {model_name} ({device}, {mode_str})")
+            return TaskResult(True, f"모델 로드 완료 ({device}, {mode_str})")
             
         except Exception as e:
             error_detail = traceback.format_exc()
@@ -1793,14 +1856,43 @@ def api_set_model():
 # ============================================================================
 # 메인 실행
 # ============================================================================
+def load_settings_to_config():
+    """설정 파일에서 AppConfig로 값 로드"""
+    settings_file = os.path.join(get_app_directory(), 'config', 'settings.json')
+    if os.path.exists(settings_file):
+        try:
+            with open(settings_file, 'r', encoding='utf-8') as f:
+                settings = json.load(f)
+                AppConfig.OFFLINE_MODE = settings.get('offline_mode', False)
+                AppConfig.LOCAL_MODEL_PATH = settings.get('local_model_path', '')
+                logger.info(f"📋 설정 로드 완료 - 오프라인 모드: {AppConfig.OFFLINE_MODE}")
+        except Exception as e:
+            logger.warning(f"설정 파일 로드 실패 (기본값 사용): {e}")
+
+
 def initialize_server():
     """서버 초기화 - 모델 로드"""
     logger.info("=" * 60)
     logger.info(f"🚀 {AppConfig.APP_NAME} {AppConfig.APP_VERSION}")
     logger.info("=" * 60)
     
-    # 모델 로드
-    result = qa_system.load_model(AppConfig.DEFAULT_MODEL)
+    # 설정 파일에서 오프라인 모드 설정 로드
+    load_settings_to_config()
+    
+    # 오프라인 모드 상태 로깅
+    if AppConfig.OFFLINE_MODE:
+        logger.info("🔒 오프라인 모드 활성화 - 로컬 모델만 사용")
+        if AppConfig.LOCAL_MODEL_PATH:
+            logger.info(f"📂 로컬 모델 경로: {AppConfig.LOCAL_MODEL_PATH}")
+    else:
+        logger.info("🌐 온라인 모드 - 필요 시 모델 다운로드")
+    
+    # 모델 로드 (오프라인 모드 설정 전달)
+    result = qa_system.load_model(
+        AppConfig.DEFAULT_MODEL,
+        offline_mode=AppConfig.OFFLINE_MODE,
+        local_model_path=AppConfig.LOCAL_MODEL_PATH
+    )
     if result.success:
         logger.info(f"✅ {result.message}")
         

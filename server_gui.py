@@ -36,7 +36,7 @@ from server import (
 # 상수
 # ============================================================================
 APP_NAME = "사내 규정 검색기 서버"
-APP_VERSION = "1.2"
+APP_VERSION = "1.3"
 REGISTRY_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
 REGISTRY_VALUE_NAME = "RegulationSearchServer"
 
@@ -45,7 +45,7 @@ REGISTRY_VALUE_NAME = "RegulationSearchServer"
 # 설정 관리자
 # ============================================================================
 class SettingsManager:
-    """설정 파일 관리 (비밀번호 등)"""
+    """설정 파일 관리 (비밀번호, 오프라인 모드 등)"""
     
     def __init__(self):
         self.settings_dir = os.path.join(
@@ -64,7 +64,12 @@ class SettingsManager:
                     return json.load(f)
             except (json.JSONDecodeError, IOError):
                 pass
-        return {'admin_password_hash': '', 'server_port': 8080}
+        return {
+            'admin_password_hash': '', 
+            'server_port': 8080,
+            'offline_mode': False,
+            'local_model_path': ''
+        }
     
     def _save(self):
         try:
@@ -106,6 +111,26 @@ class SettingsManager:
     def get_password_hash(self) -> str:
         """저장된 비밀번호 해시 반환"""
         return self._settings.get('admin_password_hash', '')
+    
+    # ========== 오프라인 모드 설정 (폐쇄망 지원) ==========
+    
+    def get_offline_mode(self) -> bool:
+        """오프라인 모드 활성화 여부 반환"""
+        return self._settings.get('offline_mode', False)
+    
+    def set_offline_mode(self, enabled: bool):
+        """오프라인 모드 설정"""
+        self._settings['offline_mode'] = enabled
+        self._save()
+    
+    def get_local_model_path(self) -> str:
+        """로컬 모델 경로 반환 (빈 문자열이면 기본 경로 사용)"""
+        return self._settings.get('local_model_path', '')
+    
+    def set_local_model_path(self, path: str):
+        """로컬 모델 경로 설정"""
+        self._settings['local_model_path'] = path
+        self._save()
 
 
 # 전역 설정 관리자
@@ -547,8 +572,8 @@ class ServerWindow(QMainWindow):
     
     def _init_ui(self):
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
-        self.setMinimumSize(550, 550)
-        self.resize(600, 600)
+        self.setMinimumSize(600, 700)
+        self.resize(650, 750)
         
         central = QWidget()
         self.setCentralWidget(central)
@@ -681,6 +706,47 @@ class ServerWindow(QMainWindow):
         pw_layout.addWidget(self.pw_status)
         pw_layout.addStretch()
         settings_layout.addLayout(pw_layout)
+        
+        # ========== 오프라인 모드 설정 (폐쇄망 지원) ==========
+        offline_separator = QFrame()
+        offline_separator.setFrameShape(QFrame.Shape.HLine)
+        offline_separator.setStyleSheet("background-color: #0f3460;")
+        settings_layout.addWidget(offline_separator)
+        
+        offline_label = QLabel("🔌 오프라인 모드 (폐쇄망 지원)")
+        offline_label.setStyleSheet("color: #e94560; font-weight: bold; margin-top: 5px;")
+        settings_layout.addWidget(offline_label)
+        
+        # 오프라인 모드 체크박스
+        self.offline_check = QCheckBox("오프라인 모드 활성화 (인터넷 없이 로컬 모델 사용)")
+        self.offline_check.setChecked(settings_manager.get_offline_mode())
+        self.offline_check.stateChanged.connect(self._toggle_offline_mode)
+        settings_layout.addWidget(self.offline_check)
+        
+        # 로컬 모델 경로 설정
+        model_path_layout = QHBoxLayout()
+        model_path_label = QLabel("모델 경로:")
+        model_path_label.setStyleSheet("color: #888; font-size: 11px;")
+        model_path_layout.addWidget(model_path_label)
+        
+        self.model_path_edit = QLineEdit()
+        self.model_path_edit.setPlaceholderText("기본값: ./models (비워두면 기본 경로 사용)")
+        self.model_path_edit.setText(settings_manager.get_local_model_path())
+        self.model_path_edit.textChanged.connect(self._on_model_path_changed)
+        model_path_layout.addWidget(self.model_path_edit)
+        
+        self.model_path_btn = QPushButton("📂")
+        self.model_path_btn.setObjectName("smallBtn")
+        self.model_path_btn.setFixedWidth(40)
+        self.model_path_btn.clicked.connect(self._browse_model_path)
+        model_path_layout.addWidget(self.model_path_btn)
+        
+        settings_layout.addLayout(model_path_layout)
+        
+        # 오프라인 모드 안내
+        offline_hint = QLabel("※ 오프라인 모드 사용 전, 인터넷 환경에서 download_models.py를 실행하세요")
+        offline_hint.setStyleSheet("color: #666; font-size: 10px;")
+        settings_layout.addWidget(offline_hint)
         
         layout.addWidget(settings_group)
         
@@ -837,6 +903,59 @@ class ServerWindow(QMainWindow):
                     self, "알림", 
                     "포트가 변경되었습니다.\n서버를 재시작해야 적용됩니다."
                 )
+    
+    def _toggle_offline_mode(self, state):
+        """오프라인 모드 토글"""
+        enabled = state == Qt.CheckState.Checked.value
+        settings_manager.set_offline_mode(enabled)
+        
+        # AppConfig도 업데이트
+        AppConfig.OFFLINE_MODE = enabled
+        
+        mode_str = "활성화" if enabled else "비활성화"
+        logger.info(f"🔌 오프라인 모드 {mode_str}")
+        
+        if enabled:
+            QMessageBox.information(
+                self, "오프라인 모드",
+                "오프라인 모드가 활성화되었습니다.\n\n"
+                "• 인터넷 연결 없이 로컬 모델만 사용합니다.\n"
+                "• 모델이 미리 다운로드되어 있어야 합니다.\n"
+                "• 서버를 재시작해야 적용됩니다.\n\n"
+                "모델 다운로드: python download_models.py"
+            )
+        else:
+            QMessageBox.information(
+                self, "오프라인 모드",
+                "오프라인 모드가 비활성화되었습니다.\n"
+                "서버를 재시작해야 적용됩니다."
+            )
+    
+    def _on_model_path_changed(self, text):
+        """모델 경로 변경 시"""
+        settings_manager.set_local_model_path(text)
+        AppConfig.LOCAL_MODEL_PATH = text
+        if text:
+            logger.info(f"📂 로컬 모델 경로 변경: {text}")
+    
+    def _browse_model_path(self):
+        """모델 폴더 선택 다이얼로그"""
+        current_path = self.model_path_edit.text() or os.path.join(
+            os.path.dirname(sys.executable) if getattr(sys, 'frozen', False)
+            else os.path.dirname(os.path.abspath(__file__)),
+            'models'
+        )
+        
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "모델 폴더 선택",
+            current_path,
+            QFileDialog.Option.ShowDirsOnly
+        )
+        
+        if folder:
+            self.model_path_edit.setText(folder)
+            logger.info(f"📂 모델 폴더 선택: {folder}")
     
     def _restart_server(self):
         """서버 재시작"""

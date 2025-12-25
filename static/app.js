@@ -1,14 +1,16 @@
 /**
- * 사내 규정 검색기 - 클라이언트 JavaScript v1.4
+ * 사내 규정 검색기 - 클라이언트 JavaScript v1.6
  * API 통신 및 UI 상호작용 처리
  * 
  * Features:
  * - 하이브리드 검색 (Vector + BM25)
  * - 검색어 자동완성 및 히스토리
- * - 북마크 관리
+ * - 북마크 관리 (이벤트 위임 패턴)
  * - 파일 관리 (업로드/삭제/미리보기)
  * - 시스템 메트릭 모니터링
  * - 다크/라이트 테마
+ * - 콘텐츠 접기/펼치기
+ * - XSS 보안 강화
  */
 
 // ============================================================================
@@ -941,9 +943,18 @@ async function loadFileListForFilter() {
 }
 
 // ============================================================================
-// 북마크 토글
+// 북마크 토글 (XSS 방지를 위해 인덱스 기반으로 변경)
 // ============================================================================
-function toggleBookmark(item, buttonElement) {
+// 현재 검색 결과 저장 (이벤트 위임용)
+let currentSearchResults = [];
+
+function toggleBookmarkByIndex(index, buttonElement) {
+    const item = currentSearchResults[index];
+    if (!item) {
+        Toast.error('오류', '북마크 대상을 찾을 수 없습니다');
+        return;
+    }
+
     const isBookmarked = BookmarkManager.isBookmarked(item.content);
 
     if (isBookmarked) {
@@ -954,6 +965,7 @@ function toggleBookmark(item, buttonElement) {
             BookmarkManager.remove(bookmark.id);
             buttonElement.textContent = '☆';
             buttonElement.title = '북마크 추가';
+            buttonElement.classList.remove('bookmarked');
             Toast.info('북마크 해제', '북마크가 제거되었습니다');
         }
     } else {
@@ -961,9 +973,45 @@ function toggleBookmark(item, buttonElement) {
         if (BookmarkManager.add(item)) {
             buttonElement.textContent = '⭐';
             buttonElement.title = '북마크 해제';
+            buttonElement.classList.add('bookmarked');
             Toast.success('북마크 저장', '북마크에 추가되었습니다');
         }
     }
+}
+
+// 이벤트 위임으로 북마크 버튼 처리
+function setupBookmarkEventDelegation() {
+    const container = document.getElementById('results-container');
+    if (!container) return;
+
+    container.addEventListener('click', (e) => {
+        const bookmarkBtn = e.target.closest('.btn-bookmark');
+        if (bookmarkBtn) {
+            const index = parseInt(bookmarkBtn.dataset.index, 10);
+            if (!isNaN(index)) {
+                toggleBookmarkByIndex(index, bookmarkBtn);
+            }
+        }
+
+        // 복사 버튼 처리
+        const copyBtn = e.target.closest('.btn-copy');
+        if (copyBtn) {
+            const index = parseInt(copyBtn.dataset.index, 10);
+            if (!isNaN(index) && currentSearchResults[index]) {
+                copyToClipboard(currentSearchResults[index].content || '');
+            }
+        }
+
+        // 콘텐츠 접기/펼치기 처리
+        const toggleBtn = e.target.closest('.btn-toggle-content');
+        if (toggleBtn) {
+            const card = toggleBtn.closest('.result-card');
+            if (card) {
+                card.classList.toggle('collapsed');
+                toggleBtn.textContent = card.classList.contains('collapsed') ? '펼치기 ▼' : '접기 ▲';
+            }
+        }
+    });
 }
 
 // ============================================================================
@@ -1026,6 +1074,9 @@ async function initSearch() {
             searchInput?.focus();
         }
     });
+
+    // 이벤트 위임 설정 (북마크, 복사, 접기/펼치기)
+    setupBookmarkEventDelegation();
 }
 
 async function performSearch() {
@@ -1137,15 +1188,23 @@ function renderSearchResults(results, query) {
         </div>
     `;
 
+    // 검색 결과 저장 (이벤트 위임용)
+    currentSearchResults = results;
+
     results.forEach((item, index) => {
         const score = Math.round((item.score || 0) * 100);
         const scoreClass = score >= 70 ? 'high' : score >= 40 ? 'medium' : 'low';
         const isBookmarked = BookmarkManager.isBookmarked(item.content || '');
         const bookmarkIcon = isBookmarked ? '⭐' : '☆';
         const bookmarkTitle = isBookmarked ? '북마크 해제' : '북마크 추가';
+        const bookmarkClass = isBookmarked ? 'bookmarked' : '';
 
         // 서버에서 하이라이트된 컨텐츠 사용 (없으면 일반 컨텐츠)
         const displayContent = item.content_highlighted || escapeHtml(item.content || '');
+
+        // 콘텐츠 길이에 따라 접기 버튼 표시
+        const contentLength = (item.content || '').length;
+        const showToggle = contentLength > 300;
 
         html += `
             <div class="result-card" style="animation-delay: ${index * 0.1}s">
@@ -1153,20 +1212,22 @@ function renderSearchResults(results, query) {
                     <div class="result-title">
                         <span class="result-index">${index + 1}</span>
                         <span class="result-source">${escapeHtml(item.source || '알 수 없음')}</span>
-                        <button class="btn-bookmark" 
-                                onclick="toggleBookmark(${JSON.stringify(item).replace(/"/g, '&quot;')}, this)" 
-                                title="${bookmarkTitle}">${bookmarkIcon}</button>
+                        <button class="btn-bookmark ${bookmarkClass}" 
+                                data-index="${index}"
+                                title="${bookmarkTitle}"
+                                aria-label="${bookmarkTitle}">${bookmarkIcon}</button>
                     </div>
                     <div class="result-score">
                         <span class="score-value ${scoreClass}">${score}%</span>
-                        <div class="score-bar">
+                        <div class="score-bar" role="progressbar" aria-valuenow="${score}" aria-valuemin="0" aria-valuemax="100">
                             <div class="score-fill ${scoreClass}" style="width: ${score}%"></div>
                         </div>
                     </div>
                 </div>
                 <div class="result-content">${displayContent}</div>
                 <div class="result-actions">
-                    <button class="btn btn-secondary" onclick="copyToClipboard(\`${escapeJs(item.content || '')}\`)">
+                    ${showToggle ? '<button class="btn btn-sm btn-toggle-content">접기 ▲</button>' : ''}
+                    <button class="btn btn-secondary btn-copy" data-index="${index}">
                         📋 복사
                     </button>
                     <a href="/api/files/${encodeURIComponent(item.source || '')}/download" 
