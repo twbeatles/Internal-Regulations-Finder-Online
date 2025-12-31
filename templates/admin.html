@@ -110,19 +110,55 @@
             <!-- 파일 업로드 섹션 -->
             <section class="upload-section card admin-only" style="display: none;">
                 <h2 class="section-title">📁 규정 파일 업로드</h2>
+                <div class="upload-options" style="display: flex; gap: 10px; margin-bottom: 10px;">
+                    <button id="btn-upload-file" class="btn btn-primary active">파일 업로드</button>
+                    <button id="btn-upload-folder" class="btn btn-secondary">폴더 업로드 (ZIP)</button>
+                </div>
+
+                <!-- 파일 업로드 (기본) -->
                 <div class="upload-area" id="upload-area">
                     <div class="upload-content">
                         <div class="upload-icon">📤</div>
                         <p class="upload-text">파일을 드래그하거나 클릭하여 업로드</p>
-                        <p class="upload-hint">지원 형식: .txt, .docx, .pdf (최대 50MB)</p>
+                        <p class="upload-hint">지원 형식: .txt, .docx, .pdf, .xlsx, .hwp (최대 50MB)</p>
                     </div>
-                    <input type="file" id="file-input" multiple accept=".txt,.docx,.pdf" hidden aria-label="파일 선택">
+                    <input type="file" id="file-input" multiple accept=".txt,.docx,.pdf,.xlsx,.xls,.hwp" hidden
+                        aria-label="파일 선택">
                 </div>
+
+                <!-- 폴더 업로드 (ZIP) -->
+                <div class="upload-area" id="folder-upload-area" style="display: none;">
+                    <div class="upload-content">
+                        <div class="upload-icon">🗂️</div>
+                        <p class="upload-text">ZIP 파일을 드래그하거나 클릭하여 업로드</p>
+                        <p class="upload-hint">폴더 구조가 포함된 ZIP 파일을 업로드하세요</p>
+                    </div>
+                    <input type="file" id="folder-input" accept=".zip" hidden aria-label="ZIP 파일 선택">
+                </div>
+
                 <div id="upload-progress" class="upload-progress hidden">
                     <div class="progress-bar">
                         <div class="progress-fill" id="progress-fill"></div>
                     </div>
                     <p class="progress-text" id="progress-text">업로드 중...</p>
+                </div>
+            </section>
+
+            <!-- 동기화 설정 섹션 (v2.0) -->
+            <section class="sync-section card admin-only" style="display: none;">
+                <h2 class="section-title">🔄 자동 동기화 설정</h2>
+                <div class="sync-controls">
+                    <p class="sync-desc">지정된 폴더의 변경사항(파일 추가/수정/삭제)을 실시간으로 감지하여 자동으로 반영합니다.</p>
+                    <div class="sync-status-box">
+                        <span id="sync-status-indicator" class="status-dot"></span>
+                        <span id="sync-status-text">동기화 중지됨</span>
+                    </div>
+                    <div class="sync-actions">
+                        <input type="text" id="sync-folder-path" class="form-input"
+                            placeholder="모니터링할 폴더 경로 (기본값: upload 폴더)" readonly>
+                        <button id="btn-start-sync" class="btn btn-success">▶ 시작</button>
+                        <button id="btn-stop-sync" class="btn btn-danger" disabled>⏹ 중지</button>
+                    </div>
                 </div>
             </section>
 
@@ -188,7 +224,7 @@
 
         <!-- 푸터 -->
         <footer class="footer">
-            <p>© <span id="current-year">2024</span> 사내 규정 검색기 - 관리자 페이지</p>
+            <p>© <span id="current-year">2025</span> 사내 규정 검색기 - 관리자 페이지</p>
         </footer>
     </div>
 

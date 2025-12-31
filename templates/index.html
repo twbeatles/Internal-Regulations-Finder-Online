@@ -9,6 +9,15 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline';">
+
+    <!-- PWA 지원 (v2.0) -->
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#667eea">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="규정검색">
+    <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+
     <title>사내 규정 검색기</title>
     <link rel="stylesheet" href="/static/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap"
@@ -94,6 +103,20 @@
                         <div class="welcome-icon" aria-hidden="true">👋</div>
                         <h2>사내 규정을 검색해보세요</h2>
                         <p>휴가, 복리후생, 근무 규정 등 다양한 사내 규정을 빠르게 찾아볼 수 있습니다.</p>
+                        <div class="search-tips"
+                            style="margin-top: 24px; padding: 16px; background: var(--bg-input); border-radius: 12px; text-align: left; max-width: 400px; margin-left: auto; margin-right: auto;">
+                            <p style="font-weight: 600; margin-bottom: 12px; color: var(--accent-primary);">💡 검색 팁</p>
+                            <ul
+                                style="list-style: none; padding: 0; margin: 0; color: var(--text-secondary); font-size: 14px;">
+                                <li style="margin-bottom: 8px;">• <kbd
+                                        style="background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px; font-size: 12px;">Ctrl
+                                        + K</kbd> 검색창 바로가기</li>
+                                <li style="margin-bottom: 8px;">• <kbd
+                                        style="background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px; font-size: 12px;">?</kbd>
+                                    단축키 도움말</li>
+                                <li>• 하이브리드 검색으로 더 정확한 결과 제공</li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -101,12 +124,104 @@
 
         <!-- 푸터 -->
         <footer class="footer">
-            <p>© <span id="current-year">2024</span> 사내 규정 검색기 - AI 기반 규정 검색 시스템</p>
+            <p>© <span id="current-year">2025</span> 사내 규정 검색기 - AI 기반 규정 검색 시스템</p>
         </footer>
     </div>
 
     <!-- 토스트 알림 -->
     <div id="toast-container" class="toast-container"></div>
+
+    <!-- 읽기 모드 모달 (v2.0) -->
+    <div id="reader-modal" class="modal-overlay" style="display: none;">
+        <div class="reader-content">
+            <div class="reader-toolbar">
+                <button id="reader-close" class="reader-btn" title="닫기 (Esc)">✕</button>
+                <div class="reader-title" id="reader-title">문서 읽기</div>
+                <div class="reader-controls">
+                    <button id="reader-font-down" class="reader-btn" title="글자 작게">A-</button>
+                    <span id="reader-font-size">16px</span>
+                    <button id="reader-font-up" class="reader-btn" title="글자 크게">A+</button>
+                </div>
+            </div>
+            <div id="reader-body" class="reader-body"></div>
+        </div>
+    </div>
+
+    <!-- 키보드 단축키 도움말 모달 (v2.0) -->
+    <div id="shortcuts-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content shortcuts-modal">
+            <div class="modal-header">
+                <h3>⌨️ 키보드 단축키</h3>
+                <button id="shortcuts-close" class="modal-close">✕</button>
+            </div>
+            <div class="shortcuts-list">
+                <div class="shortcut-group">
+                    <h4>검색</h4>
+                    <div class="shortcut-item">
+                        <kbd>Ctrl</kbd> + <kbd>K</kbd>
+                        <span>검색창 포커스</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>Enter</kbd>
+                        <span>검색 실행</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>Esc</kbd>
+                        <span>모달 닫기</span>
+                    </div>
+                </div>
+                <div class="shortcut-group">
+                    <h4>탐색</h4>
+                    <div class="shortcut-item">
+                        <kbd>J</kbd> / <kbd>↓</kbd>
+                        <span>다음 결과</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>K</kbd> / <kbd>↑</kbd>
+                        <span>이전 결과</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>Enter</kbd>
+                        <span>선택한 결과 열기</span>
+                    </div>
+                </div>
+                <div class="shortcut-group">
+                    <h4>하이라이트</h4>
+                    <div class="shortcut-item">
+                        <kbd>N</kbd>
+                        <span>다음 하이라이트</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>P</kbd>
+                        <span>이전 하이라이트</span>
+                    </div>
+                </div>
+                <div class="shortcut-group">
+                    <h4>기타</h4>
+                    <div class="shortcut-item">
+                        <kbd>?</kbd>
+                        <span>단축키 도움말</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>R</kbd>
+                        <span>읽기 모드</span>
+                    </div>
+                    <div class="shortcut-item">
+                        <kbd>T</kbd>
+                        <span>테마 변경</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 하이라이트 네비게이션 바 (v2.0) -->
+    <div id="highlight-nav" class="highlight-nav" style="display: none;">
+        <span id="highlight-count">0 / 0</span>
+        <button id="highlight-prev" class="highlight-btn" title="이전 하이라이트 (P)">◀</button>
+        <button id="highlight-next" class="highlight-btn" title="다음 하이라이트 (N)">▶</button>
+        <button id="highlight-close" class="highlight-btn" title="닫기">✕</button>
+    </div>
 
     <script src="/static/app.js"></script>
 </body>

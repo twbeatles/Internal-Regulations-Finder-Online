@@ -36,7 +36,7 @@ from server import (
 # 상수
 # ============================================================================
 APP_NAME = "사내 규정 검색기 서버"
-APP_VERSION = "1.3"
+APP_VERSION = "1.4"
 REGISTRY_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
 REGISTRY_VALUE_NAME = "RegulationSearchServer"
 
@@ -619,10 +619,12 @@ class ServerWindow(QMainWindow):
         btn_layout = QHBoxLayout()
         
         self.open_btn = QPushButton("🔍 검색 페이지 열기")
+        self.open_btn.setToolTip("브라우저에서 검색 페이지를 엽니다")
         self.open_btn.clicked.connect(self._open_search)
         btn_layout.addWidget(self.open_btn)
         
         self.admin_btn = QPushButton("⚙️ 관리자 페이지")
+        self.admin_btn.setToolTip("파일 업로드 및 시스템 설정 페이지를 엽니다")
         self.admin_btn.clicked.connect(self._open_admin)
         btn_layout.addWidget(self.admin_btn)
         
@@ -681,6 +683,7 @@ class ServerWindow(QMainWindow):
         port_layout = QHBoxLayout()
         self.port_btn = QPushButton("🔌 포트 설정")
         self.port_btn.setObjectName("smallBtn")
+        self.port_btn.setToolTip("서버가 사용할 포트 번호를 변경합니다 (변경 후 재시작 필요)")
         self.port_btn.clicked.connect(self._show_port_dialog)
         port_layout.addWidget(self.port_btn)
         port_layout.addStretch()
@@ -699,6 +702,7 @@ class ServerWindow(QMainWindow):
         pw_layout = QHBoxLayout()
         self.pw_btn = QPushButton("🔑 관리자 비밀번호 설정")
         self.pw_btn.setObjectName("smallBtn")
+        self.pw_btn.setToolTip("관리자 페이지 접근 시 필요한 비밀번호를 설정합니다")
         self.pw_btn.clicked.connect(self._show_password_dialog)
         pw_layout.addWidget(self.pw_btn)
         
@@ -759,11 +763,13 @@ class ServerWindow(QMainWindow):
         
         self.save_log_btn = QPushButton("💾 저장")
         self.save_log_btn.setObjectName("smallBtn")
+        self.save_log_btn.setToolTip("현재 로그를 텍스트 파일로 저장합니다")
         self.save_log_btn.clicked.connect(self._save_log)
         log_btn_layout.addWidget(self.save_log_btn)
         
         self.clear_log_btn = QPushButton("🗑️ 지우기")
         self.clear_log_btn.setObjectName("smallBtn")
+        self.clear_log_btn.setToolTip("로그 창의 내용을 모두 지웁니다")
         self.clear_log_btn.clicked.connect(self._clear_log)
         log_btn_layout.addWidget(self.clear_log_btn)
         
@@ -802,11 +808,13 @@ class ServerWindow(QMainWindow):
         server_btn_layout = QHBoxLayout()
         
         self.restart_btn = QPushButton("🔄 서버 재시작")
+        self.restart_btn.setToolTip("서버를 재시작합니다 (설정 변경 적용)")
         self.restart_btn.clicked.connect(self._restart_server)
         server_btn_layout.addWidget(self.restart_btn)
         
         self.quit_btn = QPushButton("🛑 프로그램 종료")
         self.quit_btn.setObjectName("dangerBtn")
+        self.quit_btn.setToolTip("서버를 종료하고 프로그램을 닫습니다")
         self.quit_btn.clicked.connect(self._quit_app)
         server_btn_layout.addWidget(self.quit_btn)
         

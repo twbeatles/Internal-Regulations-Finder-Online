@@ -140,6 +140,272 @@ const NetworkStatus = {
 };
 
 // ============================================================================
+// v2.0 UI 기능 모듈
+// ============================================================================
+
+// PWA 서비스 워커 등록
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/static/sw.js')
+            .then(reg => console.log('SW Registered:', reg))
+            .catch(err => console.log('SW Fail:', err));
+    });
+}
+
+// 키보드 단축키 매니저
+const KeyboardShortcuts = {
+    modal: null,
+
+    init() {
+        this.modal = document.getElementById('shortcuts-modal');
+
+        // 단축키 이벤트 리스너
+        document.addEventListener('keydown', (e) => {
+            // 입력 중일 때는 단축키 무시 (Esc는 제외)
+            if (e.target.matches('input, textarea') && e.key !== 'Escape') {
+                return;
+            }
+
+            // Ctrl/Cmd + K: 검색창 포커스
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                document.getElementById('search-input').focus();
+            }
+
+            // Ctrl/Cmd + /: 도움말 표시 (한글 키보드 대응 '?' 키)
+            if ((e.ctrlKey || e.metaKey) && (e.key === '/' || e.key === '?')) {
+                e.preventDefault();
+                this.toggleHelp();
+            }
+
+            // J/K/Down/Up: 검색 결과 탐색 (입력 중 아닐 때)
+            if (!this.isInputActive()) {
+                if (e.key === 'j' || e.key === 'ArrowDown') {
+                    // e.preventDefault(); // 스크롤 방해 금지
+                    SearchResultNavigator.next();
+                }
+                if (e.key === 'k' || e.key === 'ArrowUp') {
+                    // e.preventDefault();
+                    SearchResultNavigator.prev();
+                }
+
+                // N/P: 하이라이트 탐색
+                if (e.key === 'n') HighlightNavigator.next();
+                if (e.key === 'p') HighlightNavigator.prev();
+
+                // R: 읽기 모드
+                if (e.key === 'r') ReaderMode.toggleCurrent();
+
+                // T: 테마 토글
+                if (e.key === 't') ThemeManager.toggle();
+            }
+
+            // Esc: 모든 모달/읽기모드/네비게이션 닫기
+            if (e.key === 'Escape') {
+                this.closeAll();
+            }
+        });
+
+        // 도움말 모달 닫기 버튼
+        const closeBtn = document.getElementById('shortcuts-close');
+        if (closeBtn) closeBtn.addEventListener('click', () => this.toggleHelp(false));
+    },
+
+    isInputActive() {
+        const active = document.activeElement;
+        return active.tagName === 'INPUT' || active.tagName === 'TEXTAREA';
+    },
+
+    toggleHelp(show) {
+        if (!this.modal) return;
+        const isShown = this.modal.style.display !== 'none';
+        const shouldShow = show !== undefined ? show : !isShown;
+        this.modal.style.display = shouldShow ? 'flex' : 'none';
+    },
+
+    closeAll() {
+        this.toggleHelp(false);
+        ReaderMode.close();
+        HighlightNavigator.close();
+        // 기타 모달 닫기
+    }
+};
+
+// 읽기 모드
+const ReaderMode = {
+    modal: null,
+    body: null,
+    fontSize: 16,
+
+    init() {
+        this.modal = document.getElementById('reader-modal');
+        this.body = document.getElementById('reader-body');
+
+        if (!this.modal) return;
+
+        // 버튼 이벤트
+        document.getElementById('reader-close').addEventListener('click', () => this.close());
+
+        document.getElementById('reader-font-up').addEventListener('click', () => {
+            this.fontSize = Math.min(this.fontSize + 2, 32);
+            this.updateFont();
+        });
+
+        document.getElementById('reader-font-down').addEventListener('click', () => {
+            this.fontSize = Math.max(this.fontSize - 2, 12);
+            this.updateFont();
+        });
+    },
+
+    open(title, content) {
+        if (!this.modal) return;
+
+        document.getElementById('reader-title').textContent = title;
+        // 마크다운 변환 또는 줄바꿈 처리
+        this.body.innerHTML = content.replace(/\n/g, '<br>');
+        this.modal.style.display = 'flex';
+        document.body.style.overflow = 'hidden'; // 배경 스크롤 방지
+        this.updateFont();
+    },
+
+    close() {
+        if (this.modal) this.modal.style.display = 'none';
+        document.body.style.overflow = '';
+    },
+
+    updateFont() {
+        if (this.body) {
+            this.body.style.fontSize = `${this.fontSize}px`;
+            document.getElementById('reader-font-size').textContent = `${this.fontSize}px`;
+        }
+    },
+
+    toggleCurrent() {
+        // 현재 선택된 결과가 있으면 읽기 모드로 열기
+        const selected = document.querySelector('.result-card.selected');
+        if (selected) {
+            const title = selected.querySelector('.result-source').textContent;
+            const content = selected.querySelector('.result-content').textContent;
+            this.open(title, content);
+        }
+    }
+};
+
+// 하이라이트 네비게이터
+const HighlightNavigator = {
+    container: null,
+    highlights: [],
+    currentIndex: -1,
+
+    init() {
+        this.container = document.getElementById('highlight-nav');
+        if (!this.container) return;
+
+        document.getElementById('highlight-prev').addEventListener('click', () => this.prev());
+        document.getElementById('highlight-next').addEventListener('click', () => this.next());
+        document.getElementById('highlight-close').addEventListener('click', () => this.close());
+    },
+
+    scan() {
+        this.highlights = Array.from(document.querySelectorAll('mark.highlight'));
+        this.currentIndex = -1;
+        this.updateUI();
+
+        if (this.highlights.length > 0) {
+            this.container.style.display = 'flex';
+        } else {
+            this.container.style.display = 'none';
+        }
+    },
+
+    next() {
+        if (this.highlights.length === 0) return;
+        this.currentIndex = (this.currentIndex + 1) % this.highlights.length;
+        this.focus();
+    },
+
+    prev() {
+        if (this.highlights.length === 0) return;
+        this.currentIndex = (this.currentIndex - 1 + this.highlights.length) % this.highlights.length;
+        this.focus();
+    },
+
+    focus() {
+        const el = this.highlights[this.currentIndex];
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        // 현재 활성화 표시
+        this.highlights.forEach(h => h.classList.remove('active'));
+        el.classList.add('active');
+
+        this.updateUI();
+    },
+
+    updateUI() {
+        const countEl = document.getElementById('highlight-count');
+        if (countEl) {
+            countEl.textContent = this.highlights.length > 0 ?
+                `${this.currentIndex + 1} / ${this.highlights.length}` : '0 / 0';
+        }
+    },
+
+    close() {
+        if (this.container) this.container.style.display = 'none';
+        this.highlights.forEach(h => h.classList.remove('active'));
+    }
+};
+
+// 검색 결과 키보드 탐색
+const SearchResultNavigator = {
+    cards: [],
+
+    scan() {
+        this.cards = Array.from(document.querySelectorAll('.result-card'));
+    },
+
+    next() {
+        this.scan();
+        if (this.cards.length === 0) return;
+
+        const current = document.querySelector('.result-card.selected');
+        let nextIndex = 0;
+
+        if (current) {
+            current.classList.remove('selected');
+            const idx = this.cards.indexOf(current);
+            nextIndex = (idx + 1) % this.cards.length;
+        }
+
+        this.select(nextIndex);
+    },
+
+    prev() {
+        this.scan();
+        if (this.cards.length === 0) return;
+
+        const current = document.querySelector('.result-card.selected');
+        let prevIndex = this.cards.length - 1;
+
+        if (current) {
+            current.classList.remove('selected');
+            const idx = this.cards.indexOf(current);
+            prevIndex = (idx - 1 + this.cards.length) % this.cards.length;
+        }
+
+        this.select(prevIndex);
+    },
+
+    select(index) {
+        const card = this.cards[index];
+        if (card) {
+            card.classList.add('selected');
+            card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }
+};
+
+
+// ============================================================================
 // UX 유틸리티 - 스태거드 애니메이션
 // ============================================================================
 const StaggerAnimation = {
@@ -454,6 +720,66 @@ const API = {
     // 검색 통계
     getSearchStats(limit = 10) {
         return this.fetch(`/api/stats/search?limit=${limit}`);
+    },
+
+    // v2.0 API 메소드
+    getSyncStatus() {
+        return this.fetch('/api/sync/status');
+    },
+
+    startSync(folder) {
+        return this.fetch('/api/sync/start', { method: 'POST', body: JSON.stringify({ folder }) });
+    },
+
+    stopSync() {
+        return this.fetch('/api/sync/stop', { method: 'POST' });
+    },
+
+    async uploadFolder(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const response = await fetch('/api/upload/folder', {
+                method: 'POST',
+                body: formData
+            });
+            return await response.json();
+        } catch (error) {
+            console.error('Folder Upload Error:', error);
+            return { success: false, message: '업로드 실패' };
+        }
+    },
+
+    getRevisions(filename) {
+        return this.fetch(`/api/files/${encodeURIComponent(filename)}/revisions`);
+    },
+
+    // 태그 관리
+    getFileTags(filename) {
+        return this.fetch(`/api/files/structure`).then(res => {
+            if (!res.success) return { success: false, tags: [] };
+            const file = res.files.find(f => f.name === filename);
+            return { success: true, tags: file ? file.tags : [] };
+        });
+    },
+
+    setFileTags(filename, tags) {
+        return this.fetch('/api/tags/set', {
+            method: 'POST',
+            body: JSON.stringify({ filename, tags })
+        });
+    },
+
+    autoTagFile(filename) {
+        return this.fetch('/api/tags/auto', {
+            method: 'POST',
+            body: JSON.stringify({ filename })
+        });
+    },
+
+    getAllTags() {
+        return this.fetch('/api/tags');
     }
 };
 
@@ -1061,19 +1387,10 @@ async function initSearch() {
         }
     }
 
-    // 키보드 단축키
-    document.addEventListener('keydown', (e) => {
-        // / 키로 검색창 포커스
-        if (e.key === '/' && document.activeElement !== searchInput) {
-            e.preventDefault();
-            searchInput?.focus();
-        }
-        // Ctrl+K 또는 Cmd+K로 검색창 포커스
-        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-            e.preventDefault();
-            searchInput?.focus();
-        }
-    });
+    // v2.0 UI 모듈 초기화
+    KeyboardShortcuts.init();
+    ReaderMode.init();
+    HighlightNavigator.init();
 
     // 이벤트 위임 설정 (북마크, 복사, 접기/펼치기)
     setupBookmarkEventDelegation();
@@ -1245,6 +1562,10 @@ function renderSearchResults(results, query) {
 
     // 스타거 애니메이션 적용
     StaggerAnimation.apply(container, '.result-card', 0.08);
+
+    // v2.0 네비게이션 갱신
+    SearchResultNavigator.scan();
+    HighlightNavigator.scan();
 }
 
 // ============================================================================
@@ -1289,6 +1610,31 @@ async function initAdmin() {
 
     // 파일 업로드 설정
     setupUpload();
+
+    // v2.0 관리자 기능 초기화
+    await FolderSync.init();
+
+    // 업로드 탭 전환
+    const btnFile = document.getElementById('btn-upload-file');
+    const btnFolder = document.getElementById('btn-upload-folder');
+    const areaFile = document.getElementById('upload-area');
+    const areaFolder = document.getElementById('folder-upload-area');
+
+    if (btnFile && btnFolder && areaFile && areaFolder) {
+        btnFile.addEventListener('click', () => {
+            btnFile.classList.add('active');
+            btnFolder.classList.remove('active');
+            areaFile.style.display = 'block';
+            areaFolder.style.display = 'none';
+        });
+
+        btnFolder.addEventListener('click', () => {
+            btnFolder.classList.add('active');
+            btnFile.classList.remove('active');
+            areaFolder.style.display = 'block';
+            areaFile.style.display = 'none';
+        });
+    }
 
     // 버튼 이벤트
     document.getElementById('refresh-btn')?.addEventListener('click', async () => {
@@ -1370,7 +1716,140 @@ function setupUpload() {
             await uploadFiles(files);
         }
     });
+
+    // 폴더 업로드 (ZIP) 영역 설정
+    const folderArea = document.getElementById('folder-upload-area');
+    const folderInput = document.getElementById('folder-input');
+
+    if (folderArea && folderInput) {
+        folderArea.addEventListener('click', () => folderInput.click());
+
+        folderInput.addEventListener('change', async (e) => {
+            if (e.target.files.length > 0) {
+                await uploadFolderZip(e.target.files[0]);
+            }
+        });
+
+        folderArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            folderArea.classList.add('dragover');
+        });
+
+        folderArea.addEventListener('dragleave', () => {
+            folderArea.classList.remove('dragover');
+        });
+
+        folderArea.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            folderArea.classList.remove('dragover');
+
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                // ZIP 파일인지 확인
+                if (files[0].name.toLowerCase().endsWith('.zip')) {
+                    await uploadFolderZip(files[0]);
+                } else {
+                    Toast.error('형식 오류', 'ZIP 파일만 지원됩니다');
+                }
+            }
+        });
+    }
 }
+
+async function uploadFolderZip(file) {
+    const progressDiv = document.getElementById('upload-progress');
+    const progressFill = document.getElementById('progress-fill');
+    const progressText = document.getElementById('progress-text');
+
+    progressDiv.classList.remove('hidden');
+    progressFill.style.width = '0%';
+    progressText.textContent = 'ZIP 파일 업로드 및 처리 중...';
+
+    const result = await API.uploadFolder(file);
+
+    if (result.success) {
+        progressFill.style.width = '100%';
+        progressText.textContent = '완료!';
+        Toast.success('폴더 업로드 완료', result.message);
+        await loadFiles();
+        await loadStats();
+    } else {
+        progressFill.style.width = '0%';
+        Toast.error('업로드 실패', result.message);
+    }
+
+    setTimeout(() => {
+        progressDiv.classList.add('hidden');
+    }, 3000);
+}
+
+// 자동 동기화 관리자
+const FolderSync = {
+    isRunning: false,
+    timer: null,
+
+    async init() {
+        const startBtn = document.getElementById('btn-start-sync');
+        const stopBtn = document.getElementById('btn-stop-sync');
+
+        if (startBtn && stopBtn) {
+            startBtn.addEventListener('click', () => this.start());
+            stopBtn.addEventListener('click', () => this.stop());
+        }
+
+        await this.checkStatus();
+    },
+
+    async checkStatus() {
+        const result = await API.getSyncStatus();
+        if (result.success && result.status) {
+            this.updateUI(result.status.running);
+        }
+    },
+
+    async start() {
+        const folderPath = document.getElementById('sync-folder-path');
+        // 값이 없으면 서버 기본값 사용
+        const folder = folderPath ? folderPath.value : null;
+
+        const result = await API.startSync(folder);
+        if (result.success) {
+            Toast.success('동기화 시작', result.message);
+            this.updateUI(true);
+        } else {
+            Toast.error('실패', result.message);
+        }
+    },
+
+    async stop() {
+        const result = await API.stopSync();
+        if (result.success) {
+            Toast.success('동기화 중지', result.message);
+            this.updateUI(false);
+        }
+    },
+
+    updateUI(running) {
+        this.isRunning = running;
+
+        const indicator = document.getElementById('sync-status-indicator');
+        const statusText = document.getElementById('sync-status-text');
+        const startBtn = document.getElementById('btn-start-sync');
+        const stopBtn = document.getElementById('btn-stop-sync');
+        const folderInput = document.getElementById('sync-folder-path');
+
+        if (indicator) {
+            indicator.className = running ? 'status-dot running' : 'status-dot';
+            indicator.style.backgroundColor = running ? 'var(--success)' : 'var(--text-muted)';
+        }
+
+        if (statusText) statusText.textContent = running ? '실시간 동기화 중' : '동기화 중지됨';
+
+        if (startBtn) startBtn.disabled = running;
+        if (stopBtn) stopBtn.disabled = !running;
+        if (folderInput) folderInput.disabled = running;
+    }
+};
 
 async function uploadFiles(files) {
     const progressDiv = document.getElementById('upload-progress');
@@ -1463,6 +1942,12 @@ async function loadFiles() {
             <td class="file-actions">
                 <button class="btn btn-secondary btn-sm" onclick="previewFile('${escapeJs(file.name)}')" title="미리보기">
                     👁️
+                </button>
+                <button class="btn btn-secondary btn-sm" onclick="manageTags('${escapeJs(file.name)}')" title="태그 관리">
+                    🏷️
+                </button>
+                <button class="btn btn-secondary btn-sm" onclick="showRevisions('${escapeJs(file.name)}')" title="변경 이력">
+                    🕒
                 </button>
                 <button class="btn btn-danger btn-sm" onclick="deleteFile('${escapeJs(file.name)}')" title="삭제">
                     🗑️
@@ -1816,6 +2301,161 @@ async function submitAdminAuth() {
         passwordInput.value = '';
         passwordInput.focus();
     }
+}
+
+
+// ============================================================================
+// 태그 및 리비전 관리
+// ============================================================================
+
+async function manageTags(filename) {
+    Toast.info('로딩', '태그 정보를 불러오는 중...');
+    const result = await API.getFileTags(filename);
+    const existingTags = result.success ? result.tags : [];
+
+    // 모달 생성
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>🏷️ 태그 관리: ${escapeHtml(filename)}</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
+            </div>
+            <div class="modal-body" style="padding: 20px;">
+                <div class="tag-input-container" style="display: flex; gap: 8px; margin-bottom: 16px;">
+                    <input type="text" id="tag-input" class="form-input" placeholder="새 태그 입력 (Enter)" style="flex: 1;">
+                    <button class="btn btn-secondary" id="btn-auto-tag" title="자동 태그 생성">🤖 자동</button>
+                </div>
+                <div id="tag-list" style="display: flex; flex-wrap: wrap; gap: 8px; min-height: 50px; padding: 10px; background: var(--bg-input); border-radius: 8px;">
+                    <!-- 태그 렌더링 영역 -->
+                </div>
+            </div>
+            <div class="modal-footer" style="padding: 20px; border-top: 1px solid var(--glass-border); display: flex; justify-content: flex-end; gap: 8px;">
+                <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">닫기</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const tagListEl = modal.querySelector('#tag-list');
+    const tagInput = modal.querySelector('#tag-input');
+    const autoTagBtn = modal.querySelector('#btn-auto-tag');
+
+    let currentTags = [...existingTags];
+
+    function renderTags() {
+        tagListEl.innerHTML = currentTags.map(tag => `
+            <span class="search-tag" style="background: var(--accent-secondary);">
+                ${escapeHtml(tag)}
+                <span class="remove-tag" onclick="removeTag('${escapeJs(tag)}')" style="cursor: pointer; margin-left: 6px; opacity: 0.7;">✕</span>
+            </span>
+        `).join('');
+
+        if (currentTags.length === 0) {
+            tagListEl.innerHTML = '<span style="color: var(--text-muted); font-size: 13px;">등록된 태그가 없습니다.</span>';
+        }
+    }
+
+    window.removeTag = async (tag) => {
+        currentTags = currentTags.filter(t => t !== tag);
+        renderTags();
+        await API.setFileTags(filename, currentTags);
+    };
+
+    tagInput.addEventListener('keypress', async (e) => {
+        if (e.key === 'Enter') {
+            const newTag = tagInput.value.trim();
+            if (newTag && !currentTags.includes(newTag)) {
+                currentTags.push(newTag);
+                tagInput.value = '';
+                renderTags();
+                await API.setFileTags(filename, currentTags);
+            }
+        }
+    });
+
+    autoTagBtn.addEventListener('click', async () => {
+        autoTagBtn.disabled = true;
+        autoTagBtn.textContent = '생성 중...';
+
+        const res = await API.autoTagFile(filename);
+        if (res.success && res.tags) {
+            // 중복 제거 후 병합
+            const newTags = res.tags.filter(t => !currentTags.includes(t));
+            if (newTags.length > 0) {
+                currentTags = [...currentTags, ...newTags];
+                renderTags();
+                // 실제로 태그를 저장해야 함
+                await API.setFileTags(filename, currentTags);
+                Toast.success('자동 태그', `${newTags.length}개 태그가 추가되었습니다`);
+            } else {
+                Toast.info('자동 태그', '추가할 새로운 태그가 없습니다');
+            }
+        } else {
+            Toast.error('실패', res.message || '자동 태그 생성 실패');
+        }
+
+        autoTagBtn.disabled = false;
+        autoTagBtn.textContent = '🤖 자동';
+    });
+
+    renderTags();
+    tagInput.focus();
+}
+
+async function showRevisions(filename) {
+    Toast.info('로딩', '리비전 정보를 불러오는 중...');
+    const result = await API.getRevisions(filename);
+
+    const revisions = result.success ? result.revisions : [];
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+
+    let rowsHtml = '';
+    if (revisions.length === 0) {
+        rowsHtml = '<tr><td colspan="3" style="text-align: center; padding: 20px;">변경 이력이 없습니다.</td></tr>';
+    } else {
+        rowsHtml = revisions.map(rev => `
+            <tr>
+                <td>${rev.version}</td>
+                <td>${rev.date}</td>
+                <td>${escapeHtml(rev.comment || '-')}</td>
+            </tr>
+        `).join('');
+    }
+
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 700px;">
+            <div class="modal-header">
+                <h3>🕒 변경 이력: ${escapeHtml(filename)}</h3>
+                <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
+            </div>
+            <div class="modal-body" style="padding: 0;">
+                <div class="files-table-container">
+                    <table class="files-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 80px;">버전</th>
+                                <th style="width: 180px;">날짜</th>
+                                <th>코멘트</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rowsHtml}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer" style="padding: 20px; text-align: right;">
+                <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">닫기</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
 }
 
 // ============================================================================
