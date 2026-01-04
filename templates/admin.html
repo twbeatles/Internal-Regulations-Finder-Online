@@ -186,12 +186,13 @@
                                 <th>파일명</th>
                                 <th>크기</th>
                                 <th>청크</th>
+                                <th>버전</th>
                                 <th>관리</th>
                             </tr>
                         </thead>
                         <tbody id="files-tbody">
                             <tr class="empty-row">
-                                <td colspan="5">로드된 파일이 없습니다</td>
+                                <td colspan="6">로드된 파일이 없습니다</td>
                             </tr>
                         </tbody>
                     </table>
@@ -218,6 +219,10 @@
                         <span class="info-label">파일 목록</span>
                         <code>/api/files</code>
                     </div>
+                    <div class="info-item">
+                        <span class="info-label">버전 비교 API</span>
+                        <code>GET /api/files/{filename}/versions/compare</code>
+                    </div>
                 </div>
             </section>
         </main>
@@ -242,6 +247,38 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="location.href='/'">취소</button>
                 <button class="btn btn-primary" onclick="submitAdminAuth()">확인</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 버전 비교 모달 -->
+    <div id="version-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content version-modal">
+            <div class="modal-header">
+                <h3>📋 버전 비교</h3>
+                <button id="version-modal-close" class="modal-close" onclick="VersionManager.close()">✕</button>
+            </div>
+            <div class="version-selector">
+                <div class="version-select-group">
+                    <label for="version-left">이전 버전</label>
+                    <select id="version-left" class="form-select"></select>
+                </div>
+                <span class="version-compare-icon">⇔</span>
+                <div class="version-select-group">
+                    <label for="version-right">비교 버전</label>
+                    <select id="version-right" class="form-select"></select>
+                </div>
+                <button id="version-compare-btn" class="btn btn-primary" onclick="VersionManager.compare()">비교</button>
+            </div>
+            <div id="version-diff-container" class="version-diff-container">
+                <div class="version-diff-stats">
+                    <span id="diff-added" class="diff-stat added">+0 추가</span>
+                    <span id="diff-removed" class="diff-stat removed">-0 삭제</span>
+                    <span id="diff-similarity">유사도: --%</span>
+                </div>
+                <div id="version-diff-content" class="version-diff-content">
+                    <p class="empty-state">버전을 선택하고 '비교' 버튼을 클릭하세요</p>
+                </div>
             </div>
         </div>
     </div>

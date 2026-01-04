@@ -51,5 +51,10 @@ def get_history():
 @search_bp.route('/cache/clear', methods=['POST'])
 def clear_cache():
     """검색 캐시 초기화"""
-    res = qa_system.clear_cache()
-    return jsonify(res.to_dict())
+    try:
+        if hasattr(qa_system, '_search_cache'):
+            qa_system._search_cache.clear()
+        return jsonify({'success': True, 'message': '캐시가 초기화되었습니다'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'캐시 초기화 실패: {str(e)}'}), 500
+

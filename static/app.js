@@ -47,6 +47,85 @@ const RippleEffect = {
 };
 
 // ============================================================================
+// 성능 유틸리티 - Debounce, Throttle, Cleanup
+// ============================================================================
+const PerformanceUtils = {
+    /**
+     * Debounce 함수 - 연속 호출 시 마지막 호출만 실행
+     * @param {Function} func - 실행할 함수
+     * @param {number} wait - 대기 시간 (ms)
+     * @returns {Function} debounced 함수
+     */
+    debounce(func, wait = 300) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func.apply(this, args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    },
+
+    /**
+     * Throttle 함수 - 일정 시간 간격으로만 실행
+     * @param {Function} func - 실행할 함수
+     * @param {number} limit - 최소 실행 간격 (ms)
+     * @returns {Function} throttled 함수
+     */
+    throttle(func, limit = 100) {
+        let inThrottle;
+        return function executedFunction(...args) {
+            if (!inThrottle) {
+                func.apply(this, args);
+                inThrottle = true;
+                setTimeout(() => inThrottle = false, limit);
+            }
+        };
+    },
+
+    // 이벤트 리스너 정리를 위한 저장소
+    _cleanupFunctions: [],
+
+    /**
+     * 정리 함수 등록
+     * @param {Function} cleanupFn - 정리 시 호출할 함수
+     */
+    registerCleanup(cleanupFn) {
+        this._cleanupFunctions.push(cleanupFn);
+    },
+
+    /**
+     * 등록된 모든 정리 함수 실행
+     */
+    runCleanup() {
+        this._cleanupFunctions.forEach(fn => {
+            try {
+                fn();
+            } catch (e) {
+                console.error('Cleanup error:', e);
+            }
+        });
+        this._cleanupFunctions = [];
+    },
+
+    /**
+     * 메모리 사용량 로깅 (개발용)
+     */
+    logMemory() {
+        if (performance.memory) {
+            const mb = bytes => (bytes / 1024 / 1024).toFixed(2) + ' MB';
+            console.log('Memory:', {
+                used: mb(performance.memory.usedJSHeapSize),
+                total: mb(performance.memory.totalJSHeapSize),
+                limit: mb(performance.memory.jsHeapSizeLimit)
+            });
+        }
+    }
+};
+
+// ============================================================================
 // UX 유틸리티 - 스켈레톤 로딩
 // ============================================================================
 const SkeletonLoading = {
@@ -1499,6 +1578,12 @@ function renderSearchResults(results, query) {
                         <button class="export-item" onclick="ExportResults.exportAsJSON()" role="menuitem">
                             📋 JSON (.json)
                         </button>
+                        <button class="export-item" onclick="ExportResults.exportAsPDF()" role="menuitem">
+                            📕 PDF (.pdf)
+                        </button>
+                        <button class="export-item" onclick="window.print()" role="menuitem">
+                            🖨️ 인쇄
+                        </button>
                     </div>
                 </div>
             </div>
@@ -1915,7 +2000,7 @@ async function loadFiles() {
     if (!result.success || !result.files || result.files.length === 0) {
         tbody.innerHTML = `
             <tr class="empty-row">
-                <td colspan="5">로드된 파일이 없습니다</td>
+                <td colspan="6">로드된 파일이 없습니다</td>
             </tr>
         `;
         return;
@@ -1939,6 +2024,11 @@ async function loadFiles() {
             </td>
             <td>${formatSize(file.size)}</td>
             <td>${file.chunks}</td>
+            <td>
+                <button class="btn btn-secondary btn-sm" onclick="VersionManager.open('${escapeJs(file.name)}')" title="버전 비교">
+                    📋 비교
+                </button>
+            </td>
             <td class="file-actions">
                 <button class="btn btn-secondary btn-sm" onclick="previewFile('${escapeJs(file.name)}')" title="미리보기">
                     👁️
@@ -2459,6 +2549,578 @@ async function showRevisions(filename) {
 }
 
 // ============================================================================
+// 북마크 패널 컨트롤러
+// ============================================================================
+const BookmarkPanel = {
+    panel: null,
+    overlay: null,
+    list: null,
+    isOpen: false,
+
+    init() {
+        this.panel = document.getElementById('bookmark-panel');
+        this.overlay = document.getElementById('bookmark-overlay');
+        this.list = document.getElementById('bookmark-list');
+
+        if (!this.panel) return;
+
+        // 토글 버튼
+        document.getElementById('bookmark-toggle')?.addEventListener('click', () => this.toggle());
+        document.getElementById('bookmark-panel-close')?.addEventListener('click', () => this.close());
+        this.overlay?.addEventListener('click', () => this.close());
+
+        // 검색 및 필터
+        document.getElementById('bookmark-search')?.addEventListener('input', (e) => this.filter(e.target.value));
+        document.getElementById('bookmark-filter')?.addEventListener('change', () => this.render());
+
+        // 액션 버튼
+        document.getElementById('bookmark-export-btn')?.addEventListener('click', () => this.export());
+        document.getElementById('bookmark-clear-btn')?.addEventListener('click', () => this.clearAll());
+
+        // 북마크 버튼에 뱃지 표시 업데이트
+        this.updateBadge();
+    },
+
+    toggle() {
+        this.isOpen ? this.close() : this.open();
+    },
+
+    open() {
+        this.panel?.classList.add('open');
+        this.overlay?.classList.add('visible');
+        this.isOpen = true;
+        this.render();
+    },
+
+    close() {
+        this.panel?.classList.remove('open');
+        this.overlay?.classList.remove('visible');
+        this.isOpen = false;
+    },
+
+    render() {
+        if (!this.list) return;
+
+        let bookmarks = BookmarkManager.getAll();
+        const filterValue = document.getElementById('bookmark-filter')?.value || 'all';
+        const searchQuery = document.getElementById('bookmark-search')?.value?.toLowerCase() || '';
+
+        // 필터 적용
+        if (filterValue === 'recent') {
+            const oneWeekAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+            bookmarks = bookmarks.filter(b => new Date(b.addedAt).getTime() > oneWeekAgo);
+        }
+
+        // 검색 적용
+        if (searchQuery) {
+            bookmarks = bookmarks.filter(b =>
+                b.content.toLowerCase().includes(searchQuery) ||
+                b.source.toLowerCase().includes(searchQuery) ||
+                (b.memo && b.memo.toLowerCase().includes(searchQuery))
+            );
+        }
+
+        if (bookmarks.length === 0) {
+            this.list.innerHTML = `
+                <div class="bookmark-empty">
+                    <div class="bookmark-empty-icon">📌</div>
+                    <p>${searchQuery ? '검색 결과가 없습니다' : '저장된 북마크가 없습니다'}</p>
+                    <p style="font-size: 12px; margin-top: 8px;">검색 결과에서 ☆ 버튼을 눌러<br>북마크를 추가하세요</p>
+                </div>
+            `;
+        } else {
+            this.list.innerHTML = bookmarks.map(bookmark => `
+                <div class="bookmark-item" data-id="${bookmark.id}">
+                    <div class="bookmark-item-header">
+                        <span class="bookmark-item-source">${escapeHtml(bookmark.source)}</span>
+                        <span class="bookmark-item-date">${this.formatDate(bookmark.addedAt)}</span>
+                    </div>
+                    <div class="bookmark-item-content">${escapeHtml(bookmark.content.substring(0, 200))}...</div>
+                    ${bookmark.memo ? `<div class="bookmark-item-memo">📝 ${escapeHtml(bookmark.memo)}</div>` : ''}
+                    <div class="bookmark-item-actions">
+                        <button class="btn btn-sm btn-secondary" onclick="BookmarkPanel.copyContent(${bookmark.id})">📋 복사</button>
+                        <button class="btn btn-sm btn-secondary" onclick="BookmarkPanel.addMemo(${bookmark.id})">📝 메모</button>
+                        <button class="btn btn-sm btn-danger" onclick="BookmarkPanel.remove(${bookmark.id})">🗑️</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 카운트 업데이트
+        document.getElementById('bookmark-count').textContent = `${BookmarkManager.getAll().length}개 저장됨`;
+        this.updateBadge();
+    },
+
+    formatDate(dateStr) {
+        const date = new Date(dateStr);
+        const now = new Date();
+        const diff = now - date;
+
+        if (diff < 60000) return '방금 전';
+        if (diff < 3600000) return `${Math.floor(diff / 60000)}분 전`;
+        if (diff < 86400000) return `${Math.floor(diff / 3600000)}시간 전`;
+        if (diff < 604800000) return `${Math.floor(diff / 86400000)}일 전`;
+        return date.toLocaleDateString('ko-KR');
+    },
+
+    filter(query) {
+        this.render();
+    },
+
+    copyContent(id) {
+        const bookmark = BookmarkManager.getAll().find(b => b.id === id);
+        if (bookmark) {
+            copyToClipboard(bookmark.content);
+            Toast.success('복사 완료', '클립보드에 복사되었습니다');
+        }
+    },
+
+    addMemo(id) {
+        const memo = prompt('메모를 입력하세요:');
+        if (memo !== null) {
+            const bookmarks = BookmarkManager.getAll();
+            const bookmark = bookmarks.find(b => b.id === id);
+            if (bookmark) {
+                bookmark.memo = memo;
+                BookmarkManager.save(bookmarks);
+                this.render();
+                Toast.success('메모 저장', '메모가 저장되었습니다');
+            }
+        }
+    },
+
+    remove(id) {
+        if (confirm('이 북마크를 삭제하시겠습니까?')) {
+            BookmarkManager.remove(id);
+            this.render();
+            Toast.info('삭제됨', '북마크가 삭제되었습니다');
+        }
+    },
+
+    clearAll() {
+        if (confirm('모든 북마크를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) {
+            localStorage.removeItem(BookmarkManager.STORAGE_KEY);
+            this.render();
+            Toast.warning('전체 삭제', '모든 북마크가 삭제되었습니다');
+        }
+    },
+
+    export() {
+        const bookmarks = BookmarkManager.getAll();
+        if (bookmarks.length === 0) {
+            Toast.warning('내보내기 실패', '저장된 북마크가 없습니다');
+            return;
+        }
+
+        const data = {
+            exportDate: new Date().toISOString(),
+            count: bookmarks.length,
+            bookmarks: bookmarks
+        };
+
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `북마크_${new Date().toLocaleDateString('ko-KR')}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        Toast.success('내보내기 완료', 'JSON 파일로 저장되었습니다');
+    },
+
+    updateBadge() {
+        const btn = document.getElementById('bookmark-toggle');
+        const count = BookmarkManager.getAll().length;
+        if (btn) {
+            btn.classList.toggle('has-items', count > 0);
+        }
+    }
+};
+
+// ============================================================================
+// PDF 내보내기 (jsPDF)
+// ============================================================================
+const PDFExport = {
+    async exportAsPDF() {
+        if (!ExportResults.lastResults.length) {
+            Toast.warning('내보내기 실패', '검색 결과가 없습니다');
+            return;
+        }
+
+        // jsPDF 로드 확인
+        if (typeof window.jspdf === 'undefined') {
+            Toast.error('오류', 'PDF 라이브러리를 불러오는 중입니다. 잠시 후 다시 시도해주세요.');
+            return;
+        }
+
+        Toast.info('PDF 생성 중', '잠시만 기다려주세요...');
+
+        try {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF('p', 'mm', 'a4');
+
+            // 기본 폰트 설정 (한글 미지원 시 영문으로 대체)
+            doc.setFont('helvetica');
+
+            const pageWidth = doc.internal.pageSize.getWidth();
+            const margin = 15;
+            const contentWidth = pageWidth - 2 * margin;
+            let yPos = 20;
+
+            // 제목
+            doc.setFontSize(18);
+            doc.setTextColor(233, 69, 96); // accent color
+            doc.text('검색 결과 리포트', pageWidth / 2, yPos, { align: 'center' });
+            yPos += 10;
+
+            // 메타 정보
+            doc.setFontSize(10);
+            doc.setTextColor(100);
+            doc.text(`검색어: "${ExportResults.lastQuery}"`, margin, yPos);
+            yPos += 5;
+            doc.text(`결과 수: ${ExportResults.lastResults.length}개`, margin, yPos);
+            yPos += 5;
+            doc.text(`생성일: ${new Date().toLocaleString('ko-KR')}`, margin, yPos);
+            yPos += 10;
+
+            // 구분선
+            doc.setDrawColor(233, 69, 96);
+            doc.line(margin, yPos, pageWidth - margin, yPos);
+            yPos += 10;
+
+            // 결과 항목들
+            doc.setTextColor(30);
+            ExportResults.lastResults.forEach((item, index) => {
+                // 페이지 넘김 체크
+                if (yPos > 260) {
+                    doc.addPage();
+                    yPos = 20;
+                }
+
+                const score = Math.round((item.score || 0) * 100);
+
+                // 헤더
+                doc.setFontSize(12);
+                doc.setFont('helvetica', 'bold');
+                doc.text(`${index + 1}. ${item.source || 'Unknown'} (${score}%)`, margin, yPos);
+                yPos += 7;
+
+                // 내용 (긴 텍스트 처리)
+                doc.setFontSize(10);
+                doc.setFont('helvetica', 'normal');
+                const content = (item.content || '').substring(0, 500);
+                const lines = doc.splitTextToSize(content, contentWidth);
+
+                lines.forEach(line => {
+                    if (yPos > 270) {
+                        doc.addPage();
+                        yPos = 20;
+                    }
+                    doc.text(line, margin, yPos);
+                    yPos += 5;
+                });
+
+                yPos += 8;
+            });
+
+            // 푸터
+            const pageCount = doc.internal.getNumberOfPages();
+            for (let i = 1; i <= pageCount; i++) {
+                doc.setPage(i);
+                doc.setFontSize(8);
+                doc.setTextColor(150);
+                doc.text(`페이지 ${i} / ${pageCount}`, pageWidth / 2, 290, { align: 'center' });
+                doc.text('사내 규정 검색기', margin, 290);
+            }
+
+            // 다운로드
+            doc.save(`검색결과_${ExportResults.lastQuery}.pdf`);
+            Toast.success('PDF 생성 완료', 'PDF 파일이 다운로드됩니다');
+        } catch (error) {
+            console.error('PDF Export Error:', error);
+            Toast.error('PDF 오류', '한글 폰트 문제로 텍스트 내보내기를 권장합니다');
+        }
+    }
+};
+
+// ExportResults에 PDF 내보내기 추가
+if (typeof ExportResults !== 'undefined') {
+    ExportResults.exportAsPDF = PDFExport.exportAsPDF;
+}
+
+// ============================================================================
+// 고급 검색 컨트롤러
+// ============================================================================
+const AdvancedSearch = {
+    panel: null,
+    isOpen: false,
+
+    init() {
+        this.panel = document.getElementById('advanced-search-panel');
+
+        document.getElementById('advanced-search-toggle')?.addEventListener('click', () => this.toggle());
+        document.getElementById('advanced-search-close')?.addEventListener('click', () => this.close());
+    },
+
+    toggle() {
+        this.isOpen ? this.close() : this.open();
+    },
+
+    open() {
+        if (this.panel) {
+            this.panel.style.display = 'block';
+            this.isOpen = true;
+        }
+    },
+
+    close() {
+        if (this.panel) {
+            this.panel.style.display = 'none';
+            this.isOpen = false;
+        }
+    },
+
+    // 검색 쿼리 파싱 (AND, OR, NOT, "exact phrase")
+    parseQuery(query) {
+        const result = {
+            original: query,
+            mustInclude: [],      // AND 조건
+            shouldInclude: [],    // OR 조건
+            mustExclude: [],      // NOT 조건
+            exactPhrases: [],     // "..." 정확한 문구
+            useRegex: document.getElementById('use-regex')?.checked || false,
+            dateFrom: document.getElementById('date-from')?.value || null,
+            dateTo: document.getElementById('date-to')?.value || null
+        };
+
+        let processedQuery = query;
+
+        // 1. 정확한 문구 추출 ("...")
+        const exactMatches = processedQuery.match(/"([^"]+)"/g);
+        if (exactMatches) {
+            exactMatches.forEach(match => {
+                result.exactPhrases.push(match.replace(/"/g, ''));
+                processedQuery = processedQuery.replace(match, '');
+            });
+        }
+
+        // 2. NOT 조건 추출
+        const notMatches = processedQuery.match(/NOT\s+(\S+)/gi);
+        if (notMatches) {
+            notMatches.forEach(match => {
+                const word = match.replace(/NOT\s+/i, '');
+                result.mustExclude.push(word);
+                processedQuery = processedQuery.replace(match, '');
+            });
+        }
+
+        // 3. AND/OR 조건 파싱
+        const parts = processedQuery.split(/\s+/).filter(p => p && p.toUpperCase() !== 'AND' && p.toUpperCase() !== 'OR');
+
+        // AND가 있으면 모든 키워드를 mustInclude로
+        if (/\bAND\b/i.test(query)) {
+            result.mustInclude = parts;
+        }
+        // OR가 있으면 shouldInclude로
+        else if (/\bOR\b/i.test(query)) {
+            result.shouldInclude = parts;
+        }
+        // 기본은 모두 포함
+        else {
+            result.mustInclude = parts;
+        }
+
+        return result;
+    },
+
+    // 파싱된 쿼리를 서버 요청 형태로 변환
+    buildSearchParams(parsed) {
+        return {
+            query: parsed.original,
+            mustInclude: parsed.mustInclude,
+            shouldInclude: parsed.shouldInclude,
+            mustExclude: parsed.mustExclude,
+            exactPhrases: parsed.exactPhrases,
+            useRegex: parsed.useRegex,
+            dateFrom: parsed.dateFrom,
+            dateTo: parsed.dateTo
+        };
+    },
+
+    // 검색 결과 필터링 (클라이언트 사이드)
+    filterResults(results, parsed) {
+        return results.filter(item => {
+            const content = (item.content || '').toLowerCase();
+            const source = (item.source || '').toLowerCase();
+            const combined = content + ' ' + source;
+
+            // 정확한 문구 필수 포함
+            for (const phrase of parsed.exactPhrases) {
+                if (!combined.includes(phrase.toLowerCase())) {
+                    return false;
+                }
+            }
+
+            // mustExclude 체크
+            for (const word of parsed.mustExclude) {
+                if (combined.includes(word.toLowerCase())) {
+                    return false;
+                }
+            }
+
+            // mustInclude (AND) 체크
+            if (parsed.mustInclude.length > 0) {
+                for (const word of parsed.mustInclude) {
+                    if (!combined.includes(word.toLowerCase())) {
+                        return false;
+                    }
+                }
+            }
+
+            // shouldInclude (OR) 체크
+            if (parsed.shouldInclude.length > 0) {
+                let found = false;
+                for (const word of parsed.shouldInclude) {
+                    if (combined.includes(word.toLowerCase())) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) return false;
+            }
+
+            return true;
+        });
+    }
+};
+
+// ============================================================================
+// 버전 관리 매니저
+// ============================================================================
+const VersionManager = {
+    modal: null,
+    currentFile: null,
+    versions: [],
+
+    init() {
+        this.modal = document.getElementById('version-modal');
+
+        document.getElementById('version-modal-close')?.addEventListener('click', () => this.close());
+        document.getElementById('version-compare-btn')?.addEventListener('click', () => this.compare());
+
+        // 모달 외부 클릭시 닫기
+        this.modal?.addEventListener('click', (e) => {
+            if (e.target === this.modal) this.close();
+        });
+    },
+
+    async open(filename) {
+        this.currentFile = filename;
+        Toast.info('로딩', '버전 정보를 불러오는 중...');
+
+        try {
+            const result = await API.getRevisions(filename);
+            this.versions = result.success ? result.revisions : [];
+
+            // 셀렉트 박스 채우기
+            const leftSelect = document.getElementById('version-left');
+            const rightSelect = document.getElementById('version-right');
+
+            if (leftSelect && rightSelect) {
+                const options = this.versions.map(v =>
+                    `<option value="${v.version}">${v.version} (${new Date(v.date).toLocaleDateString('ko-KR')})</option>`
+                ).join('');
+
+                leftSelect.innerHTML = options || '<option>버전 없음</option>';
+                rightSelect.innerHTML = options || '<option>버전 없음</option>';
+
+                // 기본값: 첫번째와 마지막 선택
+                if (this.versions.length >= 2) {
+                    leftSelect.selectedIndex = 1;
+                    rightSelect.selectedIndex = 0;
+                }
+            }
+
+            // 초기화
+            document.getElementById('version-diff-content').innerHTML =
+                '<p class="empty-state">버전을 선택하고 \'비교\' 버튼을 클릭하세요</p>';
+            document.getElementById('diff-added').textContent = '+0 추가';
+            document.getElementById('diff-removed').textContent = '-0 삭제';
+            document.getElementById('diff-similarity').textContent = '유사도: --%';
+
+            if (this.modal) {
+                this.modal.style.display = 'flex';
+            }
+        } catch (error) {
+            Toast.error('오류', '버전 정보를 불러올 수 없습니다');
+        }
+    },
+
+    close() {
+        if (this.modal) {
+            this.modal.style.display = 'none';
+        }
+    },
+
+    async compare() {
+        const v1 = document.getElementById('version-left')?.value;
+        const v2 = document.getElementById('version-right')?.value;
+
+        if (!v1 || !v2) {
+            Toast.warning('선택 필요', '비교할 버전을 선택하세요');
+            return;
+        }
+
+        if (v1 === v2) {
+            Toast.warning('동일 버전', '서로 다른 버전을 선택하세요');
+            return;
+        }
+
+        Toast.info('비교 중', '버전을 비교하는 중...');
+
+        try {
+            // API 호출 (서버에서 비교 결과 받기)
+            const result = await API.fetch(`/api/files/${encodeURIComponent(this.currentFile)}/versions/compare?v1=${v1}&v2=${v2}`);
+
+            if (result.success && result.diff) {
+                this.renderDiff(result.diff);
+            } else {
+                // 서버 API 없으면 간단한 메시지
+                document.getElementById('version-diff-content').innerHTML =
+                    '<p class="empty-state">버전 비교 API가 구현되지 않았습니다.</p>';
+            }
+        } catch (error) {
+            document.getElementById('version-diff-content').innerHTML =
+                '<p class="empty-state">버전 비교 중 오류가 발생했습니다.</p>';
+        }
+    },
+
+    renderDiff(diff) {
+        document.getElementById('diff-added').textContent = `+${diff.added_lines || 0} 추가`;
+        document.getElementById('diff-removed').textContent = `-${diff.removed_lines || 0} 삭제`;
+        document.getElementById('diff-similarity').textContent =
+            `유사도: ${Math.round((diff.similarity || 0) * 100)}%`;
+
+        const container = document.getElementById('version-diff-content');
+        if (diff.diff_text) {
+            const lines = diff.diff_text.split('\n').map(line => {
+                if (line.startsWith('+') && !line.startsWith('+++')) {
+                    return `<div class="diff-line diff-add">${escapeHtml(line)}</div>`;
+                } else if (line.startsWith('-') && !line.startsWith('---')) {
+                    return `<div class="diff-line diff-remove">${escapeHtml(line)}</div>`;
+                } else {
+                    return `<div class="diff-line">${escapeHtml(line)}</div>`;
+                }
+            });
+            container.innerHTML = lines.join('');
+        } else {
+            container.innerHTML = '<p class="empty-state">변경 내용이 없습니다.</p>';
+        }
+    }
+};
+
+// ============================================================================
 // 초기화
 // ============================================================================
 document.addEventListener('DOMContentLoaded', () => {
@@ -2471,8 +3133,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // 메인 페이지인지 관리자 페이지인지 확인
     if (document.querySelector('.search-section')) {
         initSearch();
+        // 새 기능 모듈 초기화
+        BookmarkPanel.init();
+        AdvancedSearch.init();
+        VersionManager.init();
     } else if (document.querySelector('.admin-section') || document.getElementById('files-tbody')) {
         // 관리자 페이지 초기화
         initAdmin();
+        VersionManager.init();
     }
 });

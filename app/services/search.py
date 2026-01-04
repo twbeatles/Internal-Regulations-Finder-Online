@@ -110,9 +110,13 @@ class BM25Light:
 # 검색 캐시, Rate Limiter, Search Queue
 # ============================================================================
 class SearchCache:
-    def __init__(self, max_size: int = 100):
-        self.cache: Dict[str, Tuple[float, Any]] = {}
+    """LRU 기반 검색 캐시 (OrderedDict 사용으로 O(1) 성능)"""
+    
+    def __init__(self, max_size: int = 100, ttl_seconds: int = 300):
+        from collections import OrderedDict
+        self.cache: OrderedDict = OrderedDict()
         self.max_size = max_size
+        self.ttl = ttl_seconds
         self._lock = threading.Lock()
     
     def _make_key(self, query: str, k: int, hybrid: bool) -> str:
@@ -123,22 +127,33 @@ class SearchCache:
         with self._lock:
             if key in self.cache:
                 timestamp, result = self.cache[key]
-                if time.time() - timestamp < 300:
+                if time.time() - timestamp < self.ttl:
+                    # LRU: 최근 사용으로 이동
+                    self.cache.move_to_end(key)
                     return result
+                # 만료된 항목 제거
                 del self.cache[key]
         return None
     
     def set(self, query: str, k: int, hybrid: bool, result: Any):
         key = self._make_key(query, k, hybrid)
         with self._lock:
-            if len(self.cache) >= self.max_size:
-                oldest_key = min(self.cache.keys(), key=lambda x: self.cache[x][0])
-                del self.cache[oldest_key]
+            # 이미 존재하면 삭제 후 다시 추가 (순서 갱신)
+            if key in self.cache:
+                del self.cache[key]
+            # 크기 초과 시 가장 오래된 항목 제거 (O(1))
+            while len(self.cache) >= self.max_size:
+                self.cache.popitem(last=False)
             self.cache[key] = (time.time(), result)
     
     def clear(self):
         with self._lock:
             self.cache.clear()
+    
+    def size(self) -> int:
+        """현재 캐시 크기"""
+        with self._lock:
+            return len(self.cache)
 
 class RateLimiter:
     def __init__(self, requests_per_minute: int = 60):

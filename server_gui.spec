@@ -141,7 +141,7 @@ exe = EXE(
     name='사내규정검색기',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=True,               # 경량화: 심볼 스트리핑
+    strip=False,              # Windows에서는 strip 도구 없음 (Linux 전용)
     upx=True,                 # 경량화: UPX 압축
     console=False,            # GUI 모드 (콘솔 숨김)
     disable_windowed_traceback=False,
@@ -160,7 +160,7 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
-    strip=True,               # 경량화: 바이너리 스트리핑
+    strip=False,              # Windows 호환성 (strip은 Linux 전용)
     upx=True,                 # 경량화: UPX 압축
     upx_exclude=[             # UPX 제외 (손상 방지)
         'python*.dll',

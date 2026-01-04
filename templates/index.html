@@ -37,6 +37,7 @@
                     <h1>사내 규정 검색기</h1>
                 </div>
                 <div class="header-info">
+                    <button id="bookmark-toggle" class="header-btn" title="북마크 목록" aria-label="북마크 목록 열기">📌</button>
                     <button id="theme-toggle" class="theme-toggle" title="테마 변경" aria-label="다크/라이트 테마 전환">🌙</button>
                     <span id="status-badge" class="status-badge loading" role="status" aria-live="polite">
                         <span class="status-dot" aria-hidden="true"></span>
@@ -90,6 +91,42 @@
                             <input type="checkbox" id="hybrid-search" checked>
                             <span>하이브리드 검색</span>
                         </label>
+                        <button id="advanced-search-toggle" class="btn btn-sm btn-secondary" type="button"
+                            title="고급 검색 옵션">
+                            🔧 고급 검색
+                        </button>
+                    </div>
+                    <!-- 고급 검색 패널 -->
+                    <div id="advanced-search-panel" class="advanced-search-panel" style="display: none;">
+                        <div class="advanced-search-header">
+                            <span>🔍 고급 검색 옵션</span>
+                            <button id="advanced-search-close" class="btn-icon" type="button">✕</button>
+                        </div>
+                        <div class="advanced-search-body">
+                            <div class="advanced-option">
+                                <label>검색 연산자 사용:</label>
+                                <div class="operator-help">
+                                    <code>AND</code> 두 키워드 모두 포함 (예: 휴가 AND 연차)
+                                    <code>OR</code> 하나라도 포함 (예: 휴가 OR 연차)
+                                    <code>NOT</code> 제외 검색 (예: 휴가 NOT 병가)
+                                    <code>"..."</code> 정확한 문구 (예: "연차 휴가")
+                                </div>
+                            </div>
+                            <div class="advanced-option">
+                                <label class="option-item checkbox">
+                                    <input type="checkbox" id="use-regex">
+                                    <span>정규식 검색 사용</span>
+                                </label>
+                            </div>
+                            <div class="advanced-option">
+                                <label for="date-from">날짜 범위:</label>
+                                <div class="date-range">
+                                    <input type="date" id="date-from" placeholder="시작일">
+                                    <span>~</span>
+                                    <input type="date" id="date-to" placeholder="종료일">
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -222,6 +259,66 @@
         <button id="highlight-next" class="highlight-btn" title="다음 하이라이트 (N)">▶</button>
         <button id="highlight-close" class="highlight-btn" title="닫기">✕</button>
     </div>
+
+    <!-- 북마크 사이드 패널 -->
+    <div id="bookmark-panel" class="bookmark-panel">
+        <div class="bookmark-panel-header">
+            <h3>📌 북마크 목록</h3>
+            <button id="bookmark-panel-close" class="btn-icon" aria-label="닫기">✕</button>
+        </div>
+        <div class="bookmark-panel-actions">
+            <input type="search" id="bookmark-search" placeholder="북마크 검색..." class="bookmark-search-input">
+            <select id="bookmark-filter" class="bookmark-filter-select">
+                <option value="all">전체</option>
+                <option value="recent">최근 추가</option>
+            </select>
+        </div>
+        <div id="bookmark-list" class="bookmark-list">
+            <!-- 북마크 아이템이 여기에 동적으로 추가됨 -->
+        </div>
+        <div class="bookmark-panel-footer">
+            <span id="bookmark-count">0개 저장됨</span>
+            <button id="bookmark-export-btn" class="btn btn-sm btn-secondary">📥 내보내기</button>
+            <button id="bookmark-clear-btn" class="btn btn-sm btn-danger">🗑️ 전체 삭제</button>
+        </div>
+    </div>
+    <div id="bookmark-overlay" class="bookmark-overlay"></div>
+
+    <!-- 버전 비교 모달 -->
+    <div id="version-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content version-modal">
+            <div class="modal-header">
+                <h3>📋 버전 비교</h3>
+                <button id="version-modal-close" class="modal-close">✕</button>
+            </div>
+            <div class="version-selector">
+                <div class="version-select-group">
+                    <label for="version-left">이전 버전</label>
+                    <select id="version-left" class="form-select"></select>
+                </div>
+                <span class="version-compare-icon">⇔</span>
+                <div class="version-select-group">
+                    <label for="version-right">비교 버전</label>
+                    <select id="version-right" class="form-select"></select>
+                </div>
+                <button id="version-compare-btn" class="btn btn-primary">비교</button>
+            </div>
+            <div id="version-diff-container" class="version-diff-container">
+                <div class="version-diff-stats">
+                    <span id="diff-added" class="diff-stat added">+0 추가</span>
+                    <span id="diff-removed" class="diff-stat removed">-0 삭제</span>
+                    <span id="diff-similarity">유사도: --%</span>
+                </div>
+                <div id="version-diff-content" class="version-diff-content">
+                    <p class="empty-state">버전을 선택하고 '비교' 버튼을 클릭하세요</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- jsPDF for PDF export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
 
     <script src="/static/app.js"></script>
 </body>

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import json
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
 from app.config import AppConfig
 from app.utils import logger
@@ -45,14 +45,14 @@ def create_app():
     # 전역 에러 핸들러
     @app.errorhandler(404)
     def not_found(e):
-        if app.request.path.startswith('/api/'):
+        if request.path.startswith('/api/'):
             return jsonify({'success': False, 'message': 'API 엔드포인트를 찾을 수 없습니다'}), 404
         return render_template('index.html'), 404
 
     @app.errorhandler(500)
     def server_error(e):
         logger.error(f"서버 내부 오류: {e}")
-        if app.request.path.startswith('/api/'):
+        if request.path.startswith('/api/'):
             return jsonify({'success': False, 'message': '서버 내부 오류가 발생했습니다', 'error': str(e)}), 500
         return "서버 오류발생", 500
 

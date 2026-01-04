@@ -141,3 +141,44 @@ def compare_docs():
     comp = DocumentComparator()
     res = comp.compare(text1, text2)
     return jsonify({'success': True, 'comparison': res})
+
+@files_bp.route('/files/<path:filename>/versions', methods=['GET'])
+def get_file_versions(filename):
+    """파일의 버전 히스토리 조회"""
+    history = qa_system.revision_tracker.get_history(filename)
+    return jsonify({
+        'success': True,
+        'revisions': history
+    })
+
+@files_bp.route('/files/<path:filename>/versions/<version>', methods=['GET'])
+def get_file_version_content(filename, version):
+    """특정 버전의 내용 조회"""
+    content = qa_system.revision_tracker.get_revision(filename, version)
+    if content is None:
+        return jsonify({'success': False, 'message': '버전을 찾을 수 없습니다'}), 404
+    return jsonify({
+        'success': True,
+        'version': version,
+        'content': content
+    })
+
+@files_bp.route('/files/<path:filename>/versions/compare', methods=['GET'])
+def compare_file_versions(filename):
+    """두 버전 간 비교"""
+    v1 = request.args.get('v1')
+    v2 = request.args.get('v2')
+    
+    if not v1 or not v2:
+        return jsonify({'success': False, 'message': '버전 파라미터가 필요합니다 (v1, v2)'}), 400
+    
+    diff_result = qa_system.revision_tracker.compare_versions(filename, v1, v2)
+    
+    if diff_result is None:
+        return jsonify({'success': False, 'message': '버전을 비교할 수 없습니다'}), 404
+    
+    return jsonify({
+        'success': True,
+        'diff': diff_result
+    })
+
