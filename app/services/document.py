@@ -11,6 +11,30 @@ import threading
 
 from app.utils import logger, FileUtils
 from app.config import AppConfig
+from app.constants import ErrorMessages, Patterns, Limits
+
+# 커스텀 예외
+from app.exceptions import (
+    DocumentNotFoundError, DocumentExtractionError, 
+    DocumentTypeError, DocumentEmptyError
+)
+
+# ============================================================================
+# 사전 컴파일된 정규식 패턴 (성능 최적화)
+# ============================================================================
+
+# ArticleParser용 패턴
+_RE_ARTICLE_SPLIT = re.compile(r'(제\s*\d+\s*조(?:의\s*\d+)?[^\n]*)')
+_RE_ARTICLE_MATCH = re.compile(r'제\s*(\d+)\s*조(?:의\s*(\d+))?(.+)?')
+_RE_PARAGRAPH_SPLIT = re.compile(r'([①②③④⑤⑥⑦⑧⑨⑩])')
+_RE_NUMBER_EXTRACT = re.compile(r'\d+')
+
+# DocumentSplitter용 패턴
+_RE_CHAPTER_SPLIT = re.compile(r'(제\s*\d+\s*장[^\n]*)')
+_RE_ARTICLE_SPLIT_FULL = re.compile(r'(제\s*\d+\s*조(?:의\s*\d+)?[^\n]*)')
+
+# TextHighlighter용 패턴
+_RE_KEYWORD_EXTRACT = re.compile(r'[가-힣]{2,}|[a-zA-Z]{3,}')
 
 # ============================================================================
 # 문서 추출기 (v2.0 확장 - Excel, HWP, OCR 지원)
@@ -80,22 +104,51 @@ class DocumentExtractor:
         return self._ocr_available
     
     def extract(self, path: str) -> Tuple[str, Optional[str]]:
-        if not path or not os.path.exists(path):
-            return "", f"파일 없음: {path}"
+        """문서에서 텍스트 추출
+        
+        Args:
+            path: 추출할 파일 경로
+            
+        Returns:
+            Tuple[str, Optional[str]]: (추출된 텍스트, 에러 메시지 또는 None)
+            
+        Note:
+            에러 발생 시에도 예외를 발생시키지 않고 (빈 문자열, 에러 메시지) 반환.
+            이는 일괄 처리 시 하나의 실패가 전체를 중단시키지 않도록 하기 위함.
+        """
+        if not path:
+            return "", ErrorMessages.FILE_NOT_FOUND
+        
+        if not os.path.exists(path):
+            logger.debug(f"파일 없음: {path}")
+            return "", f"{ErrorMessages.FILE_NOT_FOUND}: {path}"
+        
         if not os.path.isfile(path):
             return "", f"파일이 아님: {path}"
+        
         ext = os.path.splitext(path)[1].lower()
-        if ext == '.txt':
-            return self._extract_txt(path)
-        elif ext == '.docx':
-            return self._extract_docx(path)
-        elif ext == '.pdf':
-            return self._extract_pdf(path)
-        elif ext in ['.xlsx', '.xls']:
-            return self._extract_xlsx(path)
-        elif ext == '.hwp':
-            return self._extract_hwp(path)
-        return "", f"지원하지 않는 형식: {ext}"
+        
+        # 지원 형식 확인
+        if ext not in AppConfig.SUPPORTED_EXTENSIONS:
+            return "", f"{ErrorMessages.FILE_TYPE_NOT_SUPPORTED}: {ext}"
+        
+        # 파일 형식별 추출
+        try:
+            if ext == '.txt':
+                return self._extract_txt(path)
+            elif ext == '.docx':
+                return self._extract_docx(path)
+            elif ext == '.pdf':
+                return self._extract_pdf(path)
+            elif ext in ['.xlsx', '.xls']:
+                return self._extract_xlsx(path)
+            elif ext == '.hwp':
+                return self._extract_hwp(path)
+            else:
+                return "", f"{ErrorMessages.FILE_TYPE_NOT_SUPPORTED}: {ext}"
+        except Exception as e:
+            logger.error(f"문서 추출 중 예상치 못한 오류: {path} - {e}")
+            return "", f"추출 오류: {str(e)}"
     
     def _extract_txt(self, path: str) -> Tuple[str, Optional[str]]:
         return FileUtils.safe_read(path)
@@ -201,9 +254,14 @@ class DocumentExtractor:
             return "", f"Excel 오류: {e}"
     
     def _extract_hwp(self, path: str) -> Tuple[str, Optional[str]]:
-        """HWP 파일 텍스트 추출 (v2.0) - olefile 기반 기본 추출"""
+        """HWP 파일 텍스트 추출 (v2.0) - olefile 기반 기본 추출
+        
+        리소스 관리: try-finally로 OLE 파일 핸들 확실히 닫기
+        """
         if not self.hwp:
             return "", "HWP 라이브러리 없음 (pip install olefile)"
+        
+        ole = None
         try:
             ole = self.hwp.OleFileIO(path)
             texts = []
@@ -235,45 +293,59 @@ class DocumentExtractor:
                                 break
                             except Exception:
                                 continue
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"HWP BodyText 섹션 읽기 실패: {entry_path} - {e}")
                         continue
-            
-            ole.close()
             
             if texts:
                 unique_texts = list(dict.fromkeys(texts))
                 return '\n\n'.join(unique_texts), None
             return "", "HWP 텍스트 추출 실패 (빈 파일 또는 지원되지 않는 형식)"
         except Exception as e:
+            logger.warning(f"HWP 파일 처리 오류: {path} - {e}")
             return "", f"HWP 오류: {e}"
+        finally:
+            # 리소스 정리: 항상 OLE 파일 닫기
+            if ole is not None:
+                try:
+                    ole.close()
+                except Exception as e:
+                    logger.debug(f"HWP OLE 파일 닫기 실패: {e}")
 
 # ============================================================================
 # 조문/조항 파서 (v2.0)
 # ============================================================================
 class ArticleParser:
-    """규정 문서의 조문 구조 파싱"""
+    """규정 문서의 조문 구조 파싱
     
+    성능 최적화:
+    - 사전 컴파일된 정규식 사용 (모듈 레벨에 정의)
+    - 반복 패턴 매칭 최소화
+    """
+    
+    # 클래스 레벨 패턴 (사전 컴파일된 모듈 레벨 패턴 참조)
     ARTICLE_PATTERNS = [
-        (r'제\s*(\d+)\s*장[^\n]*', 'chapter'),
-        (r'제\s*(\d+)\s*절[^\n]*', 'section'),
-        (r'제\s*(\d+)\s*조[^\n]*', 'article'),
-        (r'제\s*(\d+)\s*조의\s*(\d+)[^\n]*', 'article_sub'),
+        (re.compile(r'제\s*(\d+)\s*장[^\n]*'), 'chapter'),
+        (re.compile(r'제\s*(\d+)\s*절[^\n]*'), 'section'),
+        (re.compile(r'제\s*(\d+)\s*조[^\n]*'), 'article'),
+        (re.compile(r'제\s*(\d+)\s*조의\s*(\d+)[^\n]*'), 'article_sub'),
     ]
     
     ITEM_PATTERNS = [
-        (r'①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩', 'paragraph'),
-        (r'^\s*(\d+)\.\s*', 'numbered'),
-        (r'^\s*[가-하]\.\s*', 'korean'),
+        (re.compile(r'①|②|③|④|⑤|⑥|⑦|⑧|⑨|⑩'), 'paragraph'),
+        (re.compile(r'^\s*(\d+)\.\s*'), 'numbered'),
+        (re.compile(r'^\s*[가-하]\.\s*'), 'korean'),
     ]
     
     def parse_articles(self, content: str) -> List[Dict]:
+        """조문별로 분리된 구조 반환 (사전 컴파일된 패턴 사용)"""
         articles = []
-        pattern = r'(제\s*\d+\s*조(?:의\s*\d+)?[^\n]*)'
-        parts = re.split(pattern, content)
+        # 사전 컴파일된 패턴 사용
+        parts = _RE_ARTICLE_SPLIT.split(content)
         
         current_article = None
         for part in parts:
-            match = re.match(r'제\s*(\d+)\s*조(?:의\s*(\d+))?(.+)?', part.strip())
+            match = _RE_ARTICLE_MATCH.match(part.strip())
             if match:
                 if current_article:
                     articles.append(current_article)
@@ -291,7 +363,8 @@ class ArticleParser:
             elif current_article and part.strip():
                 current_article['content'] += part
                 
-                para_split = re.split(r'([①②③④⑤⑥⑦⑧⑨⑩])', part)
+                # 사전 컴파일된 패턴으로 항 분리
+                para_split = _RE_PARAGRAPH_SPLIT.split(part)
                 for i in range(1, len(para_split), 2):
                     if i+1 < len(para_split):
                         current_article['paragraphs'].append({
@@ -305,6 +378,7 @@ class ArticleParser:
         return articles
     
     def search_article(self, articles: List[Dict], query: str) -> List[Dict]:
+        """조문에서 검색"""
         results = []
         query_lower = query.lower()
         
@@ -323,7 +397,8 @@ class ArticleParser:
         return sorted(results, key=lambda x: x['score'], reverse=True)
     
     def get_article_by_number(self, articles: List[Dict], number: str) -> Optional[Dict]:
-        num_match = re.search(r'\d+', number)
+        """조문 번호로 조문 찾기 (사전 컴파일된 패턴 사용)"""
+        num_match = _RE_NUMBER_EXTRACT.search(number)
         if not num_match:
             return None
         
@@ -337,7 +412,73 @@ class ArticleParser:
 # 문서 분할기 (v2.0)
 # ============================================================================
 class DocumentSplitter:
-    """대용량 규정집을 개별 규정 파일로 분할"""
+    """대용량 규정집을 개별 규정 파일로 분할
+    
+    Usage:
+        splitter = DocumentSplitter(chunk_size=500, chunk_overlap=50)
+        chunks = splitter.split(text)
+    """
+    
+    def __init__(self, chunk_size: int = 500, chunk_overlap: int = 50):
+        """
+        Args:
+            chunk_size: 각 청크의 최대 문자 수
+            chunk_overlap: 청크 간 겹치는 문자 수
+        """
+        self.chunk_size = max(chunk_size, Limits.MIN_CHUNK_SIZE)
+        self.chunk_overlap = min(chunk_overlap, chunk_size // 2)
+    
+    def split(self, text: str) -> List[str]:
+        """텍스트를 청크로 분할
+        
+        Args:
+            text: 분할할 전체 텍스트
+            
+        Returns:
+            분할된 청크 리스트
+        """
+        if not text or not text.strip():
+            return []
+        
+        # 문단 단위로 먼저 분리
+        paragraphs = text.split('\n\n')
+        
+        chunks = []
+        current_chunk = ""
+        
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+            
+            # 현재 청크 + 새 문단이 chunk_size 이하면 추가
+            if len(current_chunk) + len(para) + 2 <= self.chunk_size:
+                current_chunk += ('\n\n' + para) if current_chunk else para
+            else:
+                # 현재 청크 저장
+                if current_chunk:
+                    chunks.append(current_chunk)
+                
+                # 새 문단이 chunk_size보다 크면 강제 분할
+                if len(para) > self.chunk_size:
+                    for i in range(0, len(para), self.chunk_size - self.chunk_overlap):
+                        chunk = para[i:i + self.chunk_size]
+                        if chunk.strip():
+                            chunks.append(chunk)
+                    current_chunk = ""
+                else:
+                    # overlap 적용
+                    if chunks and self.chunk_overlap > 0:
+                        overlap_text = chunks[-1][-self.chunk_overlap:]
+                        current_chunk = overlap_text + '\n\n' + para
+                    else:
+                        current_chunk = para
+        
+        # 마지막 청크 저장
+        if current_chunk.strip():
+            chunks.append(current_chunk)
+        
+        return chunks
     
     def split_by_chapters(self, content: str, filename: str = "") -> List[Dict]:
         pattern = r'(제\s*\d+\s*장[^\n]*)'
@@ -493,7 +634,8 @@ class TextHighlighter:
         
         word_freq = Counter()
         for doc in documents:
-            words = re.findall(r'[가-힣]{2,}|[a-zA-Z]{3,}', doc)
+            # 사전 컴파일된 패턴 사용 (성능 최적화)
+            words = _RE_KEYWORD_EXTRACT.findall(doc)
             word_freq.update(words)
         
         stopwords = {'있는', '하는', '및', '등', '이', '가', '을', '를', '의', '에', '로', '으로'}

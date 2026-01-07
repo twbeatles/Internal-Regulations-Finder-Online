@@ -26,11 +26,55 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
 from PyQt6.QtGui import QIcon, QAction, QFont, QColor, QPalette, QCloseEvent, QTextCharFormat
 
-# 서버 모듈 import
-from server import (
-    app, qa_system, initialize_server, AppConfig, logger, UPLOAD_DIR,
-    FileUtils, graceful_shutdown
-)
+# 서버 모듈 import - 새로운 app/ 구조 사용
+from app import create_app
+from app.config import AppConfig
+from app.utils import logger, FileUtils, get_app_directory
+from app.services.search import qa_system
+
+# Flask 앱 생성
+app = create_app()
+
+# 업로드 디렉토리
+UPLOAD_DIR = os.path.join(get_app_directory(), 'uploads')
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+def initialize_server():
+    """서버 초기화 - 모델 로드 및 문서 처리"""
+    logger.info("서버 초기화 시작...")
+    try:
+        # 설정 로드
+        settings_path = os.path.join(get_app_directory(), 'config', 'settings.json')
+        if os.path.exists(settings_path):
+            with open(settings_path, 'r', encoding='utf-8') as f:
+                settings = json.load(f)
+            
+            folder = settings.get('folder', '')
+            offline_mode = settings.get('offline_mode', False)
+            local_model_path = settings.get('local_model_path', '')
+            
+            # 오프라인 모드 설정
+            AppConfig.OFFLINE_MODE = offline_mode
+            AppConfig.LOCAL_MODEL_PATH = local_model_path
+            
+            if folder and os.path.exists(folder):
+                logger.info(f"문서 폴더 초기화: {folder}")
+                qa_system.initialize(folder)
+            else:
+                # 폴더 없어도 모델은 로드
+                qa_system.load_model(AppConfig.DEFAULT_MODEL)
+        else:
+            # 기본 모델 로드
+            qa_system.load_model(AppConfig.DEFAULT_MODEL)
+        
+        logger.info("서버 초기화 완료")
+    except Exception as e:
+        logger.error(f"서버 초기화 오류: {e}")
+
+def graceful_shutdown():
+    """서버 정리 종료"""
+    logger.info("서버 종료 중...")
+
 
 # ============================================================================
 # 상수
@@ -1191,20 +1235,19 @@ def main():
     # 명령행 인자 확인
     start_minimized = '--minimized' in sys.argv or '-m' in sys.argv
     
-    # server 모듈에 settings_manager 주입 (순환 참조 문제 해결 및 Main 모듈 인식 문제 해결)
-    # server.py의 get_settings_manager()가 올바른 인스턴스를 반환하도록 함
-    import server
-    server._settings_manager_instance = settings_manager
+    # settings_manager는 이미 전역으로 생성됨
+    # server.py 모듈 주입은 더 이상 필요 없음 (app/ 구조 사용)
     
-    app = QApplication(sys.argv)
-    app.setStyle('Fusion')
-    app.setStyleSheet(DARK_STYLE)
-    app.setQuitOnLastWindowClosed(False)  # 트레이로 최소화 지원
+    qt_app = QApplication(sys.argv)
+    qt_app.setStyle('Fusion')
+    qt_app.setStyleSheet(DARK_STYLE)
+    qt_app.setQuitOnLastWindowClosed(False)  # 트레이로 최소화 지원
     
     window = ServerWindow(start_minimized=start_minimized)
     
-    sys.exit(app.exec())
+    sys.exit(qt_app.exec())
 
 
 if __name__ == '__main__':
     main()
+

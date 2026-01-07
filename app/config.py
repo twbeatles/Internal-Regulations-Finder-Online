@@ -3,7 +3,7 @@ from typing import Dict, Set
 
 class AppConfig:
     APP_NAME = "사내 규정 검색기"
-    APP_VERSION = "2.0 (웹 서버)"  # v2.0 대규모 기능 업그레이드
+    APP_VERSION = "2.3 (웹 서버)"  # v2.3 디버깅 및 리팩토링
     
     # 서버 설정
     SERVER_HOST = "0.0.0.0"

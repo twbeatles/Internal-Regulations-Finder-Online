@@ -1,0 +1,25 @@
+# 사내 규정 검색기 - 경량 빌드용 최소 의존성
+# 용도: PyInstaller 빌드 시 사용
+# 예상 빌드 크기: 100-150MB
+
+# Flask 웹 프레임워크
+flask>=2.3.0
+flask-cors>=4.0.0
+
+# 프로덕션 서버
+waitress>=2.1.0
+
+# 문서 처리 (기본)
+python-docx>=0.8.11
+pypdf>=3.0.0
+openpyxl>=3.1.0
+olefile>=0.46
+lxml>=4.9.0
+
+# 시스템 모니터링
+psutil>=5.9.0
+
+# 참고: AI/ML 라이브러리 제외됨
+# - torch, transformers, langchain, faiss 등
+# - 하이브리드 검색 불가, BM25 텍스트 검색만 사용
+# - 전체 기능 사용시 requirements.txt 참고

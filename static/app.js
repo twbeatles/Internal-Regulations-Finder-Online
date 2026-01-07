@@ -1,5 +1,5 @@
 /**
- * 사내 규정 검색기 - 클라이언트 JavaScript v1.6
+ * 사내 규정 검색기 - 클라이언트 JavaScript v1.7
  * API 통신 및 UI 상호작용 처리
  * 
  * Features:
@@ -11,19 +11,55 @@
  * - 다크/라이트 테마
  * - 콘텐츠 접기/펼치기
  * - XSS 보안 강화
+ * 
+ * v1.7 Changes:
+ * - Production-safe logging
+ * - Improved error handling
+ * - Memory leak prevention
  */
 
 // ============================================================================
-// UX 유틸리티 - 리플 효과
+// 로깅 유틸리티 (프로덕션 모드에서는 디버그 로그 비활성화)
+// ============================================================================
+const Logger = {
+    isDev: window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1',
+
+    debug(...args) {
+        if (this.isDev) console.log('[DEBUG]', ...args);
+    },
+    info(...args) {
+        console.log('[INFO]', ...args);
+    },
+    warn(...args) {
+        console.warn('[WARN]', ...args);
+    },
+    error(...args) {
+        console.error('[ERROR]', ...args);
+    }
+};
+
+// ============================================================================
+// UX 유틸리티 - 리플 효과 (초기화 중복 방지)
 // ============================================================================
 const RippleEffect = {
+    _initialized: false,  // 중복 초기화 방지 플래그
+
     init() {
+        // 이미 초기화되었으면 스킵
+        if (this._initialized) {
+            console.debug('RippleEffect already initialized');
+            return;
+        }
+
+        // 이벤트 위임으로 전역 클릭 핸들러 (한 번만 등록)
         document.addEventListener('click', (e) => {
             const btn = e.target.closest('.btn, .search-btn');
             if (btn) {
                 this.create(btn, e);
             }
         });
+
+        this._initialized = true;
     },
 
     create(element, event) {
@@ -42,9 +78,84 @@ const RippleEffect = {
         `;
 
         element.appendChild(ripple);
-        ripple.addEventListener('animationend', () => ripple.remove());
+        // 애니메이션 종료 후 자동 제거
+        ripple.addEventListener('animationend', () => ripple.remove(), { once: true });
     }
 };
+
+// ============================================================================
+// 공통 유틸리티 함수
+// ============================================================================
+
+/**
+ * 파일 크기를 읽기 쉬운 형태로 변환
+ * @param {number} bytes - 바이트 단위 크기
+ * @returns {string} 변환된 크기 문자열
+ */
+function formatFileSize(bytes) {
+    if (bytes === 0 || bytes === undefined || bytes === null) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const k = 1024;
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + units[i];
+}
+
+/**
+ * HTML 특수문자 이스케이프 (XSS 방지)
+ * @param {string} str - 이스케이프할 문자열
+ * @returns {string} 이스케이프된 문자열
+ */
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+/**
+ * 토스트 알림 표시
+ * @param {string} message - 표시할 메시지
+ * @param {string} type - 'success', 'error', 'info', 'warning'
+ */
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toast-container') || createToastContainer();
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `
+        <span class="toast-icon">${getToastIcon(type)}</span>
+        <span class="toast-message">${escapeHtml(message)}</span>
+    `;
+
+    container.appendChild(toast);
+
+    // 애니메이션 시작
+    setTimeout(() => toast.classList.add('show'), 10);
+
+    // 3초 후 제거
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+function createToastContainer() {
+    const container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+    return container;
+}
+
+function getToastIcon(type) {
+    const icons = {
+        success: '✅',
+        error: '❌',
+        warning: '⚠️',
+        info: 'ℹ️'
+    };
+    return icons[type] || icons.info;
+}
 
 // ============================================================================
 // 성능 유틸리티 - Debounce, Throttle, Cleanup
@@ -87,6 +198,7 @@ const PerformanceUtils = {
 
     // 이벤트 리스너 정리를 위한 저장소
     _cleanupFunctions: [],
+    _abortControllers: new Map(),  // AbortController 저장소 추가
 
     /**
      * 정리 함수 등록
@@ -94,6 +206,30 @@ const PerformanceUtils = {
      */
     registerCleanup(cleanupFn) {
         this._cleanupFunctions.push(cleanupFn);
+    },
+
+    /**
+     * AbortController 등록 (이벤트 리스너 일괄 해제용)
+     * @param {string} key - 식별자
+     * @returns {AbortController} 생성된 컨트롤러
+     */
+    getAbortController(key) {
+        if (!this._abortControllers.has(key)) {
+            this._abortControllers.set(key, new AbortController());
+        }
+        return this._abortControllers.get(key);
+    },
+
+    /**
+     * 특정 키의 AbortController 중단
+     * @param {string} key - 식별자
+     */
+    abortController(key) {
+        const controller = this._abortControllers.get(key);
+        if (controller) {
+            controller.abort();
+            this._abortControllers.delete(key);
+        }
     },
 
     /**
@@ -108,6 +244,12 @@ const PerformanceUtils = {
             }
         });
         this._cleanupFunctions = [];
+
+        // 모든 AbortController 중단
+        this._abortControllers.forEach((controller, key) => {
+            controller.abort();
+        });
+        this._abortControllers.clear();
     },
 
     /**
@@ -186,15 +328,24 @@ const SkeletonLoading = {
 };
 
 // ============================================================================
-// UX 유틸리티 - 네트워크 상태 감지
+// UX 유틸리티 - 네트워크 상태 감지 (초기화 중복 방지)
 // ============================================================================
 const NetworkStatus = {
+    _initialized: false,  // 중복 초기화 방지 플래그
     isOnline: navigator.onLine,
     listeners: [],
 
     init() {
+        // 이미 초기화되었으면 스킵
+        if (this._initialized) {
+            console.debug('NetworkStatus already initialized');
+            return;
+        }
+
         window.addEventListener('online', () => this.handleChange(true));
         window.addEventListener('offline', () => this.handleChange(false));
+
+        this._initialized = true;
     },
 
     handleChange(online) {
@@ -226,8 +377,8 @@ const NetworkStatus = {
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
         navigator.serviceWorker.register('/static/sw.js')
-            .then(reg => console.log('SW Registered:', reg))
-            .catch(err => console.log('SW Fail:', err));
+            .then(reg => Logger.debug('SW Registered:', reg.scope))
+            .catch(err => Logger.warn('SW registration failed:', err.message));
     });
 }
 
@@ -626,7 +777,7 @@ const API = {
         const requestKey = `${options.method || 'GET'}-${endpoint}-${JSON.stringify(options.body || '')}`;
 
         if (options.method === 'POST' && this.pendingRequests.has(requestKey)) {
-            console.log('Duplicate request prevented:', endpoint);
+            Logger.debug('Duplicate request prevented:', endpoint);
             return this.pendingRequests.get(requestKey);
         }
 
@@ -668,7 +819,7 @@ const API = {
 
             // 서버 과부하 (503) - 재시도
             if (response.status === 503 && retryCount < this.maxRetries) {
-                console.log(`Server busy, retrying... (${retryCount + 1}/${this.maxRetries})`);
+                Logger.debug(`Server busy, retrying... (${retryCount + 1}/${this.maxRetries})`);
                 await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
                 return this._executeRequest(endpoint, options, controller, timeoutId, retryCount + 1);
             }
@@ -693,7 +844,7 @@ const API = {
 
             // 네트워크 오류 시 재시도
             if (error.name !== 'AbortError' && retryCount < this.maxRetries) {
-                console.log(`Network error, retrying... (${retryCount + 1}/${this.maxRetries})`);
+                Logger.debug(`Network error, retrying... (${retryCount + 1}/${this.maxRetries})`);
                 await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
                 return this._executeRequest(endpoint, options, controller, timeoutId, retryCount + 1);
             }
@@ -1757,6 +1908,36 @@ async function initAdmin() {
         } else {
             Toast.error('실패', result.message);
         }
+    });
+
+    // 전체 삭제 버튼 핸들러
+    document.getElementById('delete-all-btn')?.addEventListener('click', async () => {
+        if (!confirm('⚠️ 경고: 모든 로드된 파일과 인덱스가 삭제됩니다!\n\n이 작업은 되돌릴 수 없습니다.\n계속하시겠습니까?')) return;
+
+        // 2차 확인
+        if (!confirm('정말로 모든 파일을 삭제하시겠습니까?')) return;
+
+        const btn = document.getElementById('delete-all-btn');
+        btn.disabled = true;
+        btn.textContent = '삭제 중...';
+
+        try {
+            const response = await fetch('/api/files/all', { method: 'DELETE' });
+            const result = await response.json();
+
+            if (result.success) {
+                Toast.success('전체 삭제 완료', result.message);
+                await loadFiles();
+                await loadStats();
+            } else {
+                Toast.error('삭제 실패', result.message);
+            }
+        } catch (error) {
+            Toast.error('오류', '삭제 중 오류가 발생했습니다: ' + error.message);
+        }
+
+        btn.disabled = false;
+        btn.textContent = '⚠️ 전체 삭제';
     });
 
     // 주기적 상태 갱신
@@ -3121,6 +3302,508 @@ const VersionManager = {
 };
 
 // ============================================================================
+// Admin 페이지 초기화 및 파일 업로드
+// ============================================================================
+
+/**
+ * 관리자 페이지 초기화
+ */
+function initAdmin() {
+    Logger.debug('📋 Admin 페이지 초기화...');
+
+    // 비밀번호 인증 체크
+    checkAdminAuth();
+
+    // 파일 업로드 영역 설정
+    setupFileUpload();
+
+    // 동기화 컨트롤 설정
+    setupSyncControls();
+
+    // 파일 목록 로드
+    loadFileList();
+
+    // 모델 목록 로드
+    loadModelList();
+
+    // 통계 업데이트
+    updateStats();
+
+    // 주기적 상태 확인
+    setInterval(updateStats, 10000);
+    setInterval(checkServerStatus, 5000);
+
+    Logger.debug('✅ Admin 페이지 초기화 완료');
+}
+
+/**
+ * 관리자 인증 체크
+ */
+function checkAdminAuth() {
+    // 비밀번호 보호 여부 확인 (서버에서 설정)
+    fetch('/api/status')
+        .then(res => res.json())
+        .then(data => {
+            // 일단 모든 admin 섹션 표시 (비밀번호 로직은 추후 구현)
+            document.querySelectorAll('.admin-only').forEach(el => {
+                el.style.display = 'block';
+            });
+        })
+        .catch(err => {
+            console.error('상태 확인 실패:', err);
+        });
+}
+
+/**
+ * 비밀번호 인증 제출
+ */
+function submitAdminAuth() {
+    const password = document.getElementById('auth-password')?.value;
+
+    fetch('/api/verify_password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+    })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('auth-modal').style.display = 'none';
+                document.querySelectorAll('.admin-only').forEach(el => {
+                    el.style.display = 'block';
+                });
+            } else {
+                const errorEl = document.getElementById('auth-error');
+                if (errorEl) {
+                    errorEl.textContent = data.message || '비밀번호가 일치하지 않습니다';
+                    errorEl.style.display = 'block';
+                }
+            }
+        })
+        .catch(err => {
+            console.error('인증 오류:', err);
+            showToast('인증 중 오류가 발생했습니다', 'error');
+        });
+}
+
+/**
+ * 파일 업로드 영역 설정
+ */
+function setupFileUpload() {
+    const uploadArea = document.getElementById('upload-area');
+    const fileInput = document.getElementById('file-input');
+    const folderArea = document.getElementById('folder-upload-area');
+    const folderInput = document.getElementById('folder-input');
+
+    if (!uploadArea || !fileInput) {
+        console.warn('업로드 영역을 찾을 수 없습니다');
+        return;
+    }
+
+    // 업로드 영역 클릭 시 파일 선택
+    uploadArea.addEventListener('click', () => fileInput.click());
+
+    // 드래그 앤 드롭
+    uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.classList.add('drag-over');
+    });
+
+    uploadArea.addEventListener('dragleave', () => {
+        uploadArea.classList.remove('drag-over');
+    });
+
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('drag-over');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            handleFileUpload(files);
+        }
+    });
+
+    // 파일 선택 시 업로드
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            handleFileUpload(e.target.files);
+        }
+    });
+
+    // 폴더 업로드 버튼 토글
+    document.getElementById('btn-upload-file')?.addEventListener('click', () => {
+        document.getElementById('btn-upload-file').classList.add('active');
+        document.getElementById('btn-upload-folder')?.classList.remove('active');
+        uploadArea.style.display = 'block';
+        if (folderArea) folderArea.style.display = 'none';
+    });
+
+    document.getElementById('btn-upload-folder')?.addEventListener('click', () => {
+        document.getElementById('btn-upload-folder').classList.add('active');
+        document.getElementById('btn-upload-file')?.classList.remove('active');
+        uploadArea.style.display = 'none';
+        if (folderArea) folderArea.style.display = 'block';
+    });
+
+    // 폴더 업로드 (ZIP)
+    if (folderArea && folderInput) {
+        folderArea.addEventListener('click', () => folderInput.click());
+        folderInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFileUpload(e.target.files);
+            }
+        });
+    }
+}
+
+/**
+ * 파일 업로드 처리
+ */
+async function handleFileUpload(files) {
+    const progressDiv = document.getElementById('upload-progress');
+    const progressFill = document.getElementById('progress-fill');
+    const progressText = document.getElementById('progress-text');
+
+    if (progressDiv) {
+        progressDiv.classList.remove('hidden');
+    }
+
+    let uploaded = 0;
+    const total = files.length;
+
+    for (const file of files) {
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            if (progressText) {
+                progressText.textContent = `업로드 중: ${file.name} (${uploaded + 1}/${total})`;
+            }
+
+            const response = await fetch('/api/upload', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                uploaded++;
+                if (progressFill) {
+                    progressFill.style.width = `${(uploaded / total) * 100}%`;
+                }
+            } else {
+                showToast(`업로드 실패: ${file.name} - ${result.message}`, 'error');
+            }
+        } catch (err) {
+            console.error('업로드 오류:', err);
+            showToast(`업로드 오류: ${file.name}`, 'error');
+        }
+    }
+
+    if (progressDiv) {
+        setTimeout(() => {
+            progressDiv.classList.add('hidden');
+            if (progressFill) progressFill.style.width = '0%';
+        }, 1500);
+    }
+
+    if (uploaded > 0) {
+        showToast(`${uploaded}개 파일 업로드 완료`, 'success');
+        loadFileList();
+    }
+}
+
+/**
+ * 동기화 컨트롤 설정
+ */
+function setupSyncControls() {
+    const startBtn = document.getElementById('btn-start-sync');
+    const stopBtn = document.getElementById('btn-stop-sync');
+    const folderInput = document.getElementById('sync-folder-path');
+
+    startBtn?.addEventListener('click', async () => {
+        const folder = folderInput?.value || '';
+
+        try {
+            const response = await fetch('/api/sync/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ folder: folder || undefined })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                showToast('동기화가 시작되었습니다', 'success');
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                updateSyncStatus('syncing');
+            } else {
+                showToast(`동기화 실패: ${result.message}`, 'error');
+            }
+        } catch (err) {
+            showToast('동기화 시작 중 오류 발생', 'error');
+        }
+    });
+
+    stopBtn?.addEventListener('click', async () => {
+        try {
+            const response = await fetch('/api/sync/stop', { method: 'POST' });
+            const result = await response.json();
+
+            if (result.success) {
+                showToast('동기화가 중지되었습니다', 'info');
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                updateSyncStatus('stopped');
+            }
+        } catch (err) {
+            showToast('동기화 중지 중 오류 발생', 'error');
+        }
+    });
+
+    // 재처리 버튼
+    document.getElementById('reprocess-btn')?.addEventListener('click', async () => {
+        if (!confirm('모든 문서를 재처리하시겠습니까? 시간이 오래 걸릴 수 있습니다.')) return;
+
+        try {
+            const response = await fetch('/api/process', { method: 'POST' });
+            const result = await response.json();
+
+            if (result.success) {
+                showToast('재처리가 시작되었습니다', 'success');
+            } else {
+                showToast(`재처리 실패: ${result.message}`, 'error');
+            }
+        } catch (err) {
+            showToast('재처리 중 오류 발생', 'error');
+        }
+    });
+
+    // 새로고침 버튼
+    document.getElementById('refresh-btn')?.addEventListener('click', () => {
+        loadFileList();
+        updateStats();
+        showToast('새로고침 완료', 'info');
+    });
+}
+
+/**
+ * 동기화 상태 업데이트
+ */
+function updateSyncStatus(status) {
+    const indicator = document.getElementById('sync-status-indicator');
+    const text = document.getElementById('sync-status-text');
+
+    if (status === 'syncing') {
+        indicator?.classList.add('active');
+        if (text) text.textContent = '동기화 진행 중...';
+    } else {
+        indicator?.classList.remove('active');
+        if (text) text.textContent = '동기화 중지됨';
+    }
+}
+
+/**
+ * 파일 목록 로드
+ */
+async function loadFileList() {
+    const tbody = document.getElementById('files-tbody');
+    if (!tbody) return;
+
+    try {
+        const response = await fetch('/api/files');
+        const result = await response.json();
+
+        if (!result.success || !result.files || result.files.length === 0) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="6">로드된 파일이 없습니다</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = result.files.map(file => `
+            <tr>
+                <td><span class="status-badge ${file.status || 'ready'}">${getStatusLabel(file.status)}</span></td>
+                <td title="${escapeHtml(file.path || file.name)}">${escapeHtml(file.name || file.path?.split(/[\\/]/).pop() || '-')}</td>
+                <td>${formatFileSize(file.size || 0)}</td>
+                <td>${file.chunks || 0}</td>
+                <td>${file.version || '-'}</td>
+                <td>
+                    <button class="btn btn-sm btn-secondary" onclick="showVersionHistory('${escapeHtml(file.name)}')">📋 버전</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteFile('${escapeHtml(file.name)}')">🗑️</button>
+                </td>
+            </tr>
+        `).join('');
+
+    } catch (err) {
+        console.error('파일 목록 로드 오류:', err);
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="6">파일 목록을 불러올 수 없습니다</td></tr>';
+    }
+}
+
+/**
+ * 상태 라벨 반환
+ */
+function getStatusLabel(status) {
+    const labels = {
+        'ready': '✅ 준비',
+        'processing': '⏳ 처리 중',
+        'error': '❌ 오류',
+        'pending': '⏸️ 대기'
+    };
+    return labels[status] || '✅ 준비';
+}
+
+/**
+ * 파일 삭제
+ */
+async function deleteFile(filename) {
+    if (!confirm(`"${filename}" 파일을 삭제하시겠습니까?`)) return;
+
+    try {
+        const response = await fetch(`/api/files/${encodeURIComponent(filename)}`, {
+            method: 'DELETE'
+        });
+        const result = await response.json();
+
+        if (result.success) {
+            showToast('파일이 삭제되었습니다', 'success');
+            loadFileList();
+        } else {
+            showToast(`삭제 실패: ${result.message}`, 'error');
+        }
+    } catch (err) {
+        showToast('삭제 중 오류 발생', 'error');
+    }
+}
+
+/**
+ * 버전 히스토리 표시
+ */
+function showVersionHistory(filename) {
+    VersionManager.open(filename);
+}
+
+/**
+ * 모델 목록 로드
+ */
+async function loadModelList() {
+    const select = document.getElementById('model-select');
+    if (!select) return;
+
+    try {
+        const response = await fetch('/api/models');
+        const result = await response.json();
+
+        if (result.success && result.models) {
+            select.innerHTML = result.models.map(model =>
+                `<option value="${escapeHtml(model)}" ${model === result.current ? 'selected' : ''}>${escapeHtml(model)}</option>`
+            ).join('');
+        }
+    } catch (err) {
+        console.error('모델 목록 로드 오류:', err);
+        select.innerHTML = '<option value="">모델 로드 실패</option>';
+    }
+
+    // 모델 변경 버튼
+    document.getElementById('change-model-btn')?.addEventListener('click', async () => {
+        const model = select.value;
+        if (!model) return;
+
+        if (!confirm(`모델을 "${model}"로 변경하시겠습니까?\n서버가 잠시 멈출 수 있습니다.`)) return;
+
+        try {
+            showToast('모델 변경 중...', 'info');
+            const response = await fetch('/api/models/load', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model })
+            });
+            const result = await response.json();
+
+            if (result.success) {
+                showToast('모델이 변경되었습니다', 'success');
+            } else {
+                showToast(`모델 변경 실패: ${result.message}`, 'error');
+            }
+        } catch (err) {
+            showToast('모델 변경 중 오류 발생', 'error');
+        }
+    });
+}
+
+/**
+ * 통계 업데이트
+ */
+async function updateStats() {
+    try {
+        // 시스템 상태
+        const statusRes = await fetch('/api/status');
+        const status = await statusRes.json();
+
+        // 상태 뱃지 업데이트
+        updateStatusBadge(status.is_ready, status.is_loading, status.load_error);
+
+        // 모델명
+        const modelEl = document.getElementById('stat-model');
+        if (modelEl) modelEl.textContent = status.model || '-';
+
+        // 통계
+        const statsRes = await fetch('/api/stats');
+        const stats = await statsRes.json();
+
+        const filesEl = document.getElementById('stat-files');
+        const chunksEl = document.getElementById('stat-chunks');
+        const sizeEl = document.getElementById('stat-size');
+
+        if (filesEl) filesEl.textContent = stats.total_files || 0;
+        if (chunksEl) chunksEl.textContent = stats.total_chunks || 0;
+        if (sizeEl) sizeEl.textContent = formatFileSize(stats.total_size || 0);
+
+    } catch (err) {
+        Logger.error('통계 업데이트 오류:', err);
+    }
+}
+
+/**
+ * 상태 뱃지 업데이트
+ */
+function updateStatusBadge(isReady, isLoading, error) {
+    const badge = document.getElementById('status-badge');
+    const text = document.getElementById('status-text');
+
+    if (!badge || !text) return;
+
+    badge.classList.remove('ready', 'loading', 'error');
+
+    if (error) {
+        badge.classList.add('error');
+        text.textContent = '오류';
+    } else if (isLoading) {
+        badge.classList.add('loading');
+        text.textContent = '로딩 중...';
+    } else if (isReady) {
+        badge.classList.add('ready');
+        text.textContent = '준비 완료';
+    } else {
+        badge.classList.add('loading');
+        text.textContent = '초기화 중...';
+    }
+}
+
+/**
+ * 서버 상태 체크
+ */
+async function checkServerStatus() {
+    try {
+        const response = await fetch('/api/status');
+        const status = await response.json();
+        updateStatusBadge(status.is_ready, status.is_loading, status.load_error);
+    } catch (err) {
+        updateStatusBadge(false, false, 'Connection Error');
+    }
+}
+
+// ============================================================================
 // 초기화
 // ============================================================================
 document.addEventListener('DOMContentLoaded', () => {
@@ -3137,9 +3820,10 @@ document.addEventListener('DOMContentLoaded', () => {
         BookmarkPanel.init();
         AdvancedSearch.init();
         VersionManager.init();
-    } else if (document.querySelector('.admin-section') || document.getElementById('files-tbody')) {
+    } else if (document.querySelector('.admin-page') || document.getElementById('files-tbody')) {
         // 관리자 페이지 초기화
         initAdmin();
         VersionManager.init();
     }
 });
+

@@ -72,6 +72,15 @@ class DBManager:
                 conn.commit()
         except Exception as e:
             logger.error(f"DB 초기화 실패: {e}")
+    
+    def init_db(self):
+        """Public wrapper for DB initialization (호환성 유지)
+        
+        Note: DB는 이미 __new__에서 초기화되지만, 명시적 호출을 위한 메서드
+        """
+        # 이미 __new__에서 초기화됨, 재초기화가 필요한 경우만 처리
+        if not os.path.exists(self.db_path):
+            self._init_db()
 
     def execute(self, query, args=()):
         try:
@@ -80,6 +89,19 @@ class DBManager:
             cur.execute(query, args)
             conn.commit()
             return cur
+        except sqlite3.OperationalError as e:
+            # 연결 오류 시 재연결 시도
+            logger.warning(f"DB 연결 오류, 재연결 시도: {e}")
+            self.close()
+            try:
+                conn = self._get_conn()
+                cur = conn.cursor()
+                cur.execute(query, args)
+                conn.commit()
+                return cur
+            except Exception as retry_e:
+                logger.error(f"DB 재연결 후 실행 오류 ({query}): {retry_e}")
+                raise
         except Exception as e:
             logger.error(f"DB 실행 오류 ({query}): {e}")
             raise

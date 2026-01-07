@@ -6,6 +6,7 @@ from werkzeug.utils import secure_filename
 from app.services.search import qa_system
 from app.utils import logger, FileUtils, TaskResult, get_app_directory
 from app.config import AppConfig
+from app.constants import ErrorMessages, HttpStatus
 
 files_bp = Blueprint('files', __name__)
 file_lock = threading.Lock()
@@ -17,6 +18,79 @@ def list_files():
         'success': True,
         'files': qa_system.get_file_infos()
     })
+
+@files_bp.route('/files/names', methods=['GET'])
+def list_file_names():
+    """파일 이름 목록만 반환 (파일 필터용)"""
+    try:
+        file_names = list(qa_system.file_infos.keys())
+        # basename만 반환
+        names = [os.path.basename(fp) for fp in file_names]
+        return jsonify({
+            'success': True,
+            'names': names
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e),
+            'names': []
+        })
+
+@files_bp.route('/files/all', methods=['DELETE'])
+def delete_all_files():
+    """모든 로드된 파일 일괄 삭제 (인덱스 및 캐시 초기화)"""
+    with file_lock:
+        try:
+            deleted_count = len(qa_system.file_infos)
+            file_paths = list(qa_system.file_infos.keys())
+            
+            # 실제 파일 삭제 (uploads 폴더 내 파일만)
+            upload_dir = os.path.join(get_app_directory(), 'uploads')
+            deleted_files = []
+            failed_files = []
+            
+            for fp in file_paths:
+                try:
+                    # uploads 폴더 내 파일인 경우에만 실제 삭제
+                    if fp.startswith(upload_dir) and os.path.exists(fp):
+                        os.remove(fp)
+                        deleted_files.append(os.path.basename(fp))
+                    else:
+                        deleted_files.append(os.path.basename(fp))  # 인덱스에서만 제거
+                except Exception as e:
+                    failed_files.append(f"{os.path.basename(fp)}: {str(e)}")
+            
+            # 인덱스 및 캐시 초기화
+            qa_system.file_infos.clear()
+            qa_system.documents = []
+            qa_system.vectorstore = None
+            if hasattr(qa_system, '_search_cache'):
+                qa_system._search_cache.clear()
+            if hasattr(qa_system, '_bm25'):
+                qa_system._bm25 = None
+            
+            logger.info(f"일괄 삭제 완료: {deleted_count}개 파일 제거")
+            
+            result = {
+                'success': True,
+                'message': f'{deleted_count}개 파일이 삭제되었습니다',
+                'deleted_count': deleted_count,
+                'deleted_files': deleted_files
+            }
+            
+            if failed_files:
+                result['failed_files'] = failed_files
+                result['message'] += f' (실패: {len(failed_files)}개)'
+            
+            return jsonify(result)
+            
+        except Exception as e:
+            logger.error(f"일괄 삭제 오류: {e}")
+            return jsonify({
+                'success': False,
+                'message': f'일괄 삭제 실패: {str(e)}'
+            }), HttpStatus.INTERNAL_ERROR
 
 @files_bp.route('/files/<path:filename>', methods=['DELETE'])
 def delete_file(filename):
@@ -49,32 +123,69 @@ def delete_file(filename):
 
 @files_bp.route('/upload', methods=['POST'])
 def upload_file():
-    """파일 업로드"""
+    """파일 업로드 및 자동 인덱싱"""
     if 'file' not in request.files:
-        return jsonify({'success': False, 'message': '파일이 없습니다'}), 400
+        return jsonify({
+            'success': False, 
+            'message': ErrorMessages.FILE_NOT_FOUND
+        }), HttpStatus.BAD_REQUEST
         
     file = request.files['file']
     if file.filename == '':
-        return jsonify({'success': False, 'message': '파일명이 비어있습니다'}), 400
+        return jsonify({
+            'success': False, 
+            'message': ErrorMessages.FILE_NAME_EMPTY
+        }), HttpStatus.BAD_REQUEST
         
     if not FileUtils.allowed_file(file.filename):
-        return jsonify({'success': False, 'message': '지원하지 않는 파일 형식입니다'}), 400
+        ext = os.path.splitext(file.filename)[1]
+        return jsonify({
+            'success': False, 
+            'message': f'{ErrorMessages.FILE_TYPE_NOT_SUPPORTED}: {ext}'
+        }), HttpStatus.BAD_REQUEST
         
     upload_folder = qa_system.current_folder or os.path.join(get_app_directory(), AppConfig.UPLOAD_FOLDER)
     os.makedirs(upload_folder, exist_ok=True)
     
     filename = secure_filename(file.filename)
+    # 한글 파일명 보존 (secure_filename이 제거할 수 있음)
+    if not filename or filename == '_':
+        filename = file.filename
+    
     save_path = os.path.join(upload_folder, filename)
     
     with file_lock:
         try:
             file.save(save_path)
-            # 업로드 후 인덱싱 추가 (단일 파일 처리)
-            # qa_system.process_single_file(save_path) 필요
-            # 일단 메시지만 리턴
-            return jsonify({'success': True, 'message': '파일 업로드 성공 (재인덱싱 필요)'})
+            logger.info(f"파일 저장 완료: {save_path}")
+            
+            # 업로드 후 즉시 인덱싱 처리
+            result = qa_system.process_single_file(save_path)
+            
+            if result.success:
+                return jsonify({
+                    'success': True, 
+                    'message': result.message,
+                    'data': result.data
+                })
+            else:
+                return jsonify({
+                    'success': True,  # 파일은 저장됨
+                    'message': f'파일 저장 완료 (인덱싱 실패: {result.message})',
+                    'indexed': False
+                })
+        except IOError as e:
+            logger.error(f"파일 저장 오류: {e}")
+            return jsonify({
+                'success': False, 
+                'message': f'파일 저장 실패: {str(e)}'
+            }), HttpStatus.INTERNAL_ERROR
         except Exception as e:
-            return jsonify({'success': False, 'message': str(e)}), 500
+            logger.error(f"파일 업로드 오류: {e}")
+            return jsonify({
+                'success': False, 
+                'message': f'{ErrorMessages.FILE_UPLOAD_FAILED}: {str(e)}'
+            }), HttpStatus.INTERNAL_ERROR
 
 # ============================================================================
 # 태그 관리 (v2.0)

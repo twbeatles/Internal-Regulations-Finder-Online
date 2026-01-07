@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
+import json
+import os
+
 from flask import Blueprint, jsonify, request, session
 from app.config import AppConfig
 from app.services.search import qa_system
-import os
+from app.utils import logger, get_app_directory
 
 system_bp = Blueprint('system', __name__)
 
@@ -21,8 +24,24 @@ def verify_password():
     data = request.json
     password = data.get('password')
     # TODO: settings.json에서 비밀번호 로드 및 검증
-    # 현재는 간단한 하드코딩 또는 설정이 없는 상태로 가정
-    if password == "admin1234": # Mock password
+    # Mock 비밀번호 대신 settings.json의 password_hash 사용
+    import hashlib
+    
+    # 설정 파일에서 해시 로드
+    config_dir = os.path.join(get_app_directory(), 'config')
+    settings_path = os.path.join(config_dir, 'settings.json')
+    
+    try:
+        with open(settings_path, 'r', encoding='utf-8') as f:
+            settings = json.load(f)
+        stored_hash = settings.get('admin_password_hash', '')
+    except Exception:
+        stored_hash = ''
+    
+    # 입력된 비밀번호의 SHA256 해시와 비교
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    
+    if stored_hash and password_hash == stored_hash:
         session['admin_authenticated'] = True
         return jsonify({'success': True})
     return jsonify({'success': False, 'message': '비밀번호가 일치하지 않습니다'})
@@ -31,8 +50,8 @@ def verify_password():
 def status():
     """서버 상태 반환"""
     return jsonify({
-        'is_ready': qa_system.is_ready,
-        'is_loading': qa_system.is_loading,
+        'ready': qa_system.is_ready,
+        'loading': qa_system.is_loading,
         'load_progress': qa_system.load_progress,
         'load_error': qa_system.load_error,
         'model': qa_system.model_name
@@ -51,10 +70,156 @@ def init_server():
 
 @system_bp.route('/stats', methods=['GET'])
 def stats():
-    """문서 통계 반환"""
-    return jsonify(qa_system.get_stats())
+    """문서 및 시스템 통계 반환
+    
+    Returns:
+        - 문서 통계 (파일 수, 청크 수, 크기)
+        - 캐시 통계 (히트율, 크기)
+        - 검색 큐 통계 (활성, 처리, 거부)
+        - Rate limiter 통계
+        - 메모리 사용량 (선택)
+    """
+    from app.services.search import rate_limiter, search_queue
+    from app.utils import MemoryMonitor
+    
+    doc_stats = qa_system.get_stats()
+    
+    # 캐시 통계
+    cache_stats = {}
+    if hasattr(qa_system, '_search_cache'):
+        cache_stats = qa_system._search_cache.get_stats()
+    
+    # 검색 큐 통계
+    queue_stats = search_queue.get_stats()
+    
+    # Rate limiter 통계
+    rate_stats = rate_limiter.get_stats()
+    
+    # 메모리 사용량 (include_memory 파라미터가 true일 때만)
+    memory_stats = {}
+    if request.args.get('include_memory', 'false').lower() == 'true':
+        memory_stats = MemoryMonitor.get_memory_usage()
+    
+    return jsonify({
+        'success': True,
+        'documents': doc_stats,
+        'cache': cache_stats,
+        'search_queue': queue_stats,
+        'rate_limiter': rate_stats,
+        'memory': memory_stats if memory_stats else None
+    })
     
 @system_bp.route('/health')
 def health():
-    """헬스 체크"""
-    return jsonify({'status': 'ok'})
+    """헬스 체크 (상세 정보 포함)"""
+    from app.services.search import search_queue
+    
+    queue_stats = search_queue.get_stats()
+    
+    # 기본 상태
+    status_info = {
+        'status': 'ok',
+        'model_ready': qa_system.is_ready,
+        'model_loading': qa_system.is_loading,
+        'active_searches': queue_stats.get('active', 0)
+    }
+    
+    # 부하 경고
+    if queue_stats.get('active', 0) > 8:
+        status_info['warning'] = 'High search load'
+    
+    return jsonify(status_info)
+
+# ============================================================================
+# Sync API (v2.0) - 폴더 동기화 관련 엔드포인트
+# ============================================================================
+
+@system_bp.route('/sync/status', methods=['GET'])
+def sync_status():
+    """동기화 상태 반환"""
+    return jsonify({
+        'success': True,
+        'is_syncing': qa_system.is_loading,
+        'current_folder': getattr(qa_system, 'current_folder', ''),
+        'progress': qa_system.load_progress,
+        'error': qa_system.load_error
+    })
+
+@system_bp.route('/sync/start', methods=['POST'])
+def sync_start():
+    """폴더 동기화 시작 (초기화 및 인덱싱)
+    
+    Security: Path traversal 공격 방지를 위한 경로 검증 포함
+    """
+    try:
+        data = request.json or {}
+        folder_path = data.get('folder')
+        
+        if not folder_path:
+            return jsonify({'success': False, 'message': '폴더 경로가 필요합니다'}), 400
+        
+        # Path Traversal 공격 방지: 경로 정규화 및 검증
+        try:
+            # 경로 정규화 (.. 등 해석)
+            normalized_path = os.path.normpath(os.path.realpath(folder_path))
+            
+            # 위험한 경로 패턴 차단
+            dangerous_patterns = ['..', '//']
+            if any(p in folder_path for p in dangerous_patterns):
+                logger.warning(f"의심스러운 경로 패턴 감지: {folder_path}")
+                return jsonify({'success': False, 'message': '유효하지 않은 경로 형식입니다'}), 400
+            
+            folder_path = normalized_path
+        except (ValueError, OSError) as e:
+            logger.warning(f"경로 정규화 실패: {folder_path} - {e}")
+            return jsonify({'success': False, 'message': '유효하지 않은 경로입니다'}), 400
+        
+        if not os.path.exists(folder_path):
+            return jsonify({'success': False, 'message': f'폴더를 찾을 수 없습니다: {folder_path}'}), 404
+        
+        if not os.path.isdir(folder_path):
+            return jsonify({'success': False, 'message': f'디렉토리가 아닙니다: {folder_path}'}), 400
+        
+        logger.info(f"동기화 시작: {folder_path}")
+        res = qa_system.initialize(folder_path, force_reindex=data.get('force', False))
+        return jsonify(res.to_dict())
+        
+    except json.JSONDecodeError:
+        return jsonify({'success': False, 'message': '잘못된 JSON 형식입니다'}), 400
+    except Exception as e:
+        logger.error(f"동기화 시작 오류: {e}")
+        return jsonify({'success': False, 'message': f'동기화 오류: {str(e)}'}), 500
+
+@system_bp.route('/sync/stop', methods=['POST'])
+def sync_stop():
+    """동기화 중지 (현재는 미구현 - graceful shutdown 필요)"""
+    # TODO: ThreadPoolExecutor 작업 취소 로직 구현
+    return jsonify({
+        'success': True,
+        'message': '동기화 중지 요청됨 (현재 작업은 완료될 때까지 계속됩니다)'
+    })
+
+# ============================================================================
+# Process API - 문서 재처리 엔드포인트
+# ============================================================================
+
+@system_bp.route('/process', methods=['POST'])
+def process_documents():
+    """문서 재처리 (현재 폴더 강제 재인덱싱)"""
+    try:
+        current_folder = getattr(qa_system, 'current_folder', '')
+        
+        if not current_folder:
+            return jsonify({'success': False, 'message': '초기화된 폴더가 없습니다. 먼저 폴더를 선택해주세요.'})
+        
+        if not os.path.exists(current_folder):
+            return jsonify({'success': False, 'message': f'폴더를 찾을 수 없습니다: {current_folder}'})
+        
+        logger.info(f"문서 재처리 시작: {current_folder}")
+        res = qa_system.initialize(current_folder, force_reindex=True)
+        return jsonify(res.to_dict())
+        
+    except Exception as e:
+        logger.error(f"문서 재처리 오류: {e}")
+        return jsonify({'success': False, 'message': f'재처리 오류: {str(e)}'}), 500
+

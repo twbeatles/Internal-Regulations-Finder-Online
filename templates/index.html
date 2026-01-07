@@ -8,7 +8,7 @@
     <meta name="robots" content="noindex, nofollow">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline';">
+        content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com;">
 
     <!-- PWA 지원 (v2.0) -->
     <link rel="manifest" href="/static/manifest.json">
@@ -140,19 +140,30 @@
                         <div class="welcome-icon" aria-hidden="true">👋</div>
                         <h2>사내 규정을 검색해보세요</h2>
                         <p>휴가, 복리후생, 근무 규정 등 다양한 사내 규정을 빠르게 찾아볼 수 있습니다.</p>
-                        <div class="search-tips"
-                            style="margin-top: 24px; padding: 16px; background: var(--bg-input); border-radius: 12px; text-align: left; max-width: 400px; margin-left: auto; margin-right: auto;">
-                            <p style="font-weight: 600; margin-bottom: 12px; color: var(--accent-primary);">💡 검색 팁</p>
-                            <ul
-                                style="list-style: none; padding: 0; margin: 0; color: var(--text-secondary); font-size: 14px;">
-                                <li style="margin-bottom: 8px;">• <kbd
-                                        style="background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px; font-size: 12px;">Ctrl
-                                        + K</kbd> 검색창 바로가기</li>
-                                <li style="margin-bottom: 8px;">• <kbd
-                                        style="background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px; font-size: 12px;">?</kbd>
-                                    단축키 도움말</li>
-                                <li>• 하이브리드 검색으로 더 정확한 결과 제공</li>
+
+                        <!-- 검색 팁 카드 -->
+                        <div class="search-tips-card">
+                            <p class="tips-title">💡 검색 팁</p>
+                            <ul class="tips-list">
+                                <li><kbd>Ctrl + K</kbd> 검색창 바로가기</li>
+                                <li><kbd>?</kbd> 단축키 도움말</li>
+                                <li>하이브리드 검색으로 더 정확한 결과 제공</li>
                             </ul>
+                        </div>
+
+                        <!-- 문서 미로드 시 표시될 안내 (JS에서 동적으로 표시) -->
+                        <div id="no-documents-notice" class="no-documents-state empty-state-container"
+                            style="display: none;">
+                            <div class="empty-state-icon">📁</div>
+                            <h3 class="empty-state-title">문서가 로드되지 않았습니다</h3>
+                            <p class="empty-state-description">
+                                검색을 시작하려면 먼저 관리자 페이지에서 문서 폴더를 설정해주세요.
+                            </p>
+                            <div class="empty-state-actions">
+                                <a href="/admin" class="btn btn-primary">
+                                    ⚙️ 관리자 페이지에서 설정하기
+                                </a>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -160,8 +171,8 @@
         </main>
 
         <!-- 푸터 -->
-        <footer class="footer">
-            <p>© <span id="current-year">2025</span> 사내 규정 검색기 - AI 기반 규정 검색 시스템</p>
+        <footer class="footer" role="contentinfo">
+            <p>© <span id="current-year">2026</span> 사내 규정 검색기 - AI 기반 규정 검색 시스템 v2.3</p>
         </footer>
     </div>
 

@@ -1,4 +1,5 @@
-# 사내 규정 검색기 웹 서버 - 필수 패키지
+# 사내 규정 검색기 웹 서버 - Python 3.14 호환 패키지
+# 주의: Python 3.14에서는 Pydantic V2가 필수입니다
 
 # Flask 웹 프레임워크
 flask>=2.3.0
@@ -10,40 +11,44 @@ waitress>=2.1.0
 # GUI (시스템 트레이)
 PyQt6>=6.4.0
 
-# AI/ML
-torch>=2.0.0
-langchain>=0.1.0
-langchain-core>=0.1.0
-langchain-text-splitters>=0.0.1
-langchain-huggingface>=0.0.3
-langchain-community>=0.0.20
-faiss-cpu>=1.7.0
-sentence-transformers>=2.2.0
+# Pydantic V2 (Python 3.14 필수)
+pydantic>=2.12.0
+
+# AI/ML - Python 3.14 호환 버전
+torch>=2.5.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-text-splitters>=0.3.0
+langchain-huggingface>=0.1.0
+langchain-community>=0.3.0
+faiss-cpu>=1.9.0
+sentence-transformers>=3.0.0
 
 # 문서 처리
 python-docx>=0.8.11
 pypdf>=3.0.0
 
-# 유틸리티
-transformers>=4.30.0
-huggingface-hub>=0.20.0
+# 유틸리티 - Python 3.14 호환 버전
+transformers>=4.46.0
+huggingface-hub>=0.26.0
 
-# 문서 처리 의존성 (추가)
+# 문서 처리 의존성
 lxml>=4.9.0
 
-# 시스템 모니터링 (v1.4 추가)
+# 시스템 모니터링
 psutil>=5.9.0
 
-# Excel/HWP 지원 (v2.0)
+# Excel/HWP 지원
 openpyxl>=3.1.0
 olefile>=0.46
 
-# OCR 지원 (v2.0)
+# OCR 지원
 pytesseract>=0.3.10
 Pillow>=9.0.0
 pdf2image>=1.16.0
 
-# 폴더 모니터링 (v2.0)
+# 폴더 모니터링
 watchdog>=3.0.0
 
-# 문서 비교 (내장 difflib 사용)
+# NumPy (Python 3.14 호환)
+numpy>=2.0.0
