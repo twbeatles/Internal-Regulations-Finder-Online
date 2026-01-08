@@ -21,26 +21,53 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QSystemTrayIcon, QMenu, QMessageBox,
     QCheckBox, QGroupBox, QTextEdit, QFrame, QLineEdit, QDialog,
-    QDialogButtonBox, QFormLayout, QFileDialog
+    QDialogButtonBox, QFormLayout, QFileDialog, QSplashScreen, QProgressBar
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
-from PyQt6.QtGui import QIcon, QAction, QFont, QColor, QPalette, QCloseEvent, QTextCharFormat
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread
+from PyQt6.QtGui import QIcon, QAction, QFont, QColor, QPalette, QCloseEvent, QTextCharFormat, QPixmap
 
-# 서버 모듈 import - 새로운 app/ 구조 사용
-from app import create_app
-from app.config import AppConfig
-from app.utils import logger, FileUtils, get_app_directory
-from app.services.search import qa_system
+# ============================================================================
+# 지연 로딩 패턴 - 무거운 모듈은 스플래시 후에 로드
+# ============================================================================
+# 전역 변수 (나중에 로드됨)
+app = None  # Flask app
+qa_system = None
+logger = None
+AppConfig = None
+UPLOAD_DIR = None
 
-# Flask 앱 생성
-app = create_app()
+def _load_heavy_modules():
+    """무거운 모듈 로드 (백그라운드에서 실행)"""
+    global app, qa_system, logger, AppConfig, UPLOAD_DIR
+    
+    # 서버 모듈 import
+    from app import create_app
+    from app.config import AppConfig as _AppConfig
+    from app.utils import logger as _logger, get_app_directory
+    from app.services.search import qa_system as _qa_system
+    
+    AppConfig = _AppConfig
+    logger = _logger
+    qa_system = _qa_system
+    
+    # Qt 로그 핸들러 연결 (logger 로드 후)
+    _setup_qt_log_handler()
+    
+    # Flask 앱 생성
+    app = create_app()
+    
+    # 업로드 디렉토리
+    UPLOAD_DIR = os.path.join(get_app_directory(), 'uploads')
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    
+    return True
 
-# 업로드 디렉토리
-UPLOAD_DIR = os.path.join(get_app_directory(), 'uploads')
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 def initialize_server():
     """서버 초기화 - 모델 로드 및 문서 처리"""
+    # 이 함수는 heavy modules 로드 후 호출됨
+    from app.utils import get_app_directory
+    
     logger.info("서버 초기화 시작...")
     try:
         # 설정 로드
@@ -61,19 +88,46 @@ def initialize_server():
                 logger.info(f"문서 폴더 초기화: {folder}")
                 qa_system.initialize(folder)
             else:
-                # 폴더 없어도 모델은 로드
-                qa_system.load_model(AppConfig.DEFAULT_MODEL)
+                # 폴더 없어도 모델은 로드 시도 (실패해도 BM25로 fallback)
+                try:
+                    qa_system.load_model(AppConfig.DEFAULT_MODEL)
+                except Exception as e:
+                    logger.warning(f"AI 모델 로드 실패 (BM25 모드로 동작): {e}")
         else:
-            # 기본 모델 로드
-            qa_system.load_model(AppConfig.DEFAULT_MODEL)
+            # 기본 모델 로드 시도 (실패해도 BM25로 fallback)
+            try:
+                qa_system.load_model(AppConfig.DEFAULT_MODEL)
+            except Exception as e:
+                logger.warning(f"AI 모델 로드 실패 (BM25 모드로 동작): {e}")
         
         logger.info("서버 초기화 완료")
     except Exception as e:
         logger.error(f"서버 초기화 오류: {e}")
 
 def graceful_shutdown():
-    """서버 정리 종료"""
-    logger.info("서버 종료 중...")
+    """서버 정리 종료 - 리소스 정리"""
+    import gc
+    
+    if logger:
+        logger.info("서버 종료 중...")
+    
+    try:
+        # QA 시스템 정리 (모델, 벡터 스토어, 캐시)
+        if qa_system:
+            qa_system.cleanup()
+        
+        # DB 연결 정리
+        from app.services.db import DBManager
+        DBManager.close_all()
+        
+        # 가비지 컬렉션
+        gc.collect()
+        
+        if logger:
+            logger.info("서버 종료 완료")
+    except Exception as e:
+        if logger:
+            logger.error(f"종료 중 오류: {e}")
 
 
 # ============================================================================
@@ -120,7 +174,11 @@ class SettingsManager:
             with open(self.settings_file, 'w', encoding='utf-8') as f:
                 json.dump(self._settings, f, ensure_ascii=False, indent=2)
         except IOError as e:
-            logger.error(f"설정 저장 실패: {e}")
+            # logger가 아직 로드되지 않았을 수 있음
+            if logger:
+                logger.error(f"설정 저장 실패: {e}")
+            else:
+                print(f"[ERROR] 설정 저장 실패: {e}")
     
     def get_server_port(self) -> int:
         """서버 포트 반환 (기본값: 8080)"""
@@ -177,8 +235,23 @@ class SettingsManager:
         self._save()
 
 
-# 전역 설정 관리자
-settings_manager = SettingsManager()
+# 전역 설정 관리자 (Lazy Initialization - PyInstaller 호환)
+_settings_manager = None
+
+def get_settings_manager():
+    """설정 관리자 인스턴스 반환 (lazy init)"""
+    global _settings_manager
+    if _settings_manager is None:
+        _settings_manager = SettingsManager()
+    return _settings_manager
+
+# 하위 호환성을 위한 프로퍼티
+class _SettingsProxy:
+    """settings_manager 지연 접근 프록시"""
+    def __getattr__(self, name):
+        return getattr(get_settings_manager(), name)
+
+settings_manager = _SettingsProxy()
 
 
 # ============================================================================
@@ -316,10 +389,16 @@ class QtLogHandler(logging.Handler):
             pass
 
 
-# logger에 QtLogHandler 연결
-qt_handler = QtLogHandler()
-qt_handler.setLevel(logging.DEBUG)
-logger.addHandler(qt_handler)
+# QtLogHandler는 heavy modules 로드 후 연결됨
+qt_handler = None
+
+def _setup_qt_log_handler():
+    """Qt 로그 핸들러 설정 (heavy modules 로드 후 호출)"""
+    global qt_handler
+    if logger and qt_handler is None:
+        qt_handler = QtLogHandler()
+        qt_handler.setLevel(logging.DEBUG)
+        logger.addHandler(qt_handler)
 
 
 # ============================================================================
@@ -1231,23 +1310,175 @@ class ServerWindow(QMainWindow):
 # ============================================================================
 # 메인
 # ============================================================================
+# ============================================================================
+# 스플래시 스크린
+# ============================================================================
+class SplashScreen(QSplashScreen):
+    """시작 시 표시되는 스플래시 화면"""
+    
+    def __init__(self):
+        # 스플래시 이미지 생성 (코드로)
+        pixmap = QPixmap(400, 250)
+        pixmap.fill(QColor('#1a1a2e'))
+        
+        super().__init__(pixmap)
+        self.setWindowFlags(Qt.WindowType.SplashScreen | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        
+        # 레이아웃
+        layout = QVBoxLayout()
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # 제목
+        self.title = QLabel("📚 사내 규정 검색기")
+        self.title.setStyleSheet("color: #e94560; font-size: 24px; font-weight: bold;")
+        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # 상태 메시지
+        self.status = QLabel("초기화 중...")
+        self.status.setStyleSheet("color: #eaeaea; font-size: 14px;")
+        self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # 프로그레스바
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)  # 무한 로딩
+        self.progress.setTextVisible(False)
+        self.progress.setFixedWidth(300)
+        self.progress.setStyleSheet("""
+            QProgressBar {
+                border: none;
+                background: #0f3460;
+                border-radius: 5px;
+                height: 8px;
+            }
+            QProgressBar::chunk {
+                background: #e94560;
+                border-radius: 5px;
+            }
+        """)
+        
+        # 버전
+        self.version = QLabel("v2.4")
+        self.version.setStyleSheet("color: #666; font-size: 11px;")
+        self.version.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # 중앙 위젯
+        central = QWidget(self)
+        central.setGeometry(0, 0, 400, 250)
+        central_layout = QVBoxLayout(central)
+        central_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        central_layout.addStretch()
+        central_layout.addWidget(self.title)
+        central_layout.addSpacing(20)
+        central_layout.addWidget(self.status)
+        central_layout.addSpacing(15)
+        central_layout.addWidget(self.progress, alignment=Qt.AlignmentFlag.AlignCenter)
+        central_layout.addSpacing(20)
+        central_layout.addWidget(self.version)
+        central_layout.addStretch()
+    
+    def set_status(self, message: str):
+        self.status.setText(message)
+        QApplication.processEvents()
+
+
+# ============================================================================
+# 백그라운드 로더 스레드
+# ============================================================================
+class ModuleLoaderThread(QThread):
+    """무거운 모듈을 백그라운드에서 로드하는 스레드"""
+    progress = pyqtSignal(str)  # 상태 메시지
+    finished_loading = pyqtSignal(bool)  # 로드 완료
+    
+    def run(self):
+        try:
+            self.progress.emit("Flask 서버 모듈 로드 중...")
+            _load_heavy_modules()
+            
+            # 모델 자동 다운로드 및 로드
+            self.progress.emit("AI 모델 확인 중...")
+            
+            # 설정 파일에서 오프라인 모드 확인
+            from app.utils import get_app_directory
+            import json
+            settings_path = os.path.join(get_app_directory(), 'config', 'settings.json')
+            
+            offline_mode = False
+            if os.path.exists(settings_path):
+                try:
+                    with open(settings_path, 'r', encoding='utf-8') as f:
+                        settings = json.load(f)
+                    offline_mode = settings.get('offline_mode', False)
+                except Exception:
+                    pass
+            
+            if not offline_mode:
+                # 온라인 모드: 모델 자동 다운로드
+                self.progress.emit("AI 모델 다운로드/로드 중...")
+                self.progress.emit("(최초 실행 시 500MB+ 다운로드)")
+            else:
+                self.progress.emit("로컬 모델 로드 중...")
+            
+            # 모델 로드 실행
+            result = qa_system.load_model(AppConfig.DEFAULT_MODEL)
+            
+            if result.success:
+                self.progress.emit("서버 시작 중...")
+            else:
+                self.progress.emit(f"모델 로드 실패: {result.message}")
+            
+            self.progress.emit("완료!")
+            self.finished_loading.emit(True)
+        except Exception as e:
+            self.progress.emit(f"오류: {e}")
+            self.finished_loading.emit(False)
+
+
+# ============================================================================
+# 메인
+# ============================================================================
 def main():
     # 명령행 인자 확인
     start_minimized = '--minimized' in sys.argv or '-m' in sys.argv
     
-    # settings_manager는 이미 전역으로 생성됨
-    # server.py 모듈 주입은 더 이상 필요 없음 (app/ 구조 사용)
-    
+    # Qt 앱 먼저 생성 (빠름)
     qt_app = QApplication(sys.argv)
     qt_app.setStyle('Fusion')
     qt_app.setStyleSheet(DARK_STYLE)
-    qt_app.setQuitOnLastWindowClosed(False)  # 트레이로 최소화 지원
+    qt_app.setQuitOnLastWindowClosed(False)
     
-    window = ServerWindow(start_minimized=start_minimized)
+    # 스플래시 즉시 표시
+    splash = SplashScreen()
+    splash.show()
+    qt_app.processEvents()
+    
+    # 백그라운드에서 무거운 모듈 로드
+    loader = ModuleLoaderThread()
+    
+    def on_progress(msg):
+        splash.set_status(msg)
+    
+    def on_finished(success):
+        splash.close()
+        if success:
+            # 메인 윈도우 생성 및 표시
+            window = ServerWindow(start_minimized=start_minimized)
+            # window를 전역으로 유지 (가비지 컬렉션 방지)
+            qt_app._main_window = window
+        else:
+            QMessageBox.critical(None, "오류", "모듈 로드에 실패했습니다.")
+            qt_app.quit()
+    
+    loader.progress.connect(on_progress)
+    loader.finished_loading.connect(on_finished)
+    loader.start()
     
     sys.exit(qt_app.exec())
 
 
 if __name__ == '__main__':
+    # PyInstaller 멀티프로세싱 지원 (필수)
+    import multiprocessing
+    multiprocessing.freeze_support()
+    
     main()
 

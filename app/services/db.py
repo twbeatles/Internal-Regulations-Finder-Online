@@ -5,9 +5,18 @@ import threading
 from app.utils import get_app_directory, logger
 
 class DBManager:
+    """SQLite 데이터베이스 관리자 (싱글톤, 스레드 안전)
+    
+    Features:
+        - 스레드별 연결 관리 (thread-local)
+        - WAL 모드 및 성능 최적화
+        - 연결 수 추적
+    """
     _instance = None
     _lock = threading.Lock()
     _local = threading.local()
+    _connection_count = 0  # 활성 연결 수 추적
+    _MAX_CONNECTIONS = 50  # 최대 연결 수 경고 임계값
     
     def __new__(cls):
         with cls._lock:
@@ -18,14 +27,21 @@ class DBManager:
         return cls._instance
     
     def _get_conn(self):
-        """스레드별 DB 연결 반환"""
+        """스레드별 DB 연결 반환 (연결 수 추적 포함)"""
         if not hasattr(self._local, 'conn'):
+            with self._lock:
+                DBManager._connection_count += 1
+                if DBManager._connection_count > self._MAX_CONNECTIONS:
+                    logger.warning(f"DB 연결 수 경고: {DBManager._connection_count}개 활성")
+            
             self._local.conn = sqlite3.connect(self.db_path)
             self._local.conn.row_factory = sqlite3.Row
-            # 성능 최적화: WAL 모드 등 적용
+            # 성능 최적화 PRAGMA
             self._local.conn.execute('PRAGMA journal_mode=WAL')
             self._local.conn.execute('PRAGMA synchronous=NORMAL')
             self._local.conn.execute('PRAGMA temp_store=MEMORY')
+            self._local.conn.execute('PRAGMA cache_size=-4000')  # 4MB 캐시
+            self._local.conn.execute('PRAGMA mmap_size=268435456')  # 256MB mmap
         return self._local.conn
     
     def _init_db(self):
@@ -68,6 +84,8 @@ class DBManager:
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )''')
                 c.execute('CREATE INDEX IF NOT EXISTS idx_history_query ON search_history(query)')
+                # 복합 인덱스: 최근 검색 조회 최적화
+                c.execute('CREATE INDEX IF NOT EXISTS idx_history_query_time ON search_history(query, timestamp DESC)')
                 
                 conn.commit()
         except Exception as e:
@@ -127,8 +145,24 @@ class DBManager:
             return None
             
     def close(self):
+        """현재 스레드의 DB 연결 닫기"""
         if hasattr(self._local, 'conn'):
-            self._local.conn.close()
-            del self._local.conn
+            try:
+                self._local.conn.close()
+            except Exception as e:
+                logger.debug(f"DB 연결 닫기 실패: {e}")
+            finally:
+                del self._local.conn
+                with self._lock:
+                    DBManager._connection_count = max(0, DBManager._connection_count - 1)
+    
+    @classmethod
+    def close_all(cls):
+        """모든 DB 연결 정리 (graceful shutdown용)"""
+        logger.info(f"DB 연결 정리 시작 (활성: {cls._connection_count}개)")
+        cls._connection_count = 0
+        # thread-local 연결은 각 스레드에서 정리해야 하지만,
+        # 종료 시에는 최소한 카운터 리셋
+        logger.info("DB 연결 정리 완료")
 
 db = DBManager()

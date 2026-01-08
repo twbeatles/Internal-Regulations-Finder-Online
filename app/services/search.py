@@ -237,7 +237,15 @@ class SearchCache:
         self._evictions = 0
     
     def _make_key(self, query: str, k: int, hybrid: bool) -> str:
-        return f"{query}|{k}|{hybrid}"
+        """캐시 키 생성 (쿼리 정규화로 히트율 향상)
+        
+        정규화:
+        - 소문자 변환
+        - 연속 공백을 단일 공백으로
+        - 앞뒤 공백 제거
+        """
+        normalized = ' '.join(query.lower().split())
+        return f"{normalized}|{k}|{hybrid}"
     
     def get(self, query: str, k: int, hybrid: bool) -> Optional[Any]:
         key = self._make_key(query, k, hybrid)
@@ -497,7 +505,8 @@ class RegulationQASystem:
     
     @property
     def is_ready(self) -> bool:
-        return self._is_ready and self.embedding_model is not None
+        # AI 모델이 있거나, BM25가 있으면 ready (Lite 모드 지원)
+        return self._is_ready or (self.bm25 is not None and len(self.documents) > 0)
     
     @property
     def is_loading(self) -> bool:
@@ -704,8 +713,10 @@ class RegulationQASystem:
             return TaskResult(False, f"파일 처리 오류: {str(e)}")
     
     def process_documents(self, folder: str, files: List[str], progress_cb=None) -> TaskResult:
+        # AI 모델 없어도 BM25로 동작 가능 (Lite 모드 지원)
         if not self.embedding_model:
-            return TaskResult(False, "모델이 로드되지 않았습니다")
+            logger.info("AI 모델 없음 - BM25 전용 모드로 문서 처리")
+        
         
         with self._lock:
             return self._process_internal(folder, files, progress_cb)
@@ -841,21 +852,24 @@ class RegulationQASystem:
                 self.file_infos[fp].status = FileStatus.FAILED
                 self.file_infos[fp].error = str(e)
 
-        if not new_docs and not self.vector_store:
+        if not new_docs and not self.vector_store and not self.documents:
             return TaskResult(False, "처리 가능한 문서 없음", failed_items=failed)
             
-        if progress_cb: progress_cb(75, "벡터 인덱스 생성...")
-        
-        try:
-            if new_docs:
-                if self.vector_store:
-                    batch_size = 100
-                    for i in range(0, len(new_docs), batch_size):
-                        self.vector_store.add_documents(new_docs[i:i + batch_size])
-                else:
-                    self.vector_store = FAISS.from_documents(new_docs, self.embedding_model)
-        except Exception as e:
-             return TaskResult(False, f"인덱스 생성 실패: {e}")
+        # 벡터 인덱스 생성 (AI 모델이 있을 때만)
+        if self.embedding_model and FAISS:
+            if progress_cb: progress_cb(75, "벡터 인덱스 생성...")
+            try:
+                if new_docs:
+                    if self.vector_store:
+                        batch_size = 100
+                        for i in range(0, len(new_docs), batch_size):
+                            self.vector_store.add_documents(new_docs[i:i + batch_size])
+                    else:
+                        self.vector_store = FAISS.from_documents(new_docs, self.embedding_model)
+            except Exception as e:
+                logger.warning(f"벡터 인덱스 생성 실패 (BM25만 사용): {e}")
+        else:
+            if progress_cb: progress_cb(75, "BM25 전용 모드...")
              
         if progress_cb: progress_cb(85, "키워드 인덱스 생성...")
         self._build_bm25()
@@ -904,9 +918,14 @@ class RegulationQASystem:
             logger.warning(f"캐시 저장 실패: {e}")
 
     def initialize(self, folder_path: str, force_reindex: bool = False) -> TaskResult:
-        if not self._is_ready:
-             res = self.load_model(AppConfig.DEFAULT_MODEL)
-             if not res.success: return res
+        # AI 모델 로드 시도 (실패해도 BM25로 계속 진행)
+        if not self._is_ready and not self.embedding_model:
+            try:
+                res = self.load_model(AppConfig.DEFAULT_MODEL)
+                if not res.success:
+                    logger.warning(f"AI 모델 로드 실패, BM25 모드로 진행: {res.message}")
+            except Exception as e:
+                logger.warning(f"AI 모델 로드 오류, BM25 모드로 진행: {e}")
 
         self.current_folder = folder_path
         
@@ -959,6 +978,10 @@ class RegulationQASystem:
         return TaskResult(True, "초기화 시작됨 (백그라운드 처리)")
 
     def search(self, query: str, k: int = 5, hybrid: bool = True, sort_by: str = 'relevance', filter_file: str = None) -> TaskResult:
+        """검색 수행 (성능 모니터링 포함)"""
+        import time
+        start_time = time.perf_counter()
+        
         if not self.vector_store: return TaskResult(False, "문서가 로드되지 않음")
         
         query = query.strip()
@@ -1027,10 +1050,26 @@ class RegulationQASystem:
                 sorted_res = sorted(results.values(), key=lambda x: x['score'], reverse=True)[:k]
                 
             if not filter_file: self._search_cache.set(query, k, hybrid, sorted_res)
+            
+            # 대용량 문서 컬렉션 시 메모리 모니터링
+            if len(self.documents) > 5000:
+                from app.utils import MemoryMonitor
+                warning = MemoryMonitor.check_memory_warning(threshold_mb=512)
+                if warning:
+                    logger.warning(f"검색 후 메모리 경고: {warning}")
+            
+            # 성능 모니터링: 느린 쿼리 경고
+            elapsed = time.perf_counter() - start_time
+            if elapsed > 1.0:
+                logger.warning(f"⚠️ 느린 검색: {elapsed:.2f}s - '{query[:50]}...' (결과: {len(sorted_res)}개)")
+            elif elapsed > 0.5:
+                logger.info(f"검색 완료: {elapsed:.2f}s - '{query[:30]}...'")
+                
             return TaskResult(True, "검색 완료", sorted_res)
             
         except Exception as e:
-            logger.error(f"검색 오류: {e}")
+            elapsed = time.perf_counter() - start_time
+            logger.error(f"검색 오류 ({elapsed:.2f}s): {e}")
             return TaskResult(False, f"검색 오류: {e}")
             
     def get_file_infos(self) -> List[Dict]:

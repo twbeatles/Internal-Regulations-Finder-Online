@@ -4,12 +4,39 @@ import threading
 from flask import Blueprint, jsonify, request, send_file
 from werkzeug.utils import secure_filename
 from app.services.search import qa_system
-from app.utils import logger, FileUtils, TaskResult, get_app_directory
+from app.utils import logger, FileUtils, TaskResult, get_app_directory, api_error, api_success
 from app.config import AppConfig
 from app.constants import ErrorMessages, HttpStatus
+from app.exceptions import DocumentNotFoundError, DocumentError
 
 files_bp = Blueprint('files', __name__)
 file_lock = threading.Lock()
+LOCK_TIMEOUT = 30  # 파일 잠금 타임아웃 (초)
+
+def acquire_file_lock(timeout=LOCK_TIMEOUT):
+    """파일 잠금 획득 (타임아웃 지원)
+    
+    Returns:
+        bool: 잠금 획득 성공 여부
+    """
+    return file_lock.acquire(timeout=timeout)
+
+def _find_file_path(filename: str) -> str:
+    """파일명으로 전체 경로 찾기
+    
+    Args:
+        filename: 찾을 파일명 (basename)
+        
+    Returns:
+        전체 경로
+        
+    Raises:
+        DocumentNotFoundError: 파일을 찾을 수 없는 경우
+    """
+    for fp in qa_system.file_infos.keys():
+        if os.path.basename(fp) == filename:
+            return fp
+    raise DocumentNotFoundError(filename)
 
 @files_bp.route('/files', methods=['GET'])
 def list_files():
@@ -40,86 +67,87 @@ def list_file_names():
 @files_bp.route('/files/all', methods=['DELETE'])
 def delete_all_files():
     """모든 로드된 파일 일괄 삭제 (인덱스 및 캐시 초기화)"""
-    with file_lock:
-        try:
-            deleted_count = len(qa_system.file_infos)
-            file_paths = list(qa_system.file_infos.keys())
-            
-            # 실제 파일 삭제 (uploads 폴더 내 파일만)
-            upload_dir = os.path.join(get_app_directory(), 'uploads')
-            deleted_files = []
-            failed_files = []
-            
-            for fp in file_paths:
-                try:
-                    # uploads 폴더 내 파일인 경우에만 실제 삭제
-                    if fp.startswith(upload_dir) and os.path.exists(fp):
-                        os.remove(fp)
-                        deleted_files.append(os.path.basename(fp))
-                    else:
-                        deleted_files.append(os.path.basename(fp))  # 인덱스에서만 제거
-                except Exception as e:
-                    failed_files.append(f"{os.path.basename(fp)}: {str(e)}")
-            
-            # 인덱스 및 캐시 초기화
-            qa_system.file_infos.clear()
-            qa_system.documents = []
-            qa_system.vectorstore = None
-            if hasattr(qa_system, '_search_cache'):
-                qa_system._search_cache.clear()
-            if hasattr(qa_system, '_bm25'):
-                qa_system._bm25 = None
-            
-            logger.info(f"일괄 삭제 완료: {deleted_count}개 파일 제거")
-            
-            result = {
-                'success': True,
-                'message': f'{deleted_count}개 파일이 삭제되었습니다',
-                'deleted_count': deleted_count,
-                'deleted_files': deleted_files
-            }
-            
-            if failed_files:
-                result['failed_files'] = failed_files
-                result['message'] += f' (실패: {len(failed_files)}개)'
-            
-            return jsonify(result)
-            
-        except Exception as e:
-            logger.error(f"일괄 삭제 오류: {e}")
-            return jsonify({
-                'success': False,
-                'message': f'일괄 삭제 실패: {str(e)}'
-            }), HttpStatus.INTERNAL_ERROR
+    if not acquire_file_lock():
+        return jsonify({
+            'success': False,
+            'message': '서버가 바쁩니다. 잠시 후 다시 시도해주세요.'
+        }), HttpStatus.SERVICE_UNAVAILABLE
+    
+    try:
+        deleted_count = len(qa_system.file_infos)
+        file_paths = list(qa_system.file_infos.keys())
+        
+        # 실제 파일 삭제 (uploads 폴더 내 파일만)
+        upload_dir = os.path.join(get_app_directory(), 'uploads')
+        deleted_files = []
+        failed_files = []
+        
+        for fp in file_paths:
+            try:
+                # uploads 폴더 내 파일인 경우에만 실제 삭제
+                if fp.startswith(upload_dir) and os.path.exists(fp):
+                    os.remove(fp)
+                    deleted_files.append(os.path.basename(fp))
+                else:
+                    deleted_files.append(os.path.basename(fp))  # 인덱스에서만 제거
+            except Exception as e:
+                failed_files.append(f"{os.path.basename(fp)}: {str(e)}")
+        
+        # 인덱스 및 캐시 초기화
+        qa_system.file_infos.clear()
+        qa_system.documents = []
+        qa_system.vectorstore = None
+        if hasattr(qa_system, '_search_cache'):
+            qa_system._search_cache.clear()
+        if hasattr(qa_system, '_bm25'):
+            qa_system._bm25 = None
+        
+        logger.info(f"일괄 삭제 완료: {deleted_count}개 파일 제거")
+        
+        result = {
+            'success': True,
+            'message': f'{deleted_count}개 파일이 삭제되었습니다',
+            'deleted_count': deleted_count,
+            'deleted_files': deleted_files
+        }
+        
+        if failed_files:
+            result['failed_files'] = failed_files
+            result['message'] += f' (실패: {len(failed_files)}개)'
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"일괄 삭제 오류: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'일괄 삭제 실패: {str(e)}'
+        }), HttpStatus.INTERNAL_ERROR
+    finally:
+        file_lock.release()
 
 @files_bp.route('/files/<path:filename>', methods=['DELETE'])
 def delete_file(filename):
     """파일 삭제"""
-    # 실제 파일 삭제 로직은 간단 구현. 운영 환경에서는 보안 주의.
-    # 여기서는 filename이 basename이라고 가정하고 current_folder에서 삭제 시도
-    # 또는 full path를 인자로 받아야 함. server.py는 list에서 full path를 줬음.
-    # 하지만 URL 파라미터로 full path는 어려움.
-    # server.py 구현: filename 파라미터 받아서 file_infos에서 찾아서 삭제.
-    
     with file_lock:
-        target_path = None
-        for fp, info in qa_system.file_infos.items():
-            if os.path.basename(fp) == filename:
-                target_path = fp
-                break
-        
-        if not target_path:
-            return jsonify({'success': False, 'message': '파일을 찾을 수 없습니다'}), 404
-            
         try:
+            target_path = _find_file_path(filename)
+            
             os.remove(target_path)
             if target_path in qa_system.file_infos:
                 del qa_system.file_infos[target_path]
-            # 인덱스에서도 제거해야 하나, 여기서는 재인덱싱 전까지는 남아있을 수 있음
-            # qa_system.remove_document(target_path) 기능 필요
-            return jsonify({'success': True, 'message': '파일이 삭제되었습니다'})
+            
+            logger.info(f"파일 삭제 완료: {filename}")
+            return jsonify(api_success("파일이 삭제되었습니다"))
+            
+        except DocumentNotFoundError:
+            return api_error("파일을 찾을 수 없습니다", status_code=HttpStatus.NOT_FOUND)
+        except PermissionError as e:
+            logger.error(f"파일 삭제 권한 오류: {filename} - {e}")
+            return api_error("파일 삭제 권한이 없습니다", status_code=HttpStatus.FORBIDDEN)
         except Exception as e:
-            return jsonify({'success': False, 'message': str(e)}), 500
+            logger.error(f"파일 삭제 오류: {filename} - {e}")
+            return api_error(f"파일 삭제 실패: {str(e)}", status_code=HttpStatus.INTERNAL_ERROR)
 
 @files_bp.route('/upload', methods=['POST'])
 def upload_file():
