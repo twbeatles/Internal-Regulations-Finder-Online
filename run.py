@@ -1,20 +1,69 @@
 # -*- coding: utf-8 -*-
 import os
 import json
+import signal
+import sys
 import threading
 from app import app
 from app.config import AppConfig
 from app.utils import logger, setup_logger, get_app_directory
 from app.services.search import qa_system
+from app.services.db import db
+
+# Graceful Shutdown 플래그
+_shutdown_event = threading.Event()
+
+def create_default_settings():
+    """기본 설정 파일 생성"""
+    config_dir = os.path.join(get_app_directory(), 'config')
+    settings_path = os.path.join(config_dir, 'settings.json')
+    
+    if not os.path.exists(settings_path):
+        os.makedirs(config_dir, exist_ok=True)
+        default_settings = {
+            'folder': '',
+            'offline_mode': False,
+            'local_model_path': '',
+            'admin_password_hash': ''  # 기본 비밀번호 'admin' 사용
+        }
+        try:
+            with open(settings_path, 'w', encoding='utf-8') as f:
+                json.dump(default_settings, f, ensure_ascii=False, indent=2)
+            logger.info(f"기본 설정 파일 생성: {settings_path}")
+        except Exception as e:
+            logger.warning(f"기본 설정 파일 생성 실패: {e}")
+    
+    return settings_path
+
+def graceful_shutdown(signum, frame):
+    """서버 종료 시 리소스 정리"""
+    logger.info("🛑 종료 신호 수신, Graceful Shutdown 시작...")
+    _shutdown_event.set()
+    
+    # QA System 정리
+    try:
+        qa_system.cleanup()
+        logger.info("✅ QA System 정리 완료")
+    except Exception as e:
+        logger.warning(f"QA System 정리 중 오류: {e}")
+    
+    # DB 연결 정리
+    try:
+        db.close_all()
+        logger.info("✅ DB 연결 정리 완료")
+    except Exception as e:
+        logger.warning(f"DB 정리 중 오류: {e}")
+    
+    logger.info("👋 서버 종료 완료")
+    sys.exit(0)
 
 def initialize_server():
     """서버 초기화 - 모델 로드 및 문서 처리 (백그라운드)"""
     logger.info("🚀 서버 초기화 시작...")
     
     try:
-        # 설정 파일 로드
-        config_dir = os.path.join(get_app_directory(), 'config')
-        settings_path = os.path.join(config_dir, 'settings.json')
+        # 설정 파일 로드 (없으면 생성)
+        settings_path = create_default_settings()
         
         folder = ''
         offline_mode = False
@@ -66,7 +115,12 @@ def initialize_server():
 
 if __name__ == '__main__':
     setup_logger()
-    logger.info(f"📚 규정 검색기 서버 v2.2 시작")
+    
+    # 종료 시그널 핸들러 등록
+    signal.signal(signal.SIGINT, graceful_shutdown)
+    signal.signal(signal.SIGTERM, graceful_shutdown)
+    
+    logger.info(f"📚 {AppConfig.APP_NAME} v{AppConfig.APP_VERSION} 시작")
     logger.info(f"🌐 http://localhost:{AppConfig.SERVER_PORT}")
     logger.info(f"⚙️ 관리자: http://localhost:{AppConfig.SERVER_PORT}/admin")
     

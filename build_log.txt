@@ -1,0 +1,36 @@
+186 INFO: PyInstaller: 6.17.0, contrib hooks: 2025.10
+187 INFO: Python: 3.14.2
+215 INFO: Platform: Windows-11-10.0.26200-SP0
+215 INFO: Python environment: C:\Python314
+218 INFO: Removing temporary files and cleaning cache in C:\Users\김태완\AppData\Local\pyinstaller
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Python314\Scripts\pyinstaller.exe\__main__.py", line 6, in <module>
+    sys.exit(_console_script_run())
+             ~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Python314\Lib\site-packages\PyInstaller\__main__.py", line 231, in _console_script_run
+    run()
+    ~~~^^
+  File "C:\Python314\Lib\site-packages\PyInstaller\__main__.py", line 215, in run
+    run_build(pyi_config, spec_file, **vars(args))
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\site-packages\PyInstaller\__main__.py", line 70, in run_build
+    PyInstaller.building.build_main.main(pyi_config, spec_file, **kwargs)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\site-packages\PyInstaller\building\build_main.py", line 1272, in main
+    build(specfile, distpath, workpath, clean_build)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\site-packages\PyInstaller\building\build_main.py", line 1165, in build
+    shutil.rmtree(f)
+    ~~~~~~~~~~~~~^^^
+  File "C:\Python314\Lib\shutil.py", line 852, in rmtree
+    _rmtree_impl(path, dir_fd, onexc)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\shutil.py", line 711, in _rmtree_unsafe
+    onexc(os.rmdir, path, err)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\shutil.py", line 707, in _rmtree_unsafe
+    os.rmdir(path)
+    ~~~~~~~~^^^^^^
+PermissionError: [WinError 5] 액세스가 거부되었습니다: 'D:\\google antigravity\\Internal-Regulations-Finder-Online-main\\build\\regulation_search_gui\\localpycs'

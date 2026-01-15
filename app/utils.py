@@ -89,9 +89,7 @@ class TaskResult:
             'message': self.message
         }
         if self.data is not None:
-            # 검색 결과의 경우 프론트엔드가 'results' 필드를 기대함
-            # 호환성을 위해 'data'와 'results' 모두 포함
-            result['data'] = self.data
+            # 프론트엔드는 'results' 필드를 사용함
             result['results'] = self.data
         if self.failed_items:
             result['failed_items'] = self.failed_items

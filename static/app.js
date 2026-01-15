@@ -881,21 +881,31 @@ const API = {
     },
 
     async uploadFiles(files) {
-        const formData = new FormData();
+        // 백엔드는 단일 파일 업로드만 지원 - 순차 업로드 처리
+        const results = [];
         for (const file of files) {
-            formData.append('files', file);
-        }
+            const formData = new FormData();
+            formData.append('file', file);  // 백엔드가 'file' 키 기대
 
-        try {
-            const response = await fetch('/api/upload', {
-                method: 'POST',
-                body: formData
-            });
-            return await response.json();
-        } catch (error) {
-            console.error('Upload Error:', error);
-            return { success: false, message: '업로드 실패' };
+            try {
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                results.push({ filename: file.name, ...result });
+            } catch (error) {
+                console.error('Upload Error:', error);
+                results.push({ filename: file.name, success: false, message: '업로드 실패' });
+            }
         }
+        // 모든 파일이 성공했는지 확인
+        const allSuccess = results.every(r => r.success);
+        return {
+            success: allSuccess,
+            message: allSuccess ? `${results.length}개 파일 업로드 완료` : '일부 파일 업로드 실패',
+            results
+        };
     },
 
     reprocessFiles() {
@@ -903,7 +913,7 @@ const API = {
     },
 
     clearCache() {
-        return this.fetch('/api/cache', { method: 'DELETE' });
+        return this.fetch('/api/cache/clear', { method: 'POST' });
     },
 
     getModels() {
@@ -949,7 +959,7 @@ const API = {
 
     // 검색 통계
     getSearchStats(limit = 10) {
-        return this.fetch(`/api/stats/search?limit=${limit}`);
+        return this.fetch(`/api/stats?include_memory=false`);
     },
 
     // v2.0 API 메소드
@@ -965,32 +975,18 @@ const API = {
         return this.fetch('/api/sync/stop', { method: 'POST' });
     },
 
-    async uploadFolder(file) {
-        const formData = new FormData();
-        formData.append('file', file);
-
-        try {
-            const response = await fetch('/api/upload/folder', {
-                method: 'POST',
-                body: formData
-            });
-            return await response.json();
-        } catch (error) {
-            console.error('Folder Upload Error:', error);
-            return { success: false, message: '업로드 실패' };
-        }
-    },
+    // uploadFolder - 현재 미구현. 폴더 동기화는 startSync() 사용
+    // async uploadFolder(file) { ... }
 
     getRevisions(filename) {
-        return this.fetch(`/api/files/${encodeURIComponent(filename)}/revisions`);
+        return this.fetch(`/api/revisions?filename=${encodeURIComponent(filename)}`);
     },
 
     // 태그 관리
     getFileTags(filename) {
-        return this.fetch(`/api/files/structure`).then(res => {
+        return this.fetch(`/api/tags?file=${encodeURIComponent(filename)}`).then(res => {
             if (!res.success) return { success: false, tags: [] };
-            const file = res.files.find(f => f.name === filename);
-            return { success: true, tags: file ? file.tags : [] };
+            return { success: true, tags: res.tags || [] };
         });
     },
 
@@ -3713,7 +3709,7 @@ async function loadModelList() {
 
         try {
             showToast('모델 변경 중...', 'info');
-            const response = await fetch('/api/models/load', {
+            const response = await fetch('/api/models', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ model })

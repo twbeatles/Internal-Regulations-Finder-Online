@@ -18,6 +18,50 @@ def get_models():
         'current': getattr(qa_system, 'model_name', AppConfig.DEFAULT_MODEL)
     })
 
+@system_bp.route('/models', methods=['POST'])
+def set_model():
+    """AI 모델 변경
+    
+    런타임에 모델을 변경합니다. 기존 인덱스는 유지되며,
+    새 검색 시 새 모델이 사용됩니다.
+    """
+    data = request.json or {}
+    model_name = data.get('model')
+    
+    if not model_name:
+        return jsonify({'success': False, 'message': '모델명이 필요합니다'}), 400
+    
+    if model_name not in AppConfig.AVAILABLE_MODELS:
+        available = ', '.join(AppConfig.AVAILABLE_MODELS.keys())
+        return jsonify({
+            'success': False, 
+            'message': f'지원하지 않는 모델입니다. 사용 가능: {available}'
+        }), 400
+    
+    try:
+        # 현재 폴더 정보 유지하면서 모델만 변경
+        current_folder = getattr(qa_system, 'current_folder', '')
+        offline_mode = getattr(qa_system, 'offline_mode', False)
+        local_model_path = getattr(qa_system, 'local_model_path', '')
+        
+        # 모델 로드 (기존 load_model 메서드 활용)
+        result = qa_system.load_model(model_name, offline_mode, local_model_path)
+        
+        if result.success:
+            logger.info(f"모델 변경 완료: {model_name}")
+            return jsonify({
+                'success': True, 
+                'message': f'모델이 {model_name}(으)로 변경되었습니다',
+                'current': model_name,
+                'note': '검색 성능 최적화를 위해 문서 재처리를 권장합니다'
+            })
+        else:
+            return jsonify({'success': False, 'message': result.message}), 500
+    except Exception as e:
+        logger.error(f"모델 변경 오류: {e}")
+        return jsonify({'success': False, 'message': f'모델 변경 실패: {str(e)}'}), 500
+
+
 @system_bp.route('/verify_password', methods=['POST'])
 def verify_password():
     """관리자 비밀번호 확인"""
@@ -223,3 +267,64 @@ def process_documents():
         logger.error(f"문서 재처리 오류: {e}")
         return jsonify({'success': False, 'message': f'재처리 오류: {str(e)}'}), 500
 
+# ============================================================================
+# Admin API - 관리자 인증 엔드포인트
+# ============================================================================
+
+@system_bp.route('/admin/check', methods=['GET'])
+def admin_check():
+    """관리자 인증 상태 확인"""
+    is_authenticated = session.get('admin_authenticated', False)
+    return jsonify({
+        'success': True,
+        'authenticated': is_authenticated
+    })
+
+@system_bp.route('/admin/auth', methods=['POST'])
+def admin_auth():
+    """관리자 로그인"""
+    import hashlib
+    
+    data = request.json or {}
+    password = data.get('password', '')
+    
+    if not password:
+        return jsonify({'success': False, 'message': '비밀번호가 필요합니다'}), 400
+    
+    # 설정 파일에서 해시 로드
+    config_dir = os.path.join(get_app_directory(), 'config')
+    settings_path = os.path.join(config_dir, 'settings.json')
+    
+    try:
+        with open(settings_path, 'r', encoding='utf-8') as f:
+            settings = json.load(f)
+        stored_hash = settings.get('admin_password_hash', '')
+    except Exception:
+        # 설정 파일이 없거나 해시가 없으면 기본 관리자 비밀번호 허용
+        stored_hash = ''
+    
+    # 입력된 비밀번호의 SHA256 해시와 비교
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    
+    # 저장된 해시가 없으면 기본 비밀번호 'admin' 허용
+    if not stored_hash:
+        default_hash = hashlib.sha256('admin'.encode()).hexdigest()
+        if password_hash == default_hash:
+            session['admin_authenticated'] = True
+            logger.info("관리자 로그인 성공 (기본 비밀번호)")
+            return jsonify({'success': True, 'message': '로그인 성공 (기본 비밀번호 사용 중 - 변경 권장)'})
+    
+    if stored_hash and password_hash == stored_hash:
+        session['admin_authenticated'] = True
+        logger.info("관리자 로그인 성공")
+        return jsonify({'success': True, 'message': '로그인 성공'})
+    
+    logger.warning("관리자 로그인 실패")
+    return jsonify({'success': False, 'message': '비밀번호가 일치하지 않습니다'}), 401
+
+@system_bp.route('/admin/logout', methods=['POST'])
+def admin_logout():
+    """관리자 로그아웃"""
+    session.pop('admin_authenticated', None)
+    logger.info("관리자 로그아웃")
+    return jsonify({'success': True, 'message': '로그아웃 완료'})

@@ -86,6 +86,8 @@ class DBManager:
                 c.execute('CREATE INDEX IF NOT EXISTS idx_history_query ON search_history(query)')
                 # 복합 인덱스: 최근 검색 조회 최적화
                 c.execute('CREATE INDEX IF NOT EXISTS idx_history_query_time ON search_history(query, timestamp DESC)')
+                # timestamp 단독 인덱스: 중복 체크 최적화 (SearchHistory.add)
+                c.execute('CREATE INDEX IF NOT EXISTS idx_history_timestamp ON search_history(timestamp)')
                 
                 conn.commit()
         except Exception as e:

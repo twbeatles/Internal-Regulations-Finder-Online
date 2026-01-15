@@ -41,10 +41,7 @@ def _find_file_path(filename: str) -> str:
 @files_bp.route('/files', methods=['GET'])
 def list_files():
     """로드된 파일 목록 반환"""
-    return jsonify({
-        'success': True,
-        'files': qa_system.get_file_infos()
-    })
+    return jsonify(api_success(files=qa_system.get_file_infos()))
 
 @files_bp.route('/files/names', methods=['GET'])
 def list_file_names():
@@ -53,16 +50,9 @@ def list_file_names():
         file_names = list(qa_system.file_infos.keys())
         # basename만 반환
         names = [os.path.basename(fp) for fp in file_names]
-        return jsonify({
-            'success': True,
-            'names': names
-        })
+        return jsonify(api_success(names=names))
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': str(e),
-            'names': []
-        })
+        return api_error(f'파일 목록 조회 실패: {str(e)}')
 
 @files_bp.route('/files/all', methods=['DELETE'])
 def delete_all_files():
@@ -96,11 +86,13 @@ def delete_all_files():
         # 인덱스 및 캐시 초기화
         qa_system.file_infos.clear()
         qa_system.documents = []
-        qa_system.vectorstore = None
+        qa_system.doc_meta = []
+        qa_system.vector_store = None
         if hasattr(qa_system, '_search_cache'):
             qa_system._search_cache.clear()
-        if hasattr(qa_system, '_bm25'):
-            qa_system._bm25 = None
+        if hasattr(qa_system, 'bm25') and qa_system.bm25:
+            qa_system.bm25.clear()
+            qa_system.bm25 = None
         
         logger.info(f"일괄 삭제 완료: {deleted_count}개 파일 제거")
         
@@ -128,14 +120,38 @@ def delete_all_files():
 
 @files_bp.route('/files/<path:filename>', methods=['DELETE'])
 def delete_file(filename):
-    """파일 삭제"""
+    """파일 삭제 및 인덱스 정리"""
     with file_lock:
         try:
             target_path = _find_file_path(filename)
             
+            # 1. 실제 파일 삭제
             os.remove(target_path)
+            
+            # 2. file_infos에서 제거
             if target_path in qa_system.file_infos:
                 del qa_system.file_infos[target_path]
+            
+            # 3. documents 및 doc_meta에서 해당 파일 관련 항목 제거
+            if qa_system.documents and qa_system.doc_meta:
+                indices_to_remove = [
+                    i for i, meta in enumerate(qa_system.doc_meta)
+                    if meta.get('path') == target_path or meta.get('source') == filename
+                ]
+                # 역순으로 삭제 (인덱스 밀림 방지)
+                for idx in reversed(indices_to_remove):
+                    if idx < len(qa_system.documents):
+                        del qa_system.documents[idx]
+                    if idx < len(qa_system.doc_meta):
+                        del qa_system.doc_meta[idx]
+                
+                # BM25 인덱스 재구축 필요
+                if indices_to_remove and hasattr(qa_system, '_build_bm25'):
+                    qa_system._build_bm25()
+            
+            # 4. 캐시 무효화
+            if hasattr(qa_system, '_search_cache'):
+                qa_system._search_cache.invalidate_by_file(filename)
             
             logger.info(f"파일 삭제 완료: {filename}")
             return jsonify(api_success("파일이 삭제되었습니다"))
@@ -190,6 +206,10 @@ def upload_file():
             # 업로드 후 즉시 인덱싱 처리
             result = qa_system.process_single_file(save_path)
             
+            # 캐시 무효화 (새 파일이 검색에 즉시 반영되도록)
+            if hasattr(qa_system, '_search_cache'):
+                qa_system._search_cache.clear()
+            
             if result.success:
                 return jsonify({
                     'success': True, 
@@ -230,18 +250,32 @@ def get_tags():
 
 @files_bp.route('/tags', methods=['POST'])
 def add_tag():
-    data = request.json
+    data = request.json or {}
     file_path = data.get('file')
     tag = data.get('tag')
-    if qa_system.tag_manager.add_tag(file_path, tag):
+    
+    # 입력 검증
+    if not file_path or not isinstance(file_path, str):
+        return jsonify({'success': False, 'message': '파일 경로가 필요합니다'}), HttpStatus.BAD_REQUEST
+    if not tag or not isinstance(tag, str) or not tag.strip():
+        return jsonify({'success': False, 'message': '태그가 필요합니다'}), HttpStatus.BAD_REQUEST
+    
+    if qa_system.tag_manager.add_tag(file_path, tag.strip()):
         return jsonify({'success': True})
     return jsonify({'success': False, 'message': '태그 추가 실패'})
 
 @files_bp.route('/tags', methods=['DELETE'])
 def remove_tag():
-    data = request.json
+    data = request.json or {}
     file_path = data.get('file')
     tag = data.get('tag')
+    
+    # 입력 검증
+    if not file_path or not isinstance(file_path, str):
+        return jsonify({'success': False, 'message': '파일 경로가 필요합니다'}), HttpStatus.BAD_REQUEST
+    if not tag or not isinstance(tag, str):
+        return jsonify({'success': False, 'message': '태그가 필요합니다'}), HttpStatus.BAD_REQUEST
+    
     if qa_system.tag_manager.remove_tag(file_path, tag):
         return jsonify({'success': True})
     return jsonify({'success': False, 'message': '태그 삭제 실패'})
@@ -321,3 +355,120 @@ def compare_file_versions(filename):
         'diff': diff_result
     })
 
+# ============================================================================
+# 추가 엔드포인트 (Frontend 호환용)
+# ============================================================================
+
+@files_bp.route('/files/<path:filename>/preview', methods=['GET'])
+def get_file_preview(filename):
+    """파일 미리보기 (텍스트 일부 반환)"""
+    try:
+        target_path = _find_file_path(filename)
+        length = request.args.get('length', 2000, type=int)
+        
+        # 문서 추출
+        from app.services.document import DocumentExtractor
+        extractor = DocumentExtractor()
+        content, error = extractor.extract(target_path)
+        
+        if error:
+            return jsonify({'success': False, 'message': error}), 400
+        
+        # 미리보기 길이 제한
+        preview = content[:length] if content else ''
+        
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'preview': preview,
+            'total_length': len(content) if content else 0,
+            'truncated': len(content) > length if content else False
+        })
+    except DocumentNotFoundError:
+        return api_error("파일을 찾을 수 없습니다", status_code=HttpStatus.NOT_FOUND)
+    except Exception as e:
+        logger.error(f"파일 미리보기 오류: {filename} - {e}")
+        return api_error(f"미리보기 실패: {str(e)}", status_code=HttpStatus.INTERNAL_ERROR)
+
+@files_bp.route('/files/structure', methods=['GET'])
+def get_file_structure():
+    """파일 구조 및 태그 정보 반환"""
+    try:
+        files = []
+        for path, info in qa_system.file_infos.items():
+            filename = os.path.basename(path)
+            tags = qa_system.tag_manager.get_tags(path)
+            files.append({
+                'name': filename,
+                'path': path,
+                'size': info.size,
+                'chunks': info.chunks,
+                'status': info.status.value if hasattr(info.status, 'value') else str(info.status),
+                'tags': tags
+            })
+        
+        return jsonify({
+            'success': True,
+            'files': files
+        })
+    except Exception as e:
+        logger.error(f"파일 구조 조회 오류: {e}")
+        return jsonify({'success': False, 'message': str(e), 'files': []})
+
+@files_bp.route('/tags/set', methods=['POST'])
+def set_file_tags():
+    """파일 태그 일괄 설정 (덮어쓰기)"""
+    data = request.json or {}
+    filename = data.get('filename')
+    tags = data.get('tags', [])
+    
+    if not filename or not isinstance(filename, str):
+        return jsonify({'success': False, 'message': '파일명이 필요합니다'}), HttpStatus.BAD_REQUEST
+    
+    if not isinstance(tags, list):
+        return jsonify({'success': False, 'message': '태그는 배열이어야 합니다'}), HttpStatus.BAD_REQUEST
+    
+    try:
+        # 파일 경로 찾기
+        file_path = _find_file_path(filename)
+        qa_system.tag_manager.set_tags(file_path, tags)
+        return jsonify({'success': True, 'message': f'{len(tags)}개 태그 설정 완료'})
+    except DocumentNotFoundError:
+        return jsonify({'success': False, 'message': '파일을 찾을 수 없습니다'}), HttpStatus.NOT_FOUND
+    except Exception as e:
+        logger.error(f"태그 설정 오류: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+
+@files_bp.route('/tags/auto', methods=['POST'])
+def auto_tag_file():
+    """파일 자동 태그 추천"""
+    data = request.json or {}
+    filename = data.get('filename')
+    
+    if not filename or not isinstance(filename, str):
+        return jsonify({'success': False, 'message': '파일명이 필요합니다'}), HttpStatus.BAD_REQUEST
+    
+    try:
+        file_path = _find_file_path(filename)
+        
+        # 문서 내용 추출
+        from app.services.document import DocumentExtractor
+        extractor = DocumentExtractor()
+        content, error = extractor.extract(file_path)
+        
+        if error:
+            return jsonify({'success': False, 'message': f'문서 추출 실패: {error}'})
+        
+        # 자동 카테고리 추천
+        suggested_tags = qa_system.tag_manager.auto_categorize(content, filename)
+        
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'suggested_tags': suggested_tags
+        })
+    except DocumentNotFoundError:
+        return jsonify({'success': False, 'message': '파일을 찾을 수 없습니다'}), HttpStatus.NOT_FOUND
+    except Exception as e:
+        logger.error(f"자동 태그 오류: {e}")
+        return jsonify({'success': False, 'message': str(e)})

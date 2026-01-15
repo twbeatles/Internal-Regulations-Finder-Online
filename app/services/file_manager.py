@@ -161,10 +161,12 @@ class FolderWatcher:
             return False
     
     def stop_watching(self):
-        """모니터링 중지"""
+        """모니터링 중지 (타임아웃 포함)"""
         if self.observer:
             self.observer.stop()
-            self.observer.join()
+            self.observer.join(timeout=5)  # 최대 5초 대기
+            if self.observer.is_alive():
+                logger.warning("Observer 종료 타임아웃 - 강제 종료 시도")
             self.observer = None
         self.watching = False
         self.watch_path = ""

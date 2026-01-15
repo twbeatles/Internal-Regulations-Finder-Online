@@ -441,11 +441,22 @@ class SearchQueue:
 # ============================================================================
 class SearchHistory:
     def add(self, query: str):
+        """검색 히스토리에 쿼리 추가 (5분 내 중복 방지)"""
         query = query.strip()
-        if len(query) < 2: return
+        if len(query) < 2:
+            return
         try:
+            # 5분 이내 동일 쿼리 중복 저장 방지
+            recent = db.fetchone(
+                """SELECT id FROM search_history 
+                   WHERE query = ? AND timestamp > datetime('now', '-5 minutes')""",
+                (query,)
+            )
+            if recent:
+                return  # 최근 동일 쿼리 존재, 저장 스킵
             db.execute("INSERT INTO search_history (query) VALUES (?)", (query,))
-        except Exception: pass
+        except Exception:
+            pass
             
     def get_recent(self, limit: int = 10) -> List[str]:
         rows = db.fetchall("SELECT query, MAX(timestamp) as ts FROM search_history GROUP BY query ORDER BY ts DESC LIMIT ?", (limit,))
@@ -570,14 +581,34 @@ class RegulationQASystem:
             
             load_path = model_id
             
-            # 오프라인 모드 설정 (폐쇄망 지원)
-            if is_offline:
+            # ====================================================================
+            # 자동 모델 감지: models 폴더에 이미 다운로드된 모델 우선 사용
+            # ====================================================================
+            local_model_path = os.path.join(project_models_dir, model_id.replace('/', '--'))
+            
+            # 사전 다운로드된 모델 자동 감지
+            if os.path.exists(local_model_path) and os.path.isdir(local_model_path):
+                # 모델 파일 존재 확인 (config.json 또는 pytorch_model.bin)
+                has_model_files = (
+                    os.path.exists(os.path.join(local_model_path, 'config.json')) or
+                    os.path.exists(os.path.join(local_model_path, 'pytorch_model.bin')) or
+                    os.path.exists(os.path.join(local_model_path, 'model.safetensors'))
+                )
+                if has_model_files:
+                    load_path = local_model_path
+                    logger.info(f"✅ 로컬 모델 자동 감지: {local_model_path}")
+                    # 오프라인 환경 변수 설정 (다운로드 시도 방지)
+                    os.environ['HF_HUB_OFFLINE'] = '1'
+                    os.environ['TRANSFORMERS_OFFLINE'] = '1'
+            
+            # 오프라인 모드 설정 (폐쇄망 지원) - 자동 감지되지 않은 경우
+            if is_offline and load_path == model_id:
                 # HuggingFace Hub 오프라인 모드 환경 변수 설정
                 os.environ['HF_HUB_OFFLINE'] = '1'
                 os.environ['TRANSFORMERS_OFFLINE'] = '1'
                 
                 # 로컬 모델 경로 우선 사용
-                local_path = model_path_override or os.path.join(project_models_dir, model_id.replace('/', '--'))
+                local_path = model_path_override or local_model_path
                 
                 if os.path.exists(local_path):
                     load_path = local_path
@@ -586,6 +617,7 @@ class RegulationQASystem:
                     self._load_error = "오프라인 모드에서 로컬 모델을 찾을 수 없습니다"
                     logger.error(f"오프라인 모드 오류: 모델 경로 없음 - {local_path}")
                     raise ModelOfflineError(local_path)
+
             
             self._load_progress = "모델 다운로드 중... (최초 실행 시 시간이 걸릴 수 있습니다)"
             
@@ -664,7 +696,7 @@ class RegulationQASystem:
             self.file_infos[file_path] = FileInfo(
                 path=file_path,
                 size=file_size,
-                status=FileStatus.READY,
+                status=FileStatus.SUCCESS,
                 chunks=len(chunks),
                 mod_time=os.path.getmtime(file_path)
             )
@@ -979,10 +1011,11 @@ class RegulationQASystem:
 
     def search(self, query: str, k: int = 5, hybrid: bool = True, sort_by: str = 'relevance', filter_file: str = None) -> TaskResult:
         """검색 수행 (성능 모니터링 포함)"""
-        import time
-        start_time = time.perf_counter()
+        start_time = time.perf_counter()  # time 모듈은 이미 모듈 상단에서 import됨
         
-        if not self.vector_store: return TaskResult(False, "문서가 로드되지 않음")
+        # BM25 전용 모드 지원: vector_store 또는 bm25 중 하나라도 있으면 검색 가능
+        if not self.vector_store and not self.bm25:
+            return TaskResult(False, "문서가 로드되지 않음")
         
         query = query.strip()
         if len(query) < 2: return TaskResult(False, "검색어가 너무 짧습니다 (최소 2자)")
@@ -992,25 +1025,33 @@ class RegulationQASystem:
         
         try:
             k = max(1, min(k, AppConfig.MAX_SEARCH_RESULTS))
-            vec_results = self.vector_store.similarity_search_with_score(query, k=k*2)
             
             results = {}
-            if vec_results:
-                distances = [r[1] for r in vec_results]
-                min_d = min(distances)
-                max_d = max(distances)
-                rng = max_d - min_d if max_d != min_d else 1
+            
+            # Vector 검색 (vector_store가 있는 경우에만)
+            if self.vector_store:
+                # 하이브리드 검색 시에만 k*2 사용, 단독 검색 시 k 사용 (성능 최적화)
+                fetch_k = k * 2 if hybrid else k
+                vec_results = self.vector_store.similarity_search_with_score(query, k=fetch_k)
                 
-                for doc, dist in vec_results:
-                    key = doc.page_content[:100]
-                    score = max(0.1, 1 - ((dist - min_d) / (rng + 0.001)))
-                    results[key] = {
-                        'content': doc.page_content,
-                        'source': doc.metadata.get('source', '?'),
-                        'path': doc.metadata.get('path', ''),
-                        'vec_score': score,
-                        'bm25_score': 0
-                    }
+                if vec_results:
+                    distances = [r[1] for r in vec_results]
+                    min_d = min(distances)
+                    max_d = max(distances)
+                    rng = max_d - min_d if max_d != min_d else 1
+                    
+                    for doc, dist in vec_results:
+                        key = doc.page_content[:100]
+                        score = max(0.1, 1 - ((dist - min_d) / (rng + 0.001)))
+                        results[key] = {
+                            'content': doc.page_content,
+                            'source': doc.metadata.get('source', '?'),
+                            'path': doc.metadata.get('path', ''),
+                            'vec_score': score,
+                            'bm25_score': 0
+                        }
+            else:
+                vec_results = []
                     
             if hybrid and self.bm25:
                 try:

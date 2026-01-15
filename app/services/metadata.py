@@ -49,15 +49,19 @@ class TagManager:
         return [r['tag'] for r in rows]
     
     def set_tags(self, filename: str, tags: List[str]):
-        """파일의 태그 설정 (덮어쓰기)"""
+        """파일의 태그 설정 (덮어쓰기) - 트랜잭션으로 원자적 처리"""
+        conn = None
         try:
-            db.execute("DELETE FROM tags WHERE filename=?", (filename,))
+            conn = db._get_conn()
+            conn.execute("BEGIN TRANSACTION")
+            conn.execute("DELETE FROM tags WHERE filename=?", (filename,))
             for tag in set(tags):
-                try:
-                    db.execute("INSERT INTO tags (filename, tag) VALUES (?, ?)", (filename, tag))
-                except Exception:
-                    pass
+                if tag and tag.strip():
+                    conn.execute("INSERT INTO tags (filename, tag) VALUES (?, ?)", (filename, tag.strip()))
+            conn.commit()
         except Exception as e:
+            if conn:
+                conn.rollback()
             logger.error(f"태그 설정 실패: {e}")
     
     def search_by_tag(self, tag: str) -> List[str]:
