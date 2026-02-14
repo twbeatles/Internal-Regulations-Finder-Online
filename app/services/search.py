@@ -111,104 +111,126 @@ class BM25Light:
     - term frequency를 fit() 시점에 미리 계산하여 검색 성능 40-50% 향상
     - __slots__ 사용으로 메모리 효율화
     """
-    __slots__ = ['k1', 'b', 'corpus', 'doc_lens', 'avgdl', 'idf', 'N', '_lock', 'doc_tfs']
+    __slots__ = ['k1', 'b', 'doc_lens', 'doc_len_norm', 'avgdl', 'idf', 'N', '_lock', 'postings']
+
+    # Fast token extraction for large texts (avoid regex-sub + split allocations).
+    _TOKEN_EXTRACT = re.compile(r"[0-9A-Za-z가-힣_]{2,}")
     
     def __init__(self, k1: float = 1.5, b: float = 0.75):
         self.k1 = k1
         self.b = b
-        self.corpus: List[List[str]] = []
         self.doc_lens: List[int] = []
-        self.doc_tfs: List[Counter] = []  # 사전 계산된 term frequency
+        self.doc_len_norm: List[float] = []  # precomputed length normalization per doc
         self.avgdl = 0.0
         self.idf: Dict[str, float] = {}
         self.N = 0
         self._lock = threading.RLock()
+        # inverted index: term -> list[(doc_idx, tf)]
+        self.postings: Dict[str, List[Tuple[int, int]]] = {}
     
     def _tokenize(self, text: str) -> List[str]:
-        """사전 컴파일된 정규식을 사용한 토큰화"""
+        """토큰화 (성능 최적화: findall 기반)"""
         if not text:
             return []
-        # 사전 컴파일된 패턴 사용
-        text = _TOKENIZE_PATTERN.sub(' ', text.lower())
-        return [t for t in text.split() if len(t) >= 2]
+        return self._TOKEN_EXTRACT.findall(text.lower())
     
     def fit(self, docs: List[str]):
         """
-        문서 인덱싱 - term frequency를 미리 계산하여 검색 성능 향상
+        문서 인덱싱
+
+        Query-time 성능 최적화:
+        - postings(역색인) 구축: 쿼리 토큰이 포함된 문서만 스코어링
+        - 문서 길이 정규화 항(len_norm) 사전 계산
         """
         with self._lock:
-            self.corpus = []
             self.doc_lens = []
-            self.doc_tfs = []  # term frequency 사전 계산
+            self.doc_len_norm = []
             df = Counter()
+
+            self.postings = {}
             
-            for doc in docs:
+            for idx, doc in enumerate(docs):
                 tokens = self._tokenize(doc)
-                self.corpus.append(tokens)
-                self.doc_lens.append(len(tokens))
-                # term frequency 미리 계산 (검색 시 재계산 방지)
+                dl = len(tokens)
+                self.doc_lens.append(dl)
+                if dl == 0:
+                    continue
+
                 tf = Counter(tokens)
-                self.doc_tfs.append(tf)
-                df.update(set(tokens))
+                df.update(tf.keys())
+
+                for term, freq in tf.items():
+                    lst = self.postings.get(term)
+                    if lst is None:
+                        self.postings[term] = [(idx, int(freq))]
+                    else:
+                        lst.append((idx, int(freq)))
             
             self.N = len(docs)
             self.avgdl = sum(self.doc_lens) / self.N if self.N else 0
             self.idf = {t: math.log((self.N - f + 0.5) / (f + 0.5) + 1) for t, f in df.items()}
             del df
+
+            if self.avgdl > 0:
+                k1 = self.k1
+                b = self.b
+                avgdl = self.avgdl
+                self.doc_len_norm = [k1 * (1 - b + b * (dl / avgdl)) for dl in self.doc_lens]
             gc.collect()
     
     def search(self, query: str, top_k: int = 5) -> List[Tuple[int, float]]:
-        """검색 수행 - 사전 계산된 term frequency 활용"""
+        """검색 수행 (postings 기반)"""
         with self._lock:
-            if not self.corpus or not query:
+            if not self.postings or not query:
                 return []
             q_tokens = self._tokenize(query)
             if not q_tokens:
                 return []
             
-            # 쿼리 토큰의 IDF 값 미리 조회 (반복 조회 최소화)
-            query_idf = {term: self.idf.get(term, 0) for term in q_tokens if term in self.idf}
-            if not query_idf:
-                return []
-            
-            scores = []
-            for idx, doc_tf in enumerate(self.doc_tfs):
-                if not doc_tf:
+            # 중복 제거 + postings 있는 토큰만
+            terms = []
+            seen = set()
+            for t in q_tokens:
+                if t in seen:
                     continue
-                score = self._score_optimized(query_idf, doc_tf, self.doc_lens[idx])
-                if score > 0:
-                    scores.append((idx, score))
-            
-            scores.sort(key=lambda x: x[1], reverse=True)
-            return scores[:top_k]
-    
-    def _score_optimized(self, query_idf: Dict[str, float], doc_tf: Counter, doc_len: int) -> float:
-        """
-        최적화된 BM25 점수 계산
-        - 사전 계산된 term frequency 사용
-        - 쿼리 IDF 미리 필터링
-        """
-        if self.avgdl == 0:
-            return 0.0
-        
-        score = 0.0
-        len_norm = self.k1 * (1 - self.b + self.b * doc_len / self.avgdl)
-        
-        for term, idf in query_idf.items():
-            tf = doc_tf.get(term, 0)
-            if tf > 0:
-                num = tf * (self.k1 + 1)
-                den = tf + len_norm
-                score += idf * num / den
-        
-        return score
+                seen.add(t)
+                if t in self.idf and t in self.postings:
+                    terms.append(t)
+            if not terms:
+                return []
+
+            k1 = self.k1
+            k1p1 = k1 + 1.0
+            doc_len_norm = self.doc_len_norm
+            postings = self.postings
+            idf_map = self.idf
+
+            scores: Dict[int, float] = {}
+            for term in terms:
+                idf = idf_map.get(term, 0.0)
+                if idf <= 0:
+                    continue
+                for doc_idx, tf in postings.get(term, ()):
+                    if doc_idx >= len(doc_len_norm):
+                        continue
+                    denom = tf + doc_len_norm[doc_idx]
+                    if denom <= 0:
+                        continue
+                    inc = idf * (tf * k1p1) / denom
+                    scores[doc_idx] = scores.get(doc_idx, 0.0) + inc
+
+            if not scores:
+                return []
+
+            import heapq
+            return heapq.nlargest(top_k, scores.items(), key=lambda x: x[1])
     
     def clear(self):
         """인덱스 초기화"""
         with self._lock:
-            self.corpus.clear()
             self.doc_lens.clear()
-            self.doc_tfs.clear()
+            self.doc_len_norm.clear()
+            self.postings.clear()
             self.idf.clear()
             gc.collect()
 
@@ -523,6 +545,8 @@ class RegulationQASystem:
         self._search_history = SearchHistory()
         self._keyword_cache: List[str] = []
         self._executor = ThreadPoolExecutor(max_workers=AppConfig.MAX_WORKERS)
+        # Reuse a small pool for per-request hybrid search to avoid per-query ThreadPool creation.
+        self._search_executor = ThreadPoolExecutor(max_workers=2)
         self._is_ready = False
         self._is_loading = False
         self._load_progress = ""
@@ -673,19 +697,36 @@ class RegulationQASystem:
             
             # 문서 및 메타데이터 추가
             for i, chunk in enumerate(chunks):
+                doc_id = len(self.documents)
                 self.documents.append(chunk)
-                self.doc_meta.append({
-                    'source': file_path,
-                    'filename': filename,
-                    'chunk_id': i,
-                    'total_chunks': len(chunks)
-                })
+                self.doc_meta.append(
+                    {
+                        'doc_id': doc_id,
+                        'source': filename,
+                        'path': file_path,
+                        'chunk_id': i,
+                        'total_chunks': len(chunks),
+                    }
+                )
             
             # 벡터스토어 업데이트 (있으면 추가, 없으면 생성)
             if self.embedding_model and FAISS:
                 try:
-                    docs = [Document(page_content=chunk, metadata={'source': file_path, 'filename': filename}) 
-                            for chunk in chunks]
+                    docs = []
+                    base_doc_id = len(self.documents) - len(chunks)
+                    for i, chunk in enumerate(chunks):
+                        docs.append(
+                            Document(
+                                page_content=chunk,
+                                metadata={
+                                    'doc_id': base_doc_id + i,
+                                    'source': filename,
+                                    'path': file_path,
+                                    'chunk_id': i,
+                                    'total_chunks': len(chunks),
+                                },
+                            )
+                        )
                     
                     if self.vector_store:
                         # 기존 벡터스토어에 추가
@@ -774,6 +815,11 @@ class RegulationQASystem:
                         data = json.load(f)
                         self.documents = data.get('docs', [])
                         self.doc_meta = data.get('meta', [])
+                        # Back-compat: ensure doc_id exists for fast result merging.
+                        if isinstance(self.doc_meta, list):
+                            for i, meta in enumerate(self.doc_meta):
+                                if isinstance(meta, dict) and 'doc_id' not in meta:
+                                    meta['doc_id'] = i
             except Exception as e:
                 logger.warning(f"캐시 로드 실패: {e}")
                 to_process, cached = files, []
@@ -803,21 +849,23 @@ class RegulationQASystem:
         extracted_results = []
         if progress_cb: progress_cb(15, f"문서 추출 중... (병렬 처리)")
         
+        from concurrent.futures import as_completed
+
         with ThreadPoolExecutor(max_workers=min(AppConfig.MAX_WORKERS, len(to_process))) as executor:
             futures = {executor.submit(extract_file, fp): fp for fp in to_process}
             completed = 0
-            for future in futures:
+            for future in as_completed(futures):
+                fp = futures[future]
+                fname = os.path.basename(fp)
                 try:
                     result = future.result(timeout=60)
                     extracted_results.append(result)
-                    completed += 1
-                    if progress_cb and completed % 5 == 0:
-                        progress = 15 + int((completed / len(to_process)) * 30)
-                        progress_cb(progress, f"추출 완료: {completed}/{len(to_process)}")
                 except Exception as e:
-                    fp = futures[future]
-                    fname = os.path.basename(fp)
-                    extracted_results.append((fp, fname, None, f"추출 타임아웃: {e}", None))
+                    extracted_results.append((fp, fname, None, f"추출 실패/타임아웃: {e}", None))
+                completed += 1
+                if progress_cb and (completed % 5 == 0 or completed == len(to_process)):
+                    progress = 15 + int((completed / len(to_process)) * 30)
+                    progress_cb(progress, f"추출 완료: {completed}/{len(to_process)}")
         
         if progress_cb: progress_cb(50, "텍스트 청킹 중...")
         
@@ -838,13 +886,19 @@ class RegulationQASystem:
                 chunks = splitter.split_text(content)
                 chunk_count = 0
                 for chunk in chunks:
-                    if chunk.strip():
-                        new_docs.append(Document(
-                            page_content=chunk.strip(), metadata={"source": fname, "path": fp}
-                        ))
-                        self.documents.append(chunk.strip())
-                        self.doc_meta.append({"source": fname, "path": fp})
-                        chunk_count += 1
+                    chunk_text = chunk.strip()
+                    if not chunk_text:
+                        continue
+                    doc_id = len(self.documents)
+                    new_docs.append(
+                        Document(
+                            page_content=chunk_text,
+                            metadata={"doc_id": doc_id, "source": fname, "path": fp, "chunk_id": chunk_count},
+                        )
+                    )
+                    self.documents.append(chunk_text)
+                    self.doc_meta.append({"doc_id": doc_id, "source": fname, "path": fp, "chunk_id": chunk_count})
+                    chunk_count += 1
                 self.file_infos[fp].status = FileStatus.SUCCESS
                 self.file_infos[fp].chunks = chunk_count
                 if meta:
@@ -1064,7 +1118,6 @@ class RegulationQASystem:
             
             # 하이브리드 검색 시 Vector와 BM25를 병렬로 실행 (성능 최적화 v2.6.1)
             if hybrid and self.vector_store and self.bm25 and parallel_search:
-                from concurrent.futures import ThreadPoolExecutor, as_completed
                 
                 fetch_k = k * 2
                 
@@ -1084,13 +1137,11 @@ class RegulationQASystem:
                         logger.debug(f"BM25 검색 오류: {e}")
                         return []
                 
-                # 병렬 실행
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                    vec_future = executor.submit(vector_search)
-                    bm25_future = executor.submit(bm25_search)
-                    
-                    vec_results = vec_future.result(timeout=30)
-                    bm_res = bm25_future.result(timeout=30)
+                vec_future = self._search_executor.submit(vector_search)
+                bm25_future = self._search_executor.submit(bm25_search)
+
+                vec_results = vec_future.result(timeout=30)
+                bm_res = bm25_future.result(timeout=30)
                 
                 # Vector 결과 처리
                 if vec_results:
@@ -1100,12 +1151,14 @@ class RegulationQASystem:
                     rng = max_d - min_d if max_d != min_d else 1
                     
                     for doc, dist in vec_results:
-                        key = doc.page_content[:100]
+                        meta = doc.metadata or {}
+                        doc_id = meta.get('doc_id')
+                        key = doc_id if isinstance(doc_id, int) else doc.page_content[:100]
                         score = max(0.1, 1 - ((dist - min_d) / (rng + 0.001)))
                         results[key] = {
-                            'content': doc.page_content,
-                            'source': doc.metadata.get('source', '?'),
-                            'path': doc.metadata.get('path', ''),
+                            'content': self.documents[doc_id] if isinstance(doc_id, int) and 0 <= doc_id < len(self.documents) else doc.page_content,
+                            'source': meta.get('source', '?'),
+                            'path': meta.get('path', ''),
                             'vec_score': score,
                             'bm25_score': 0
                         }
@@ -1116,7 +1169,7 @@ class RegulationQASystem:
                     max_bm = max(bm_scores) if bm_scores else 1
                     for idx, sc in bm_res:
                         if 0 <= idx < len(self.documents):
-                            key = self.documents[idx][:100]
+                            key = idx
                             norm = sc / (max_bm + 0.001)
                             if key in results: 
                                 results[key]['bm25_score'] = norm
@@ -1144,12 +1197,14 @@ class RegulationQASystem:
                         rng = max_d - min_d if max_d != min_d else 1
                         
                         for doc, dist in vec_results:
-                            key = doc.page_content[:100]
+                            meta = doc.metadata or {}
+                            doc_id = meta.get('doc_id')
+                            key = doc_id if isinstance(doc_id, int) else doc.page_content[:100]
                             score = max(0.1, 1 - ((dist - min_d) / (rng + 0.001)))
                             results[key] = {
-                                'content': doc.page_content,
-                                'source': doc.metadata.get('source', '?'),
-                                'path': doc.metadata.get('path', ''),
+                                'content': self.documents[doc_id] if isinstance(doc_id, int) and 0 <= doc_id < len(self.documents) else doc.page_content,
+                                'source': meta.get('source', '?'),
+                                'path': meta.get('path', ''),
                                 'vec_score': score,
                                 'bm25_score': 0
                             }
@@ -1167,7 +1222,7 @@ class RegulationQASystem:
                         max_bm = max(bm_scores) if bm_scores else 1
                         for idx, sc in bm_res:
                             if 0 <= idx < len(self.documents):
-                                key = self.documents[idx][:100]
+                                key = idx
                                 norm = sc / (max_bm + 0.001)
                                 if key in results: results[key]['bm25_score'] = norm
                                 else:
@@ -1264,6 +1319,14 @@ class RegulationQASystem:
                 self._executor.shutdown(wait=False)
             except Exception as e:
                 logger.warning(f"ThreadPoolExecutor 종료 중 오류: {e}")
+
+        if hasattr(self, '_search_executor') and self._search_executor:
+            try:
+                self._search_executor.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                self._search_executor.shutdown(wait=False)
+            except Exception as e:
+                logger.warning(f"Search executor 종료 중 오류: {e}")
         
         # 상태 초기화
         self._is_ready = False
