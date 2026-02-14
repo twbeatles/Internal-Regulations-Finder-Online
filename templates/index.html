@@ -80,16 +80,20 @@
                 <h2 id="search-title" class="sr-only">규정 검색</h2>
                 <div class="search-container">
                     <div class="search-box" role="search">
-                        <input type="search" id="search-input" placeholder="검색어를 입력하세요... (예: 휴가 규정, 복리후생)"
-                            autocomplete="off" minlength="2" maxlength="200" aria-label="규정 검색어 입력"
-                            aria-describedby="search-hint" spellcheck="false">
-                        <span id="search-hint" class="sr-only">최소 2자 이상 입력하세요. Ctrl+K로 언제든 검색창에 포커스할 수 있습니다.</span>
+                        <div class="search-input-group">
+                            <input type="search" id="search-input" placeholder="검색어를 입력하세요... (예: 휴가 규정, 복리후생)"
+                                autocomplete="off" minlength="2" maxlength="200" aria-label="규정 검색어 입력"
+                                aria-describedby="search-hint" spellcheck="false">
+                            <span id="search-hint" class="sr-only">최소 2자 이상 입력하세요. Ctrl+K로 언제든 검색창에 포커스할 수 있습니다.</span>
+                            <button id="clear-query-btn" class="search-icon-btn" type="button" title="검색어 지우기" aria-label="검색어 지우기" hidden>✕</button>
+                            <button id="cancel-search-btn" class="search-icon-btn" type="button" title="검색 취소" aria-label="검색 취소" hidden>⨯</button>
+                        </div>
                         <button id="search-btn" class="search-btn" disabled aria-label="검색 실행">
                             <span class="btn-icon" aria-hidden="true">🔍</span>
                             <span class="btn-text">검색</span>
                         </button>
                     </div>
-                    <div class="search-options">
+                    <div class="search-options" id="search-options" data-collapsed="true">
                         <label class="option-item">
                             <span>결과 개수:</span>
                             <select id="result-count">
@@ -116,6 +120,14 @@
                             <input type="checkbox" id="hybrid-search" checked>
                             <span>하이브리드 검색</span>
                         </label>
+                        <label class="option-item checkbox">
+                            <input type="checkbox" id="instant-search" checked>
+                            <span>실시간 검색</span>
+                        </label>
+                        <button id="filters-toggle" class="btn btn-sm btn-secondary" type="button" title="필터"
+                            aria-expanded="false">
+                            필터
+                        </button>
                         <button id="advanced-search-toggle" class="btn btn-sm btn-secondary" type="button"
                             title="고급 검색 옵션">
                             🔧 고급 검색
@@ -146,10 +158,11 @@
                             <div class="advanced-option">
                                 <label for="date-from">날짜 범위:</label>
                                 <div class="date-range">
-                                    <input type="date" id="date-from" placeholder="시작일">
+                                    <input type="date" id="date-from" placeholder="시작일" disabled>
                                     <span>~</span>
-                                    <input type="date" id="date-to" placeholder="종료일">
+                                    <input type="date" id="date-to" placeholder="종료일" disabled>
                                 </div>
+                                <div class="advanced-note">날짜 범위 검색은 추후 지원됩니다.</div>
                             </div>
                         </div>
                     </div>
@@ -211,6 +224,7 @@
                 <button id="reader-close" class="reader-btn" title="닫기 (Esc)">✕</button>
                 <div class="reader-title" id="reader-title">문서 읽기</div>
                 <div class="reader-controls">
+                    <button id="reader-preview-btn" class="reader-btn" title="원문 미리보기" aria-label="원문 미리보기">원문</button>
                     <button id="reader-font-down" class="reader-btn" title="글자 작게">A-</button>
                     <span id="reader-font-size">16px</span>
                     <button id="reader-font-up" class="reader-btn" title="글자 크게">A+</button>

@@ -272,6 +272,43 @@ const PerformanceUtils = {
 };
 
 // ============================================================================
+// Preferences (localStorage) - UI 상태 유지
+// ============================================================================
+const Prefs = {
+    getBool(key, defaultValue = false) {
+        try {
+            const v = localStorage.getItem(key);
+            if (v === null) return defaultValue;
+            return v === 'true';
+        } catch (_) {
+            return defaultValue;
+        }
+    },
+
+    setBool(key, value) {
+        try {
+            localStorage.setItem(key, value ? 'true' : 'false');
+        } catch (_) { }
+    },
+
+    getJSON(key, defaultValue = null) {
+        try {
+            const v = localStorage.getItem(key);
+            if (!v) return defaultValue;
+            return JSON.parse(v);
+        } catch (_) {
+            return defaultValue;
+        }
+    },
+
+    setJSON(key, obj) {
+        try {
+            localStorage.setItem(key, JSON.stringify(obj));
+        } catch (_) { }
+    }
+};
+
+// ============================================================================
 // UX 유틸리티 - 스켈레톤 로딩
 // ============================================================================
 const SkeletonLoading = {
@@ -470,6 +507,10 @@ const ReaderMode = {
     modal: null,
     body: null,
     fontSize: 16,
+    currentFile: null,
+    _previewCache: new Map(), // filename -> preview string
+    _snippet: null,
+    _showingPreview: false,
 
     init() {
         this.modal = document.getElementById('reader-modal');
@@ -479,6 +520,8 @@ const ReaderMode = {
 
         // 버튼 이벤트
         document.getElementById('reader-close').addEventListener('click', () => this.close());
+
+        document.getElementById('reader-preview-btn')?.addEventListener('click', () => this.togglePreview());
 
         document.getElementById('reader-font-up').addEventListener('click', () => {
             this.fontSize = Math.min(this.fontSize + 2, 32);
@@ -491,20 +534,88 @@ const ReaderMode = {
         });
     },
 
-    open(title, content) {
+    open(title, content, options = {}) {
         if (!this.modal) return;
 
         document.getElementById('reader-title').textContent = title;
-        // 마크다운 변환 또는 줄바꿈 처리
-        this.body.innerHTML = content.replace(/\n/g, '<br>');
+
+        // 기본은 plain text로 렌더 (XSS 방지)
+        const html = options.html === true;
+        const raw = content === undefined || content === null ? '' : String(content);
+        const safe = html ? raw : escapeHtml(raw);
+        this.body.innerHTML = safe.replace(/\n/g, '<br>');
+
+        this.currentFile = options.file || this.currentFile || null;
+        if (options.isPreview === true) this._showingPreview = true;
+        if (options.isPreview === false) this._showingPreview = false;
+        this.updatePreviewButton();
+
         this.modal.style.display = 'flex';
         document.body.style.overflow = 'hidden'; // 배경 스크롤 방지
         this.updateFont();
     },
 
+    openItem(item) {
+        const title = item?.source || '문서';
+        const content = item?.content || '';
+        const file = item?.source || null;
+        this._snippet = { title, content, file };
+        this._showingPreview = false;
+        this.currentFile = file;
+        this.open(title, content, { file, isPreview: false });
+    },
+
     close() {
         if (this.modal) this.modal.style.display = 'none';
         document.body.style.overflow = '';
+    },
+
+    updatePreviewButton() {
+        const btn = document.getElementById('reader-preview-btn');
+        if (!btn) return;
+        btn.hidden = !this.currentFile;
+        btn.disabled = !this.currentFile;
+        btn.textContent = this._showingPreview ? '결과' : '원문';
+        btn.title = this._showingPreview ? '검색 결과로 돌아가기' : '원문 미리보기';
+        btn.setAttribute('aria-label', btn.title);
+    },
+
+    async togglePreview() {
+        if (!this.currentFile) return;
+
+        // 이미 원문을 보고 있다면 결과 스니펫으로 복귀
+        if (this._showingPreview) {
+            this._showingPreview = false;
+            if (this._snippet) {
+                this.open(this._snippet.title, this._snippet.content, { file: this.currentFile, isPreview: false });
+            }
+            return;
+        }
+
+        const btn = document.getElementById('reader-preview-btn');
+        if (btn) btn.disabled = true;
+
+        try {
+            const cached = this._previewCache.get(this.currentFile);
+            if (cached !== undefined) {
+                this._showingPreview = true;
+                this.open(`${this.currentFile} (원문)`, cached, { file: this.currentFile, isPreview: true });
+                return;
+            }
+
+            const result = await API.getFilePreview(this.currentFile, 8000);
+            if (!result.success) {
+                Toast.error('미리보기 실패', result.message || '원문 미리보기를 불러오지 못했습니다');
+                return;
+            }
+
+            const preview = result.preview || '';
+            this._previewCache.set(this.currentFile, preview);
+            this._showingPreview = true;
+            this.open(`${this.currentFile} (원문)`, preview, { file: this.currentFile, isPreview: true });
+        } finally {
+            if (btn) btn.disabled = false;
+        }
     },
 
     updateFont() {
@@ -774,31 +885,72 @@ const ExportResults = {
 const API = {
     baseUrl: '',
     pendingRequests: new Map(),  // 진행 중인 요청 추적
+    _controllers: new Map(),     // cancelKey -> AbortController
     maxRetries: 3,  // 최대 재시도 횟수
 
     async fetch(endpoint, options = {}) {
-        // 중복 요청 방지 (POST 요청에 대해서만)
-        const requestKey = `${options.method || 'GET'}-${endpoint}-${JSON.stringify(options.body || '')}`;
+        const { cancelKey, timeout: _timeout, signal: externalSignal, ...fetchOptions } = options || {};
 
-        if (options.method === 'POST' && this.pendingRequests.has(requestKey)) {
+        // 중복 요청 방지 (POST 요청에 대해서만)
+        const requestKey = `${fetchOptions.method || 'GET'}-${endpoint}-${JSON.stringify(fetchOptions.body || '')}`;
+
+        if (fetchOptions.method === 'POST' && this.pendingRequests.has(requestKey)) {
             Logger.debug('Duplicate request prevented:', endpoint);
             return this.pendingRequests.get(requestKey);
         }
 
+        // cancelKey가 있으면, 동일 키의 이전 요청을 즉시 중단
+        if (cancelKey) {
+            const prev = this._controllers.get(cancelKey);
+            if (prev) {
+                try { prev.abort(); } catch (_) { }
+            }
+        }
+
         const controller = new AbortController();
-        const timeout = options.timeout || 30000; // 30초 기본 타임아웃
+        const timeout = typeof _timeout === 'number' ? _timeout : 30000; // 30초 기본 타임아웃
         const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-        const requestPromise = this._executeRequest(endpoint, options, controller, timeoutId);
+        // 외부 signal과 연동 (있으면)
+        if (externalSignal) {
+            if (externalSignal.aborted) {
+                controller.abort();
+            } else {
+                externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
+            }
+        }
 
-        if (options.method === 'POST') {
+        if (cancelKey) {
+            this._controllers.set(cancelKey, controller);
+        }
+
+        const requestPromise = this._executeRequest(endpoint, fetchOptions, controller, timeoutId);
+
+        if (fetchOptions.method === 'POST') {
             this.pendingRequests.set(requestKey, requestPromise);
             requestPromise.finally(() => {
                 this.pendingRequests.delete(requestKey);
             });
         }
 
+        if (cancelKey) {
+            requestPromise.finally(() => {
+                // 최신 컨트롤러일 때만 제거
+                if (this._controllers.get(cancelKey) === controller) {
+                    this._controllers.delete(cancelKey);
+                }
+            });
+        }
+
         return requestPromise;
+    },
+
+    abort(cancelKey) {
+        const controller = this._controllers.get(cancelKey);
+        if (controller) {
+            try { controller.abort(); } catch (_) { }
+            this._controllers.delete(cancelKey);
+        }
     },
 
     async _executeRequest(endpoint, options, controller, timeoutId, retryCount = 0) {
@@ -854,7 +1006,7 @@ const API = {
             }
 
             if (error.name === 'AbortError') {
-                return { success: false, message: '요청 시간이 초과되었습니다' };
+                return { success: false, aborted: true, message: '요청이 취소되었습니다' };
             }
             return { success: false, message: error.message || '서버 연결 실패' };
         }
@@ -868,6 +1020,7 @@ const API = {
     search(query, k = 5, hybrid = true, highlight = true, filterFile = null, sortBy = 'relevance') {
         return this.fetch('/api/search', {
             method: 'POST',
+            cancelKey: 'search',
             body: JSON.stringify({ query, k, hybrid, highlight, filter_file: filterFile, sort_by: sortBy })
         });
     },
@@ -877,7 +1030,7 @@ const API = {
     },
 
     getSuggestions(query, limit = 8) {
-        return this.fetch(`/api/search/suggest?q=${encodeURIComponent(query)}&limit=${limit}`);
+        return this.fetch(`/api/search/suggest?q=${encodeURIComponent(query)}&limit=${limit}`, { cancelKey: 'suggest' });
     },
 
     getFiles() {
@@ -1502,7 +1655,7 @@ const Autocomplete = {
 // ============================================================================
 // 파일 목록 로드 (검색 필터용)
 // ============================================================================
-async function loadFileListForFilter() {
+async function loadFileListForFilter(selectedValue = null) {
     const filterSelect = document.getElementById('filter-file');
     if (!filterSelect) return;
 
@@ -1517,6 +1670,9 @@ async function loadFileListForFilter() {
         });
 
         filterSelect.innerHTML = html;
+        if (selectedValue !== null && selectedValue !== undefined) {
+            filterSelect.value = selectedValue;
+        }
     }
 }
 
@@ -1525,6 +1681,9 @@ async function loadFileListForFilter() {
 // ============================================================================
 // 현재 검색 결과 저장 (이벤트 위임용)
 let currentSearchResults = [];
+let lastRenderedResults = [];
+let lastRenderedQuery = '';
+let _searchSeq = 0;
 
 function toggleBookmarkByIndex(index, buttonElement) {
     const item = currentSearchResults[index];
@@ -1569,6 +1728,7 @@ function setupBookmarkEventDelegation() {
             if (!isNaN(index)) {
                 toggleBookmarkByIndex(index, bookmarkBtn);
             }
+            return;
         }
 
         // 복사 버튼 처리
@@ -1578,6 +1738,7 @@ function setupBookmarkEventDelegation() {
             if (!isNaN(index) && currentSearchResults[index]) {
                 copyToClipboard(currentSearchResults[index].content || '');
             }
+            return;
         }
 
         // 콘텐츠 접기/펼치기 처리
@@ -1587,6 +1748,21 @@ function setupBookmarkEventDelegation() {
             if (card) {
                 card.classList.toggle('collapsed');
                 toggleBtn.textContent = card.classList.contains('collapsed') ? '펼치기 ▼' : '접기 ▲';
+            }
+            return;
+        }
+
+        // 카드 클릭 시 Reader 모드 열기 (버튼/링크 클릭은 제외)
+        const card = e.target.closest('.result-card');
+        if (card) {
+            if (e.target.closest('.result-actions') || e.target.closest('a, button')) return;
+
+            const selection = window.getSelection?.();
+            if (selection && String(selection).trim().length > 0) return;
+
+            const index = parseInt(card.dataset.index || '', 10);
+            if (!isNaN(index) && currentSearchResults[index]) {
+                ReaderMode.openItem(currentSearchResults[index]);
             }
         }
     });
@@ -1608,17 +1784,77 @@ async function initSearch() {
         AppState.startRefresh(2000);
     }
 
-    // 파일 목록 로드 (필터 드롭다운용)
-    loadFileListForFilter();
+    // UI 옵션/상태 복원
+    const lastOptions = Prefs.getJSON('reg_search.last_options', {}) || {};
+
+    const resultCount = document.getElementById('result-count');
+    const hybridCheck = document.getElementById('hybrid-search');
+    const filterFile = document.getElementById('filter-file');
+    const sortBy = document.getElementById('sort-by');
+
+    if (resultCount && lastOptions.k) resultCount.value = String(lastOptions.k);
+    if (hybridCheck && typeof lastOptions.hybrid === 'boolean') hybridCheck.checked = lastOptions.hybrid;
+    if (sortBy && lastOptions.sort) sortBy.value = String(lastOptions.sort);
+
+    // 파일 목록 로드 (필터 드롭다운용) - 로드 후 저장값 선택
+    await loadFileListForFilter(lastOptions.filter || '');
+
+    const saveLastOptions = () => {
+        Prefs.setJSON('reg_search.last_options', {
+            k: parseInt(resultCount?.value || 5, 10),
+            hybrid: hybridCheck?.checked !== false,
+            filter: filterFile?.value || '',
+            sort: sortBy?.value || 'relevance'
+        });
+    };
+
+    resultCount?.addEventListener('change', saveLastOptions);
+    hybridCheck?.addEventListener('change', saveLastOptions);
+    filterFile?.addEventListener('change', () => {
+        saveLastOptions();
+        // 필터 변경은 즉시 재검색 (체감 속도)
+        performSearch({ auto: true, reason: 'filter' });
+    });
+    sortBy?.addEventListener('change', () => {
+        saveLastOptions();
+        performSearch({ auto: true, reason: 'sort' });
+    });
 
     // 검색 이벤트
     const searchBtn = document.getElementById('search-btn');
     const searchInput = document.getElementById('search-input');
+    const clearBtn = document.getElementById('clear-query-btn');
+    const cancelBtn = document.getElementById('cancel-search-btn');
+    const instantToggle = document.getElementById('instant-search');
+    const filtersToggle = document.getElementById('filters-toggle');
+    const searchOptions = document.getElementById('search-options');
+
+    // Instant/Filter 상태 복원
+    if (instantToggle) {
+        instantToggle.checked = Prefs.getBool('reg_search.instant', true);
+        instantToggle.addEventListener('change', () => {
+            Prefs.setBool('reg_search.instant', !!instantToggle.checked);
+        });
+    }
+
+    if (searchOptions && filtersToggle) {
+        const collapsed = Prefs.getBool('reg_search.filters_collapsed', true);
+        searchOptions.dataset.collapsed = collapsed ? 'true' : 'false';
+        filtersToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+
+        filtersToggle.addEventListener('click', () => {
+            const isCollapsed = searchOptions.dataset.collapsed !== 'false';
+            const nextCollapsed = !isCollapsed;
+            searchOptions.dataset.collapsed = nextCollapsed ? 'true' : 'false';
+            filtersToggle.setAttribute('aria-expanded', nextCollapsed ? 'false' : 'true');
+            Prefs.setBool('reg_search.filters_collapsed', nextCollapsed);
+        });
+    }
 
     if (searchBtn) {
         searchBtn.addEventListener('click', () => {
             Autocomplete.hide();
-            performSearch();
+            performSearch({ auto: false, reason: 'button' });
         });
     }
 
@@ -1626,10 +1862,54 @@ async function initSearch() {
         // 자동완성 초기화
         Autocomplete.init(searchInput);
 
+        let autoTimer = null;
+        const scheduleAutoSearch = () => {
+            if (autoTimer) clearTimeout(autoTimer);
+            autoTimer = setTimeout(() => performSearch({ auto: true, reason: 'typing' }), 400);
+        };
+        PerformanceUtils.registerCleanup(() => {
+            if (autoTimer) clearTimeout(autoTimer);
+        });
+
+        const updateClearBtn = () => {
+            if (!clearBtn) return;
+            const hasText = (searchInput.value || '').trim().length > 0;
+            clearBtn.hidden = !hasText;
+        };
+
+        searchInput.addEventListener('input', () => {
+            updateClearBtn();
+            if (!AppState.ready) return;
+            if (!NetworkStatus.isOnline) return;
+            if (instantToggle && !instantToggle.checked) return;
+
+            const q = searchInput.value.trim();
+            if (q.length < 2) return;
+            scheduleAutoSearch();
+        });
+
         searchInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && Autocomplete.selectedIndex < 0) {
                 Autocomplete.hide();
-                performSearch();
+                if (autoTimer) clearTimeout(autoTimer);
+                performSearch({ auto: false, reason: 'enter' });
+            }
+        });
+
+        clearBtn?.addEventListener('click', () => {
+            if (autoTimer) clearTimeout(autoTimer);
+            searchInput.value = '';
+            Autocomplete.hide();
+            API.abort('suggest');
+            updateClearBtn();
+            searchInput.focus();
+        });
+
+        cancelBtn?.addEventListener('click', () => {
+            API.abort('search');
+            // 마지막 렌더링 결과가 있으면 복구
+            if (lastRenderedResults && lastRenderedResults.length > 0) {
+                renderSearchResults(lastRenderedResults, lastRenderedQuery);
             }
         });
 
@@ -1637,6 +1917,7 @@ async function initSearch() {
         if (status.ready) {
             searchInput.focus();
         }
+        updateClearBtn();
     }
 
     // v2.0 UI 모듈 초기화
@@ -1648,13 +1929,17 @@ async function initSearch() {
     setupBookmarkEventDelegation();
 }
 
-async function performSearch() {
+async function performSearch(options = {}) {
+    const { auto = false } = options || {};
     const input = document.getElementById('search-input');
     const resultsContainer = document.getElementById('results-container');
     const resultCount = document.getElementById('result-count');
     const hybridCheck = document.getElementById('hybrid-search');
     const filterFile = document.getElementById('filter-file');
     const sortBy = document.getElementById('sort-by');
+    const searchBtn = document.getElementById('search-btn');
+    const cancelBtn = document.getElementById('cancel-search-btn');
+    const clearBtn = document.getElementById('clear-query-btn');
 
     // 필수 요소 존재 확인
     if (!input || !resultsContainer) {
@@ -1664,21 +1949,29 @@ async function performSearch() {
 
     const query = input.value.trim();
     if (!query) {
-        Toast.warning('검색어 필요', '검색어를 입력해주세요');
-        input.focus();
+        if (!auto) {
+            Toast.warning('검색어 필요', '검색어를 입력해주세요');
+            input.focus();
+        }
         return;
     }
 
     if (query.length < 2) {
-        Toast.warning('검색어 짧음', '최소 2자 이상 입력해주세요');
+        if (!auto) {
+            Toast.warning('검색어 짧음', '최소 2자 이상 입력해주세요');
+        }
         return;
     }
 
     // 네트워크 상태 확인
     if (!NetworkStatus.checkConnection()) {
-        Toast.error('오프라인', '네트워크 연결을 확인해주세요');
+        if (!auto) {
+            Toast.error('오프라인', '네트워크 연결을 확인해주세요');
+        }
         return;
     }
+
+    const seq = ++_searchSeq;
 
     // 스켈레톤 로딩 표시
     const k = parseInt(resultCount?.value || 5);
@@ -1688,9 +1981,52 @@ async function performSearch() {
     const filter = filterFile?.value || null;
     const sort = sortBy?.value || 'relevance';
 
-    const result = await API.search(query, k, hybrid, true, filter, sort);
+    // UI 상태 (검색 중)
+    if (searchBtn) searchBtn.classList.add('loading');
+    if (cancelBtn) cancelBtn.hidden = false;
+
+    // 고급검색: 서버 변경 없이 프론트 후처리로 최소 지원
+    const parsed = AdvancedSearch.parseQuery(query);
+    const advancedActive =
+        AdvancedSearch.isOpen ||
+        parsed.useRegex ||
+        /\b(AND|OR|NOT)\b/i.test(query) ||
+        /"[^"]+"/.test(query);
+
+    // NOT/연산자 등을 포함한 검색어는 서버에는 "포함 토큰" 위주로 전달 (후처리 필터와 조합)
+    let serverQuery = query;
+    if (advancedActive && !parsed.useRegex) {
+        const tokens = [
+            ...(parsed.exactPhrases || []),
+            ...(parsed.mustInclude || []),
+            ...(parsed.shouldInclude || [])
+        ].map(t => String(t || '').trim()).filter(Boolean);
+        if (tokens.length > 0) serverQuery = tokens.join(' ');
+    }
+
+    let result;
+    try {
+        result = await API.search(serverQuery, k, hybrid, true, filter, sort);
+    } finally {
+        // 최신 요청이 아닐 경우 UI 종료는 최신 요청에게 맡김
+        if (seq === _searchSeq) {
+            if (searchBtn) searchBtn.classList.remove('loading');
+            if (cancelBtn) cancelBtn.hidden = true;
+        }
+    }
+
+    // 늦게 도착한 응답이 UI를 덮어쓰지 않도록 방어
+    if (seq !== _searchSeq) return;
 
     if (!result.success) {
+        // abort(타이핑/취소)된 요청은 조용히 종료
+        if (result.aborted) {
+            // 사용자가 취소 버튼을 눌렀다면 마지막 결과를 복구 (있으면)
+            if (!auto && lastRenderedResults && lastRenderedResults.length > 0) {
+                renderSearchResults(lastRenderedResults, lastRenderedQuery);
+            }
+            return;
+        }
         resultsContainer.innerHTML = `
             <div class="no-results">
                 <div class="no-results-icon">😕</div>
@@ -1705,7 +2041,33 @@ async function performSearch() {
         return;
     }
 
-    if (!result.results || result.results.length === 0) {
+    let finalResults = result.results || [];
+
+    // Advanced search: AND/OR/NOT/"..."
+    if (advancedActive && finalResults.length > 0) {
+        finalResults = AdvancedSearch.filterResults(finalResults, parsed);
+
+        // Regex 후처리 (안전 제한)
+        if (parsed.useRegex) {
+            const pattern = (parsed.original || '').trim();
+            if (pattern.length > 80) {
+                Toast.warning('정규식 제한', '정규식 패턴은 80자 이하만 지원합니다');
+            } else {
+                try {
+                    const re = new RegExp(pattern, 'i');
+                    finalResults = finalResults.filter(item => {
+                        const content = (item.content || '');
+                        const source = (item.source || '');
+                        return re.test(content) || re.test(source);
+                    });
+                } catch (e) {
+                    Toast.error('정규식 오류', '정규식 패턴이 올바르지 않습니다');
+                }
+            }
+        }
+    }
+
+    if (!finalResults || finalResults.length === 0) {
         resultsContainer.innerHTML = `
             <div class="no-results">
                 <div class="no-results-icon">🔍</div>
@@ -1717,9 +2079,11 @@ async function performSearch() {
     }
 
     // 결과 표시
-    renderSearchResults(result.results, query);
-    input.value = '';
-    input.focus();
+    renderSearchResults(finalResults, query);
+
+    // 입력값 유지 (재검색을 빠르게)
+    if (!auto) input.focus();
+    if (clearBtn) clearBtn.hidden = input.value.trim().length === 0;
 }
 
 function renderSearchResults(results, query) {
@@ -1728,6 +2092,8 @@ function renderSearchResults(results, query) {
 
     // 결과 저장 (내보내기용)
     ExportResults.saveResults(results, query);
+    lastRenderedResults = results;
+    lastRenderedQuery = query;
 
     // XSS 방지를 위해 query를 이스케이프
     const safeQuery = escapeHtml(query);
@@ -1779,19 +2145,23 @@ function renderSearchResults(results, query) {
         fragment.appendChild(card);
     });
 
-    // 한번의 DOM 조작으로 모두 추가
-    container.innerHTML = '';
-    container.appendChild(fragment);
+    // 한번의 DOM 조작으로 모두 교체
+    container.replaceChildren(fragment);
 
-    // 스타거 애니메이션 적용
-    StaggerAnimation.apply(container, '.result-card', 0.08);
+    // 결과가 많을 때는 애니메이션 비용을 줄임 (체감 성능 우선)
+    const count = results.length;
+    const baseDelay = count > 20 ? 0.02 : 0.08;
+    if (count <= 50) {
+        StaggerAnimation.apply(container, '.result-card', baseDelay);
+    }
 
     // 애니메이션 완료 후 will-change 해제 (메모리 최적화)
+    const doneDelayMs = Math.min(Math.round(count * baseDelay * 1000 + 600), 2000);
     setTimeout(() => {
         container.querySelectorAll('.result-card').forEach(card => {
             card.classList.add('animation-done');
         });
-    }, results.length * 80 + 400);
+    }, doneDelayMs);
 
     // v2.0 네비게이션 갱신
     SearchResultNavigator.scan();
@@ -1821,7 +2191,7 @@ function createResultCard(item, index) {
 
     const card = document.createElement('div');
     card.className = 'result-card';
-    card.style.animationDelay = `${index * 0.08}s`;  // 0.1 → 0.08로 단축
+    card.dataset.index = String(index);
 
     card.innerHTML = `
         <div class="result-header">
