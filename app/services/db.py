@@ -36,12 +36,16 @@ class DBManager:
             
             self._local.conn = sqlite3.connect(self.db_path)
             self._local.conn.row_factory = sqlite3.Row
-            # 성능 최적화 PRAGMA
+            # 성능 최적화 PRAGMA (v2.6.1 강화)
             self._local.conn.execute('PRAGMA journal_mode=WAL')
             self._local.conn.execute('PRAGMA synchronous=NORMAL')
             self._local.conn.execute('PRAGMA temp_store=MEMORY')
             self._local.conn.execute('PRAGMA cache_size=-4000')  # 4MB 캐시
             self._local.conn.execute('PRAGMA mmap_size=268435456')  # 256MB mmap
+            # 추가 성능 최적화
+            self._local.conn.execute('PRAGMA busy_timeout=5000')  # 5초 락 대기
+            self._local.conn.execute('PRAGMA read_uncommitted=1')  # 읽기 성능 향상
+            self._local.conn.execute('PRAGMA page_size=4096')  # 페이지 크기 최적화
         return self._local.conn
     
     def _init_db(self):
@@ -124,6 +128,28 @@ class DBManager:
                 raise
         except Exception as e:
             logger.error(f"DB 실행 오류 ({query}): {e}")
+            raise
+
+    def executemany(self, query, args_list):
+        """여러 쿼리를 배치로 실행 (성능 최적화 v2.6.1)
+        
+        Args:
+            query: SQL 쿼리문
+            args_list: 쿼리 인자 리스트
+            
+        Returns:
+            영향받은 행 수
+        """
+        if not args_list:
+            return 0
+        try:
+            conn = self._get_conn()
+            cur = conn.cursor()
+            cur.executemany(query, args_list)
+            conn.commit()
+            return cur.rowcount
+        except Exception as e:
+            logger.error(f"DB 배치 실행 오류 ({query}): {e}")
             raise
 
     def fetchall(self, query, args=()):

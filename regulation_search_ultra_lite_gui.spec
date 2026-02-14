@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""
-사내 규정 검색기 v2.4 - 초경량 GUI 빌드 Spec
+\"\"\"
+사내 규정 검색기 v2.6 - 초경량 GUI 빌드 Spec
 빌드: pyinstaller regulation_search_ultra_lite_gui.spec
 
 특징:
@@ -65,7 +65,9 @@ if os.path.exists(config_dir):
 # ============================================================================
 hiddenimports = [
     # Flask 코어
+    # Flask 코어
     'flask',
+    'flask_compress',  # v2.6.1 compression
     'flask.json',
     'flask.json.provider',
     'flask_cors',

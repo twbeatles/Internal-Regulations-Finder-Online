@@ -1,0 +1,9 @@
+{
+  "folder": "",
+  "offline_mode": false,
+  "local_model_path": "",
+  "admin_password_hash": "",
+  "server_port": 8080,
+  "embed_backend": "torch",
+  "embed_normalize": true
+}

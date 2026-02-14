@@ -7,7 +7,7 @@
 | `regulation_search_gui.spec` | GUI | ✅ | 500-800MB | AI 벡터 검색 + BM25 |
 | `regulation_search_ultra_lite_gui.spec` | GUI | ❌ | 600MB | BM25만 (torch 제외) |
 
-> 💡 **v2.5**: AI 모델 없이도 BM25 텍스트 검색으로 동작 (자동 fallback)
+> 💡 **v2.6.1**: 성능 최적화(압축, 캐싱) 및 오프라인 모드 지원
 
 ---
 
@@ -15,7 +15,20 @@
 
 ### 필수
 ```bash
-pip install pyinstaller
+pip install -r requirements.txt
+# 또는 직접 설치
+pip install pyinstaller flask-compress
+```
+
+### 오프라인/폐쇄망 배포 준비
+빌드 전, 정적 자원 및 모델을 미리 다운로드하여 포함할 수 있습니다.
+
+```bash
+# 1. 정적 자원(JS, Fonts) 다운로드 -> static/vendor 폴더 생성
+python download_static.py
+
+# 2. AI 모델 다운로드 -> models 폴더 생성 (AI 버전 빌드 시)
+python download_models.py
 ```
 
 ---
@@ -26,9 +39,11 @@ pip install pyinstaller
 cd "d:\google antigravity\Internal-Regulations-Finder-Online-main"
 
 # AI 포함 버전 (벡터 검색 + BM25)
+# [권장] 대부분의 환경에서 사용
 pyinstaller regulation_search_gui.spec --clean
 
 # Lite 버전 (BM25만, AI 제외)
+# [저사양] AI 기능이 필요 없는 경우
 pyinstaller regulation_search_ultra_lite_gui.spec --clean
 ```
 

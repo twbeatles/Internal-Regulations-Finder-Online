@@ -219,17 +219,22 @@ class SearchCache:
     """LRU 기반 검색 캐시 (OrderedDict 사용으로 O(1) 성능)
     
     Features:
-        - TTL 기반 만료
+        - 적응형 TTL 기반 만료 (자주 조회되는 쿼리 TTL 연장)
         - LRU eviction
         - 캐시 히트율 통계
         - 메모리 사용량 추정
+    
+    Performance Optimizations (v2.6.1):
+        - 기본 TTL 300s → 600s 증가
+        - 적응형 TTL: 히트 횟수에 따라 최대 2배까지 TTL 연장
     """
     
-    def __init__(self, max_size: int = 100, ttl_seconds: int = 300):
+    def __init__(self, max_size: int = 1000, ttl_seconds: int = 600, adaptive_ttl: bool = False):
         from collections import OrderedDict
         self.cache: OrderedDict = OrderedDict()
         self.max_size = max_size
         self.ttl = ttl_seconds
+        self.adaptive_ttl = adaptive_ttl  # 적응형 TTL 활성화 여부
         self._lock = threading.Lock()
         # 통계
         self._hits = 0
@@ -251,9 +256,18 @@ class SearchCache:
         key = self._make_key(query, k, hybrid)
         with self._lock:
             if key in self.cache:
-                timestamp, result = self.cache[key]
-                if time.time() - timestamp < self.ttl:
-                    # LRU: 최근 사용으로 이동
+                entry = self.cache[key]
+                timestamp, result, hit_count = entry if len(entry) == 3 else (*entry, 0)
+                
+                # 적응형 TTL: 히트 횟수에 따라 TTL 연장 (최대 2배)
+                if self.adaptive_ttl:
+                    effective_ttl = self.ttl * min(2.0, 1.0 + hit_count * 0.1)
+                else:
+                    effective_ttl = self.ttl
+                
+                if time.time() - timestamp < effective_ttl:
+                    # 히트 횟수 증가 및 LRU 이동
+                    self.cache[key] = (timestamp, result, hit_count + 1)
                     self.cache.move_to_end(key)
                     self._hits += 1
                     return result
@@ -266,14 +280,17 @@ class SearchCache:
     def set(self, query: str, k: int, hybrid: bool, result: Any):
         key = self._make_key(query, k, hybrid)
         with self._lock:
-            # 이미 존재하면 삭제 후 다시 추가 (순서 갱신)
+            # 이미 존재하면 히트 카운트 유지하며 갱신
+            old_hit_count = 0
             if key in self.cache:
+                entry = self.cache[key]
+                old_hit_count = entry[2] if len(entry) == 3 else 0
                 del self.cache[key]
             # 크기 초과 시 가장 오래된 항목 제거 (O(1))
             while len(self.cache) >= self.max_size:
                 self.cache.popitem(last=False)
                 self._evictions += 1
-            self.cache[key] = (time.time(), result)
+            self.cache[key] = (time.time(), result, old_hit_count)
     
     def clear(self):
         with self._lock:
@@ -315,7 +332,9 @@ class SearchCache:
         with self._lock:
             # 캐시된 결과에서 해당 파일 포함 항목 제거
             keys_to_remove = []
-            for key, (_, result) in self.cache.items():
+            for key, entry in self.cache.items():
+                # entry: (timestamp, result) or (timestamp, result, hit_count)
+                result = entry[1] if isinstance(entry, tuple) and len(entry) >= 2 else None
                 if isinstance(result, list):
                     for item in result:
                         if isinstance(item, dict) and item.get('source') == filename:
@@ -482,6 +501,8 @@ class RegulationQASystem:
         self.embedding_model = None
         self.model_id = None
         self.model_name = ""
+        self.embed_backend = ""  # 현재 사용 중인 백엔드
+        self.embed_normalize = True  # 현재 정규화 설정
         self.extractor = DocumentExtractor()
         self.cache_path = os.path.join(os.path.dirname(get_app_directory()), "reg_qa_server_v10")
         if not os.path.exists(self.cache_path):
@@ -494,7 +515,11 @@ class RegulationQASystem:
         self.file_infos: Dict[str, FileInfo] = {}
         self.current_folder = ""
         self._lock = threading.RLock()
-        self._search_cache = SearchCache(AppConfig.SEARCH_CACHE_SIZE)
+        self._search_cache = SearchCache(
+            AppConfig.SEARCH_CACHE_SIZE,
+            ttl_seconds=getattr(AppConfig, "SEARCH_CACHE_TTL", 600),
+            adaptive_ttl=getattr(AppConfig, "ADAPTIVE_CACHE_TTL", False),
+        )
         self._search_history = SearchHistory()
         self._keyword_cache: List[str] = []
         self._executor = ThreadPoolExecutor(max_workers=AppConfig.MAX_WORKERS)
@@ -538,6 +563,8 @@ class RegulationQASystem:
         is_offline = offline_mode if offline_mode is not None else AppConfig.OFFLINE_MODE
         model_path_override = local_model_path if local_model_path is not None else AppConfig.LOCAL_MODEL_PATH
         model_id = AppConfig.AVAILABLE_MODELS.get(model_name, AppConfig.AVAILABLE_MODELS[AppConfig.DEFAULT_MODEL])
+        embed_backend = getattr(AppConfig, 'EMBED_BACKEND', 'torch')
+        embed_normalize = getattr(AppConfig, 'EMBED_NORMALIZE', True)
         self._load_error = ""
         
         try:
@@ -548,90 +575,33 @@ class RegulationQASystem:
             # Lazy import 실행 (무거운 라이브러리 로드)
             _lazy_import_langchain()
             
-            try:
-                import torch
-            except ImportError as e:
-                self._load_error = str(e)
-                raise ModelLoadError(model_name, f"PyTorch 로드 실패: {e}")
-            
-            # 전역 변수로 이미 로드됨 (lazy import)
-            if HuggingFaceEmbeddings is None:
-                self._load_error = "LangChain HuggingFaceEmbeddings 로드 실패"
-                raise ModelLoadError(model_name, "LangChain HuggingFaceEmbeddings 없음")
-            
             self._load_progress = "AI 모델 초기화 중..."
-            logger.info(f"모델 로드 시작: {model_name} ({model_id})")
-            
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
-            logger.info(f"사용 디바이스: {device}")
-            
-            # ====================================================================
-            # 모델 저장 경로 설정 (프로젝트 폴더 우선)
-            # ====================================================================
-            # 프로젝트 내 models 폴더를 기본 캐시 위치로 사용
-            project_models_dir = os.path.join(get_app_directory(), 'models')
-            os.makedirs(project_models_dir, exist_ok=True)
-            
-            # HuggingFace 캐시 디렉토리를 프로젝트 폴더로 설정
-            os.environ['HF_HOME'] = project_models_dir
-            os.environ['HUGGINGFACE_HUB_CACHE'] = project_models_dir
-            os.environ['TRANSFORMERS_CACHE'] = project_models_dir
-            
-            logger.info(f"모델 저장 경로: {project_models_dir}")
-            
-            load_path = model_id
-            
-            # ====================================================================
-            # 자동 모델 감지: models 폴더에 이미 다운로드된 모델 우선 사용
-            # ====================================================================
-            local_model_path = os.path.join(project_models_dir, model_id.replace('/', '--'))
-            
-            # 사전 다운로드된 모델 자동 감지
-            if os.path.exists(local_model_path) and os.path.isdir(local_model_path):
-                # 모델 파일 존재 확인 (config.json 또는 pytorch_model.bin)
-                has_model_files = (
-                    os.path.exists(os.path.join(local_model_path, 'config.json')) or
-                    os.path.exists(os.path.join(local_model_path, 'pytorch_model.bin')) or
-                    os.path.exists(os.path.join(local_model_path, 'model.safetensors'))
-                )
-                if has_model_files:
-                    load_path = local_model_path
-                    logger.info(f"✅ 로컬 모델 자동 감지: {local_model_path}")
-                    # 오프라인 환경 변수 설정 (다운로드 시도 방지)
-                    os.environ['HF_HUB_OFFLINE'] = '1'
-                    os.environ['TRANSFORMERS_OFFLINE'] = '1'
-            
-            # 오프라인 모드 설정 (폐쇄망 지원) - 자동 감지되지 않은 경우
-            if is_offline and load_path == model_id:
-                # HuggingFace Hub 오프라인 모드 환경 변수 설정
-                os.environ['HF_HUB_OFFLINE'] = '1'
-                os.environ['TRANSFORMERS_OFFLINE'] = '1'
-                
-                # 로컬 모델 경로 우선 사용
-                local_path = model_path_override or local_model_path
-                
-                if os.path.exists(local_path):
-                    load_path = local_path
-                    logger.info(f"로컬 모델 경로 사용: {load_path}")
-                else:
-                    self._load_error = "오프라인 모드에서 로컬 모델을 찾을 수 없습니다"
-                    logger.error(f"오프라인 모드 오류: 모델 경로 없음 - {local_path}")
-                    raise ModelOfflineError(local_path)
-
+            logger.info(f"모델 로드 시작: {model_name} ({model_id}), backend={embed_backend}")
             
             self._load_progress = "모델 다운로드 중... (최초 실행 시 시간이 걸릴 수 있습니다)"
             
-            self.embedding_model = HuggingFaceEmbeddings(
-                model_name=load_path,
-                model_kwargs={'device': device},
-                encode_kwargs={'normalize_embeddings': True},
-                cache_folder=project_models_dir  # 프로젝트 폴더에 캐시
+            # ====================================================================
+            # 임베딩 백엔드 팩토리 사용
+            # ====================================================================
+            from app.services.embeddings_backends import create_embeddings
+            
+            self.embedding_model = create_embeddings(
+                model_name=model_name,
+                model_id_or_path=model_id,
+                backend=embed_backend,
+                normalize=embed_normalize,
+                offline_mode=is_offline,
+                local_model_path=model_path_override if model_path_override else None
             )
             
             self.model_id = model_id
             self.model_name = model_name
+            self.embed_backend = embed_backend
+            self.embed_normalize = embed_normalize
             self._load_progress = "모델 로드 완료"
             self._is_ready = True
+            
+            logger.info(f"✅ 모델 로드 완료: {model_name} (backend={embed_backend}, normalize={embed_normalize})")
             return TaskResult(True, "모델 로드 완료")
             
         except (ModelLoadError, ModelOfflineError) as e:
@@ -924,12 +894,57 @@ class RegulationQASystem:
             self.bm25.fit(self.documents)
 
     def _load_cache_info(self, cache_dir: str) -> Dict:
-        """캐시 정보 로드 (에러 시 빈 딕셔너리 반환)"""
+        """캐시 정보 로드 및 설정 검증 (불일치 시 빈 딕셔너리 반환)"""
         path = os.path.join(cache_dir, "cache_info.json")
         if os.path.exists(path):
             try:
                 with open(path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    cache_info = json.load(f)
+                
+                # 캐시 메타데이터 검증
+                cache_meta = cache_info.get('_cache_meta', {})
+                if cache_meta:
+                    mismatches = []
+                    
+                    # 모델 ID 검증
+                    if cache_meta.get('model_id') != self.model_id:
+                        mismatches.append(f"model_id: {cache_meta.get('model_id')} -> {self.model_id}")
+                    
+                    # 백엔드 검증
+                    current_backend = getattr(AppConfig, 'EMBED_BACKEND', 'torch')
+                    if cache_meta.get('embed_backend') != current_backend:
+                        mismatches.append(f"embed_backend: {cache_meta.get('embed_backend')} -> {current_backend}")
+                    
+                    # 정규화 설정 검증
+                    current_normalize = getattr(AppConfig, 'EMBED_NORMALIZE', True)
+                    if cache_meta.get('embed_normalize') != current_normalize:
+                        mismatches.append(f"embed_normalize: {cache_meta.get('embed_normalize')} -> {current_normalize}")
+                    
+                    # 청킹 설정 검증
+                    if cache_meta.get('chunk_size') != AppConfig.CHUNK_SIZE:
+                        mismatches.append(f"chunk_size: {cache_meta.get('chunk_size')} -> {AppConfig.CHUNK_SIZE}")
+                    if cache_meta.get('chunk_overlap') != AppConfig.CHUNK_OVERLAP:
+                        mismatches.append(f"chunk_overlap: {cache_meta.get('chunk_overlap')} -> {AppConfig.CHUNK_OVERLAP}")
+                    
+                    # 가중치 검증
+                    if cache_meta.get('vector_weight') != AppConfig.VECTOR_WEIGHT:
+                        mismatches.append(f"vector_weight: {cache_meta.get('vector_weight')} -> {AppConfig.VECTOR_WEIGHT}")
+                    if cache_meta.get('bm25_weight') != AppConfig.BM25_WEIGHT:
+                        mismatches.append(f"bm25_weight: {cache_meta.get('bm25_weight')} -> {AppConfig.BM25_WEIGHT}")
+                    
+                    if mismatches:
+                        logger.warning(f"⚠️ 캐시 무효화 - 설정 변경 감지: {', '.join(mismatches)}")
+                        # 캐시 디렉토리 삭제
+                        try:
+                            shutil.rmtree(cache_dir)
+                            logger.info(f"캐시 디렉토리 삭제됨: {cache_dir}")
+                        except Exception as e:
+                            logger.warning(f"캐시 디렉토리 삭제 실패: {e}")
+                        return {}
+                
+                # _cache_meta 제외하고 반환
+                return {k: v for k, v in cache_info.items() if k != '_cache_meta'}
+                
             except json.JSONDecodeError as e:
                 logger.debug(f"캐시 정보 JSON 파싱 실패: {path} - {e}")
             except IOError as e:
@@ -942,10 +957,26 @@ class RegulationQASystem:
         try:
             os.makedirs(cache_dir, exist_ok=True)
             self.vector_store.save_local(cache_dir)
+            
+            # 캐시 메타데이터 포함
+            cache_meta = {
+                'model_id': self.model_id,
+                'embed_backend': getattr(AppConfig, 'EMBED_BACKEND', 'torch'),
+                'embed_normalize': getattr(AppConfig, 'EMBED_NORMALIZE', True),
+                'chunk_size': AppConfig.CHUNK_SIZE,
+                'chunk_overlap': AppConfig.CHUNK_OVERLAP,
+                'vector_weight': AppConfig.VECTOR_WEIGHT,
+                'bm25_weight': AppConfig.BM25_WEIGHT
+            }
+            
+            cache_info = {**old_info, **new_info, '_cache_meta': cache_meta}
+            
             with open(os.path.join(cache_dir, "cache_info.json"), 'w', encoding='utf-8') as f:
-                json.dump({**old_info, **new_info}, f, ensure_ascii=False)
+                json.dump(cache_info, f, ensure_ascii=False)
             with open(os.path.join(cache_dir, "docs.json"), 'w', encoding='utf-8') as f:
                 json.dump({'docs': self.documents, 'meta': self.doc_meta}, f, ensure_ascii=False)
+                
+            logger.debug(f"캐시 저장 완료: {cache_dir} (meta: {cache_meta})")
         except Exception as e:
             logger.warning(f"캐시 저장 실패: {e}")
 
@@ -1028,12 +1059,40 @@ class RegulationQASystem:
             
             results = {}
             
-            # Vector 검색 (vector_store가 있는 경우에만)
-            if self.vector_store:
-                # 하이브리드 검색 시에만 k*2 사용, 단독 검색 시 k 사용 (성능 최적화)
-                fetch_k = k * 2 if hybrid else k
-                vec_results = self.vector_store.similarity_search_with_score(query, k=fetch_k)
+            # 병렬 검색 활성화 여부 (설정에서 제어 가능)
+            parallel_search = getattr(AppConfig, 'PARALLEL_SEARCH', True)
+            
+            # 하이브리드 검색 시 Vector와 BM25를 병렬로 실행 (성능 최적화 v2.6.1)
+            if hybrid and self.vector_store and self.bm25 and parallel_search:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
                 
+                fetch_k = k * 2
+                
+                def vector_search():
+                    """Vector 검색 수행"""
+                    try:
+                        return self.vector_store.similarity_search_with_score(query, k=fetch_k)
+                    except Exception as e:
+                        logger.debug(f"Vector 검색 오류: {e}")
+                        return []
+                
+                def bm25_search():
+                    """BM25 검색 수행"""
+                    try:
+                        return self.bm25.search(query, top_k=fetch_k)
+                    except Exception as e:
+                        logger.debug(f"BM25 검색 오류: {e}")
+                        return []
+                
+                # 병렬 실행
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    vec_future = executor.submit(vector_search)
+                    bm25_future = executor.submit(bm25_search)
+                    
+                    vec_results = vec_future.result(timeout=30)
+                    bm_res = bm25_future.result(timeout=30)
+                
+                # Vector 결과 처리
                 if vec_results:
                     distances = [r[1] for r in vec_results]
                     min_d = min(distances)
@@ -1050,15 +1109,8 @@ class RegulationQASystem:
                             'vec_score': score,
                             'bm25_score': 0
                         }
-            else:
-                vec_results = []
-                    
-            if hybrid and self.bm25:
-                try:
-                    bm_res = self.bm25.search(query, top_k=k*2)
-                except Exception as e:
-                    logger.debug(f"BM25 검색 중 오류 (무시됨): {e}")
-                    bm_res = []
+                
+                # BM25 결과 처리
                 if bm_res:
                     bm_scores = [r[1] for r in bm_res]
                     max_bm = max(bm_scores) if bm_scores else 1
@@ -1066,7 +1118,8 @@ class RegulationQASystem:
                         if 0 <= idx < len(self.documents):
                             key = self.documents[idx][:100]
                             norm = sc / (max_bm + 0.001)
-                            if key in results: results[key]['bm25_score'] = norm
+                            if key in results: 
+                                results[key]['bm25_score'] = norm
                             else:
                                 meta = self.doc_meta[idx] if idx < len(self.doc_meta) else {}
                                 results[key] = {
@@ -1076,6 +1129,56 @@ class RegulationQASystem:
                                     'vec_score': 0,
                                     'bm25_score': norm
                                 }
+            else:
+                # 순차 검색 (기존 로직 - 단일 검색 또는 병렬 비활성화 시)
+                # Vector 검색 (vector_store가 있는 경우에만)
+                if self.vector_store:
+                    # 하이브리드 검색 시에만 k*2 사용, 단독 검색 시 k 사용 (성능 최적화)
+                    fetch_k = k * 2 if hybrid else k
+                    vec_results = self.vector_store.similarity_search_with_score(query, k=fetch_k)
+                    
+                    if vec_results:
+                        distances = [r[1] for r in vec_results]
+                        min_d = min(distances)
+                        max_d = max(distances)
+                        rng = max_d - min_d if max_d != min_d else 1
+                        
+                        for doc, dist in vec_results:
+                            key = doc.page_content[:100]
+                            score = max(0.1, 1 - ((dist - min_d) / (rng + 0.001)))
+                            results[key] = {
+                                'content': doc.page_content,
+                                'source': doc.metadata.get('source', '?'),
+                                'path': doc.metadata.get('path', ''),
+                                'vec_score': score,
+                                'bm25_score': 0
+                            }
+                else:
+                    vec_results = []
+                        
+                if hybrid and self.bm25:
+                    try:
+                        bm_res = self.bm25.search(query, top_k=k*2)
+                    except Exception as e:
+                        logger.debug(f"BM25 검색 중 오류 (무시됨): {e}")
+                        bm_res = []
+                    if bm_res:
+                        bm_scores = [r[1] for r in bm_res]
+                        max_bm = max(bm_scores) if bm_scores else 1
+                        for idx, sc in bm_res:
+                            if 0 <= idx < len(self.documents):
+                                key = self.documents[idx][:100]
+                                norm = sc / (max_bm + 0.001)
+                                if key in results: results[key]['bm25_score'] = norm
+                                else:
+                                    meta = self.doc_meta[idx] if idx < len(self.doc_meta) else {}
+                                    results[key] = {
+                                        'content': self.documents[idx],
+                                        'source': meta.get('source', '?'),
+                                        'path': meta.get('path', ''),
+                                        'vec_score': 0,
+                                        'bm25_score': norm
+                                    }
                                 
             if filter_file:
                 results = {k: v for k, v in results.items() if v['source'] == filter_file}

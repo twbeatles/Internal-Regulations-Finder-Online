@@ -3,6 +3,7 @@ import os
 import sys
 import logging
 import json
+import re
 from datetime import datetime
 from typing import Optional, Tuple, Dict, Any, List, Union
 from enum import Enum
@@ -271,6 +272,9 @@ class MemoryMonitor:
         return result
 
 class FileUtils:
+    _FILENAME_SAFE_CHARS_RE = re.compile(r"[^0-9A-Za-z가-힣._()\\[\\]{}\\-\\s]+")
+    _FILENAME_WS_RE = re.compile(r"\\s+")
+
     @staticmethod
     def safe_read(path: str, encoding: str = 'utf-8') -> Tuple[Optional[str], Optional[str]]:
         try:
@@ -300,6 +304,45 @@ class FileUtils:
     def allowed_file(filename: str) -> bool:
         ext = os.path.splitext(filename)[1].lower()
         return ext in AppConfig.SUPPORTED_EXTENSIONS
+
+    @staticmethod
+    def sanitize_upload_filename(original: str) -> str:
+        """Return a safe filename for storing uploaded files.
+
+        Preserves Hangul characters while removing path separators and
+        other unsafe characters. Always returns a basename (no directories).
+        """
+        original = (original or "").replace("\\", "/")
+        name = original.split("/")[-1]
+        name = name.strip().strip(".")
+
+        base, ext = os.path.splitext(name)
+        ext = ext.lower()
+        if not ext:
+            ext = ".txt"
+
+        base = base.strip()
+        base = FileUtils._FILENAME_SAFE_CHARS_RE.sub("_", base)
+        base = FileUtils._FILENAME_WS_RE.sub(" ", base).strip()
+        base = base.strip("._ ")
+        if not base:
+            base = f"upload_{datetime.now():%Y%m%d_%H%M%S}"
+
+        reserved = {
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            *(f"COM{i}" for i in range(1, 10)),
+            *(f"LPT{i}" for i in range(1, 10)),
+        }
+        if base.upper() in reserved:
+            base = f"_{base}"
+
+        if len(base) > 120:
+            base = base[:120].rstrip()
+
+        return f"{base}{ext}"
 
 
 # ============================================================================

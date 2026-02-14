@@ -101,15 +101,19 @@ function formatFileSize(bytes) {
 }
 
 /**
- * HTML 특수문자 이스케이프 (XSS 방지)
+ * HTML 특수문자 이스케이프 (XSS 방지) - 성능 최적화 v2.6.1 (Regex 사용)
  * @param {string} str - 이스케이프할 문자열
  * @returns {string} 이스케이프된 문자열
  */
 function escapeHtml(str) {
     if (!str) return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    // DOM 생성 대신 문자열 치환 사용 (대량 렌더링 시 성능 향상)
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
 }
 
 /**
@@ -1183,12 +1187,13 @@ const ThemeManager = {
 };
 
 // ============================================================================
-// 상태 관리
+// 상태 관리 (성능 최적화 v2.6.1: Visibility API 활용)
 // ============================================================================
 const AppState = {
     ready: false,
     loading: false,
     refreshInterval: null,
+    _visibilityHandler: null,  // Visibility 핸들러 참조 저장
 
     async checkStatus() {
         const result = await API.getStatus();
@@ -1231,15 +1236,36 @@ const AppState = {
 
     startRefresh(interval = 3000) {
         this.stopRefresh();
-        this.refreshInterval = setInterval(() => {
-            this.checkStatus();
-        }, interval);
+
+        // ====================================================================
+        // 성능 최적화: Visibility API로 탭이 보이는 경우에만 폴링
+        // ====================================================================
+        const poll = () => {
+            if (document.visibilityState === 'visible') {
+                this.checkStatus();
+            }
+        };
+
+        this.refreshInterval = setInterval(poll, interval);
+
+        // Visibility 변경 시 즉시 체크 (탭이 다시 활성화될 때)
+        this._visibilityHandler = () => {
+            if (document.visibilityState === 'visible' && !this.ready) {
+                this.checkStatus();
+            }
+        };
+        document.addEventListener('visibilitychange', this._visibilityHandler);
     },
 
     stopRefresh() {
         if (this.refreshInterval) {
             clearInterval(this.refreshInterval);
             this.refreshInterval = null;
+        }
+        // Visibility 핸들러도 정리
+        if (this._visibilityHandler) {
+            document.removeEventListener('visibilitychange', this._visibilityHandler);
+            this._visibilityHandler = null;
         }
     }
 };
@@ -1706,98 +1732,130 @@ function renderSearchResults(results, query) {
     // XSS 방지를 위해 query를 이스케이프
     const safeQuery = escapeHtml(query);
 
-    let html = `
-        <div class="results-header">
-            <span class="results-query">🔎 "${safeQuery}"</span>
-            <div class="results-actions-header">
-                <span class="results-count">${results.length}개 결과</span>
-                <div class="export-dropdown">
-                    <button class="btn btn-secondary btn-sm" onclick="ExportResults.toggleMenu(this)" aria-haspopup="true" aria-expanded="false">
-                        📥 내보내기 ▾
+    // ========================================================================
+    // 성능 최적화 v2.6.1: DocumentFragment로 DOM 조작 최소화
+    // ========================================================================
+    const fragment = document.createDocumentFragment();
+
+    // 헤더 생성
+    const header = document.createElement('div');
+    header.className = 'results-header';
+    header.innerHTML = `
+        <span class="results-query">🔎 "${safeQuery}"</span>
+        <div class="results-actions-header">
+            <span class="results-count">${results.length}개 결과</span>
+            <div class="export-dropdown">
+                <button class="btn btn-secondary btn-sm" onclick="ExportResults.toggleMenu(this)" aria-haspopup="true" aria-expanded="false">
+                    📥 내보내기 ▾
+                </button>
+                <div id="export-menu" class="export-menu" role="menu">
+                    <button class="export-item" onclick="ExportResults.exportAsText()" role="menuitem">
+                        📄 텍스트 (.txt)
                     </button>
-                    <div id="export-menu" class="export-menu" role="menu">
-                        <button class="export-item" onclick="ExportResults.exportAsText()" role="menuitem">
-                            📄 텍스트 (.txt)
-                        </button>
-                        <button class="export-item" onclick="ExportResults.exportAsMarkdown()" role="menuitem">
-                            📝 마크다운 (.md)
-                        </button>
-                        <button class="export-item" onclick="ExportResults.exportAsJSON()" role="menuitem">
-                            📋 JSON (.json)
-                        </button>
-                        <button class="export-item" onclick="ExportResults.exportAsPDF()" role="menuitem">
-                            📕 PDF (.pdf)
-                        </button>
-                        <button class="export-item" onclick="window.print()" role="menuitem">
-                            🖨️ 인쇄
-                        </button>
-                    </div>
+                    <button class="export-item" onclick="ExportResults.exportAsMarkdown()" role="menuitem">
+                        📝 마크다운 (.md)
+                    </button>
+                    <button class="export-item" onclick="ExportResults.exportAsJSON()" role="menuitem">
+                        📋 JSON (.json)
+                    </button>
+                    <button class="export-item" onclick="ExportResults.exportAsPDF()" role="menuitem">
+                        📕 PDF (.pdf)
+                    </button>
+                    <button class="export-item" onclick="window.print()" role="menuitem">
+                        🖨️ 인쇄
+                    </button>
                 </div>
             </div>
         </div>
     `;
+    fragment.appendChild(header);
 
     // 검색 결과 저장 (이벤트 위임용)
     currentSearchResults = results;
 
+    // 결과 카드 생성 (DocumentFragment에 추가)
     results.forEach((item, index) => {
-        const score = Math.round((item.score || 0) * 100);
-        const scoreClass = score >= 70 ? 'high' : score >= 40 ? 'medium' : 'low';
-        const isBookmarked = BookmarkManager.isBookmarked(item.content || '');
-        const bookmarkIcon = isBookmarked ? '⭐' : '☆';
-        const bookmarkTitle = isBookmarked ? '북마크 해제' : '북마크 추가';
-        const bookmarkClass = isBookmarked ? 'bookmarked' : '';
-
-        // 서버에서 하이라이트된 컨텐츠 사용 (없으면 일반 컨텐츠)
-        const displayContent = item.content_highlighted || escapeHtml(item.content || '');
-
-        // 콘텐츠 길이에 따라 접기 버튼 표시
-        const contentLength = (item.content || '').length;
-        const showToggle = contentLength > 300;
-
-        html += `
-            <div class="result-card" style="animation-delay: ${index * 0.1}s">
-                <div class="result-header">
-                    <div class="result-title">
-                        <span class="result-index">${index + 1}</span>
-                        <span class="result-source">${escapeHtml(item.source || '알 수 없음')}</span>
-                        <button class="btn-bookmark ${bookmarkClass}" 
-                                data-index="${index}"
-                                title="${bookmarkTitle}"
-                                aria-label="${bookmarkTitle}">${bookmarkIcon}</button>
-                    </div>
-                    <div class="result-score">
-                        <span class="score-value ${scoreClass}">${score}%</span>
-                        <div class="score-bar" role="progressbar" aria-valuenow="${score}" aria-valuemin="0" aria-valuemax="100">
-                            <div class="score-fill ${scoreClass}" style="width: ${score}%"></div>
-                        </div>
-                    </div>
-                </div>
-                <div class="result-content">${displayContent}</div>
-                <div class="result-actions">
-                    ${showToggle ? '<button class="btn btn-sm btn-toggle-content">접기 ▲</button>' : ''}
-                    <button class="btn btn-secondary btn-copy" data-index="${index}">
-                        📋 복사
-                    </button>
-                    <a href="/api/files/${encodeURIComponent(item.source || '')}/download" 
-                       class="btn btn-primary" 
-                       download
-                       title="원본 파일 다운로드">
-                        📥 원본 파일
-                    </a>
-                </div>
-            </div>
-        `;
+        const card = createResultCard(item, index);
+        fragment.appendChild(card);
     });
 
-    container.innerHTML = html;
+    // 한번의 DOM 조작으로 모두 추가
+    container.innerHTML = '';
+    container.appendChild(fragment);
 
     // 스타거 애니메이션 적용
     StaggerAnimation.apply(container, '.result-card', 0.08);
 
+    // 애니메이션 완료 후 will-change 해제 (메모리 최적화)
+    setTimeout(() => {
+        container.querySelectorAll('.result-card').forEach(card => {
+            card.classList.add('animation-done');
+        });
+    }, results.length * 80 + 400);
+
     // v2.0 네비게이션 갱신
     SearchResultNavigator.scan();
     HighlightNavigator.scan();
+}
+
+/**
+ * 검색 결과 카드 생성 헬퍼 (성능 최적화 v2.6.1)
+ * @param {Object} item - 검색 결과 아이템
+ * @param {number} index - 결과 인덱스
+ * @returns {HTMLElement} 결과 카드 요소
+ */
+function createResultCard(item, index) {
+    const score = Math.round((item.score || 0) * 100);
+    const scoreClass = score >= 70 ? 'high' : score >= 40 ? 'medium' : 'low';
+    const isBookmarked = BookmarkManager.isBookmarked(item.content || '');
+    const bookmarkIcon = isBookmarked ? '⭐' : '☆';
+    const bookmarkTitle = isBookmarked ? '북마크 해제' : '북마크 추가';
+    const bookmarkClass = isBookmarked ? 'bookmarked' : '';
+
+    // 서버에서 하이라이트된 컨텐츠 사용 (없으면 일반 컨텐츠)
+    const displayContent = item.content_highlighted || escapeHtml(item.content || '');
+
+    // 콘텐츠 길이에 따라 접기 버튼 표시
+    const contentLength = (item.content || '').length;
+    const showToggle = contentLength > 300;
+
+    const card = document.createElement('div');
+    card.className = 'result-card';
+    card.style.animationDelay = `${index * 0.08}s`;  // 0.1 → 0.08로 단축
+
+    card.innerHTML = `
+        <div class="result-header">
+            <div class="result-title">
+                <span class="result-index">${index + 1}</span>
+                <span class="result-source">${escapeHtml(item.source || '알 수 없음')}</span>
+                <button class="btn-bookmark ${bookmarkClass}" 
+                        data-index="${index}"
+                        title="${bookmarkTitle}"
+                        aria-label="${bookmarkTitle}">${bookmarkIcon}</button>
+            </div>
+            <div class="result-score">
+                <span class="score-value ${scoreClass}">${score}%</span>
+                <div class="score-bar" role="progressbar" aria-valuenow="${score}" aria-valuemin="0" aria-valuemax="100">
+                    <div class="score-fill ${scoreClass}" style="width: ${score}%"></div>
+                </div>
+            </div>
+        </div>
+        <div class="result-content">${displayContent}</div>
+        <div class="result-actions">
+            ${showToggle ? '<button class="btn btn-sm btn-toggle-content">접기 ▲</button>' : ''}
+            <button class="btn btn-secondary btn-copy" data-index="${index}">
+                📋 복사
+            </button>
+            <a href="/api/files/${encodeURIComponent(item.source || '')}/download" 
+               class="btn btn-primary" 
+               download
+               title="원본 파일 다운로드">
+                📥 원본 파일
+            </a>
+        </div>
+    `;
+
+    return card;
 }
 
 // ============================================================================

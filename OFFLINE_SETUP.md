@@ -11,19 +11,18 @@ AI 모델을 사전 다운로드하여 로컬에서 실행할 수 있습니다.
 
 ## 🚀 빠른 설정
 
-### 1단계: 모델 다운로드 (인터넷 환경)
+### 1단계: 모델 및 정적 자원 다운로드 (인터넷 환경)
 
-인터넷이 가능한 환경에서 AI 모델을 미리 다운로드합니다.
+인터넷이 가능한 환경에서 AI 모델과 필수 정적 자원(JS 라이브러리)을 미리 다운로드합니다.
 
 ```bash
-# 기본 경로에 다운로드
+# 1. 모델 다운로드 (AI 기능용)
+# 기본 경로(./models)에 다운로드
 python download_models.py
 
-# 또는 사용자 지정 경로에 다운로드
-python download_models.py --output D:/offline_models
-
-# 특정 모델만 다운로드
-python download_models.py --model "SNU SBERT (고성능)" --output ./models
+# 2. 정적 자원 다운로드 (필수 라이브러리, 폰트 폴백 등)
+# static/vendor 폴더 자동 생성 및 다운로드
+python download_static.py
 ```
 
 ### 2단계: 설정 파일 수정

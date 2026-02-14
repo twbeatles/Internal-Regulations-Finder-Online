@@ -6,6 +6,8 @@ from flask import Blueprint, jsonify, request, session
 from app.config import AppConfig
 from app.services.search import qa_system
 from app.utils import logger, get_app_directory
+from app.auth import admin_required
+from app.services.settings_store import get_settings_store, verify_admin_password
 
 system_bp = Blueprint('system', __name__)
 
@@ -19,6 +21,7 @@ def get_models():
     })
 
 @system_bp.route('/models', methods=['POST'])
+@admin_required
 def set_model():
     """AI 모델 변경
     
@@ -65,30 +68,15 @@ def set_model():
 @system_bp.route('/verify_password', methods=['POST'])
 def verify_password():
     """관리자 비밀번호 확인"""
-    data = request.json
-    password = data.get('password')
-    # TODO: settings.json에서 비밀번호 로드 및 검증
-    # Mock 비밀번호 대신 settings.json의 password_hash 사용
-    import hashlib
-    
-    # 설정 파일에서 해시 로드
-    config_dir = os.path.join(get_app_directory(), 'config')
-    settings_path = os.path.join(config_dir, 'settings.json')
-    
-    try:
-        with open(settings_path, 'r', encoding='utf-8') as f:
-            settings = json.load(f)
-        stored_hash = settings.get('admin_password_hash', '')
-    except Exception:
-        stored_hash = ''
-    
-    # 입력된 비밀번호의 SHA256 해시와 비교
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    
-    if stored_hash and password_hash == stored_hash:
+    data = request.json or {}
+    password = data.get('password', '')
+    if not password:
+        return jsonify({'success': False, 'message': '비밀번호가 필요합니다'}), 400
+
+    if verify_admin_password(password):
         session['admin_authenticated'] = True
         return jsonify({'success': True})
-    return jsonify({'success': False, 'message': '비밀번호가 일치하지 않습니다'})
+    return jsonify({'success': False, 'message': '비밀번호가 일치하지 않습니다'}), 401
 
 @system_bp.route('/status', methods=['GET'])
 def status():
@@ -102,6 +90,7 @@ def status():
     })
     
 @system_bp.route('/init', methods=['POST'])
+@admin_required
 def init_server():
     """검색 경로 초기화 및 인덱싱 시작"""
     data = request.json
@@ -190,6 +179,7 @@ def sync_status():
     })
 
 @system_bp.route('/sync/start', methods=['POST'])
+@admin_required
 def sync_start():
     """폴더 동기화 시작 (초기화 및 인덱싱)
     
@@ -235,6 +225,7 @@ def sync_start():
         return jsonify({'success': False, 'message': f'동기화 오류: {str(e)}'}), 500
 
 @system_bp.route('/sync/stop', methods=['POST'])
+@admin_required
 def sync_stop():
     """동기화 중지 (현재는 미구현 - graceful shutdown 필요)"""
     # TODO: ThreadPoolExecutor 작업 취소 로직 구현
@@ -248,6 +239,7 @@ def sync_stop():
 # ============================================================================
 
 @system_bp.route('/process', methods=['POST'])
+@admin_required
 def process_documents():
     """문서 재처리 (현재 폴더 강제 재인덱싱)"""
     try:
@@ -282,43 +274,27 @@ def admin_check():
 
 @system_bp.route('/admin/auth', methods=['POST'])
 def admin_auth():
-    """관리자 로그인"""
-    import hashlib
-    
+    """관리자 로그인
+
+    `/verify_password`와 동일한 로직을 사용합니다.
+    """
     data = request.json or {}
     password = data.get('password', '')
-    
+
     if not password:
         return jsonify({'success': False, 'message': '비밀번호가 필요합니다'}), 400
-    
-    # 설정 파일에서 해시 로드
-    config_dir = os.path.join(get_app_directory(), 'config')
-    settings_path = os.path.join(config_dir, 'settings.json')
-    
-    try:
-        with open(settings_path, 'r', encoding='utf-8') as f:
-            settings = json.load(f)
-        stored_hash = settings.get('admin_password_hash', '')
-    except Exception:
-        # 설정 파일이 없거나 해시가 없으면 기본 관리자 비밀번호 허용
-        stored_hash = ''
-    
-    # 입력된 비밀번호의 SHA256 해시와 비교
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    
-    # 저장된 해시가 없으면 기본 비밀번호 'admin' 허용
-    if not stored_hash:
-        default_hash = hashlib.sha256('admin'.encode()).hexdigest()
-        if password_hash == default_hash:
-            session['admin_authenticated'] = True
-            logger.info("관리자 로그인 성공 (기본 비밀번호)")
-            return jsonify({'success': True, 'message': '로그인 성공 (기본 비밀번호 사용 중 - 변경 권장)'})
-    
-    if stored_hash and password_hash == stored_hash:
+
+    if verify_admin_password(password):
         session['admin_authenticated'] = True
+
+        stored_hash = get_settings_store().load().get('admin_password_hash', '')
+        if not stored_hash and not os.environ.get("ADMIN_PASSWORD") and not os.environ.get("ADMIN_PASSWORD_HASH"):
+            logger.info("관리자 로그인 성공 (기본 비밀번호 'admin' 사용 중 - 변경 권장)")
+            return jsonify({'success': True, 'message': "로그인 성공 (기본 비밀번호 'admin' 사용 중 - 변경 권장)"})
+
         logger.info("관리자 로그인 성공")
         return jsonify({'success': True, 'message': '로그인 성공'})
-    
+
     logger.warning("관리자 로그인 실패")
     return jsonify({'success': False, 'message': '비밀번호가 일치하지 않습니다'}), 401
 

@@ -62,6 +62,35 @@ def search_route():
         # 검색 수행
         res = qa_system.search(query, k, hybrid, sort_by, filter_file)
         
+        # ====================================================================
+        # 응답 최적화 v2.6.1: 콘텐츠 길이 제한 및 하이라이트 사전 처리
+        # ====================================================================
+        max_content_len = getattr(AppConfig, 'MAX_CONTENT_PREVIEW', 1500)
+        
+        if res.success and res.data:
+            from app.services.document import TextHighlighter
+            
+            for item in res.data:
+                # 콘텐츠 길이 제한 (응답 크기 감소)
+                content = item.get('content', '')
+                if len(content) > max_content_len:
+                    item['content'] = content[:max_content_len] + '...'
+                    item['is_truncated'] = True
+                
+                # 하이라이트 사전 계산 (클라이언트 부담 감소)
+                if not item.get('content_highlighted'):
+                    item['content_highlighted'] = TextHighlighter.highlight(
+                        item['content'], query
+                    )
+                
+                # 점수 소수점 제한 (JSON 크기 감소)
+                if 'score' in item:
+                    item['score'] = round(item['score'], 4)
+                if 'vec_score' in item:
+                    item['vec_score'] = round(item['vec_score'], 4)
+                if 'bm25_score' in item:
+                    item['bm25_score'] = round(item['bm25_score'], 4)
+        
         # 성능 로깅
         duration_ms = (time.perf_counter() - start_time) * 1000
         result_count = len(res.data) if res.data else 0

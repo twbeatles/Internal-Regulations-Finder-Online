@@ -8,6 +8,7 @@
 # Flask 웹 프레임워크
 flask>=2.3.0
 flask-cors>=4.0.0
+flask-compress>=1.13  # v2.6.1 성능 최적화: Gzip 응답 압축
 
 # 프로덕션 WSGI 서버
 waitress>=2.1.0
@@ -30,12 +31,15 @@ langchain-huggingface>=0.1.0
 langchain-community>=0.3.0
 
 # 벡터 검색
-faiss-cpu>=1.9.0
+faiss-cpu>=1.8.0
 sentence-transformers>=3.0.0
 
 # Transformers
 transformers>=4.46.0
 huggingface-hub>=0.26.0
+
+# ONNX Runtime (v2.6.1 신규 백엔드)
+onnxruntime>=1.16.0
 
 # ============================================================================
 # 문서 처리
@@ -66,6 +70,7 @@ olefile>=0.46
 # ============================================================================
 
 psutil>=5.9.0
+watchdog>=3.0.0  # 폴더 변경 감지
 
 # Python 3.14 호환
 pydantic>=2.12.0
@@ -76,4 +81,3 @@ numpy>=2.0.0
 # ============================================================================
 
 # pytest>=7.0.0
-# watchdog>=3.0.0

@@ -9,31 +9,16 @@ from app.config import AppConfig
 from app.utils import logger, setup_logger, get_app_directory
 from app.services.search import qa_system
 from app.services.db import db
+from app.services.settings_store import get_settings_store
 
 # Graceful Shutdown 플래그
 _shutdown_event = threading.Event()
 
 def create_default_settings():
     """기본 설정 파일 생성"""
-    config_dir = os.path.join(get_app_directory(), 'config')
-    settings_path = os.path.join(config_dir, 'settings.json')
-    
-    if not os.path.exists(settings_path):
-        os.makedirs(config_dir, exist_ok=True)
-        default_settings = {
-            'folder': '',
-            'offline_mode': False,
-            'local_model_path': '',
-            'admin_password_hash': ''  # 기본 비밀번호 'admin' 사용
-        }
-        try:
-            with open(settings_path, 'w', encoding='utf-8') as f:
-                json.dump(default_settings, f, ensure_ascii=False, indent=2)
-            logger.info(f"기본 설정 파일 생성: {settings_path}")
-        except Exception as e:
-            logger.warning(f"기본 설정 파일 생성 실패: {e}")
-    
-    return settings_path
+    store = get_settings_store()
+    store.ensure_exists()
+    return store.paths.settings_json
 
 def graceful_shutdown(signum, frame):
     """서버 종료 시 리소스 정리"""
@@ -71,8 +56,7 @@ def initialize_server():
         
         if os.path.exists(settings_path):
             try:
-                with open(settings_path, 'r', encoding='utf-8') as f:
-                    settings = json.load(f)
+                settings = get_settings_store().load()
                 
                 folder = settings.get('folder', '')
                 offline_mode = settings.get('offline_mode', False)

@@ -73,6 +73,11 @@ class TagManager:
         """사용된 모든 태그 반환"""
         rows = db.fetchall("SELECT DISTINCT tag FROM tags ORDER BY tag")
         return [r['tag'] for r in rows]
+
+    def get_tag_stats(self) -> List[Dict]:
+        """태그별 사용 횟수 통계"""
+        rows = db.fetchall("SELECT tag, COUNT(*) as cnt FROM tags GROUP BY tag ORDER BY cnt DESC, tag ASC")
+        return [{"tag": r["tag"], "count": r["cnt"]} for r in rows]
     
     def auto_categorize(self, content: str, filename: str = "") -> List[str]:
         """키워드 기반 자동 카테고리 추천"""

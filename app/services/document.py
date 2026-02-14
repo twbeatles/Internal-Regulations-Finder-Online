@@ -607,12 +607,29 @@ class DocumentComparator:
         
         return ''.join(result1), ''.join(result2)
 
-# ============================================================================
-# 텍스트 하이라이터
+# 텍스트 하이라이터 (성능 최적화 v2.6.1: 정규식 캐싱)
 # ============================================================================
 class TextHighlighter:
+    # 정규식 패턴 캐시 (v2.6.1 성능 최적화)
+    _pattern_cache = {}
+    _CACHE_MAX_SIZE = 100
+    
+    @classmethod
+    def _get_cached_pattern(cls, keyword: str):
+        """캐싱된 정규식 패턴 반환"""
+        if keyword not in cls._pattern_cache:
+            # 캐시 크기 제한
+            if len(cls._pattern_cache) >= cls._CACHE_MAX_SIZE:
+                # 오래된 항목 절반 제거
+                keys_to_remove = list(cls._pattern_cache.keys())[:cls._CACHE_MAX_SIZE // 2]
+                for key in keys_to_remove:
+                    del cls._pattern_cache[key]
+            cls._pattern_cache[keyword] = re.compile(re.escape(keyword), re.IGNORECASE)
+        return cls._pattern_cache[keyword]
+    
     @staticmethod
     def highlight(text: str, query: str, tag: str = 'mark') -> str:
+        """검색어 하이라이트 (성능 최적화: 캐싱된 패턴 사용)"""
         if not text or not query:
             return text
         
@@ -622,7 +639,7 @@ class TextHighlighter:
         
         result = text
         for keyword in keywords:
-            pattern = re.compile(re.escape(keyword), re.IGNORECASE)
+            pattern = TextHighlighter._get_cached_pattern(keyword)
             result = pattern.sub(f'<{tag}>\\g<0></{tag}>', result)
         
         return result

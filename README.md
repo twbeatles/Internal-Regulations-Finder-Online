@@ -1,4 +1,4 @@
-# 📚 사내 규정 검색기 v2.5
+# 📚 사내 규정 검색기 v2.6
 
 > AI 기반 하이브리드 검색 시스템 (Vector + BM25)
 
@@ -6,22 +6,28 @@
 [![Flask](https://img.shields.io/badge/Flask-3.x-green.svg)](https://flask.palletsprojects.com/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## ✨ v2.5 업데이트 (2026-01-15)
+## ✨ v2.6.1 업데이트 (2026-01-18)
 
-### ⚡ 성능 최적화
-- **벡터 검색 최적화** - 비하이브리드 검색 시 50% 연산 감소
-- **DB 인덱스 추가** - 검색 히스토리 중복 체크 속도 향상
-- **API 응답 경량화** - 불필요한 중복 필드 제거
-- **태그 설정 트랜잭션** - 원자적 처리로 데이터 무결성 보장
+### 🚀 성능 최적화 (Advanced)
+- **API 응답 최적화** - Gzip 압축, JSON 정밀도 제한, 콘텐츠 미리보기 제한
+- **렌더링 가속** - HTML Resource Hints (preload/preconnect), Script defer, DOM 처리 최적화
+- **정규식 캐싱** - 백엔드 TextHighlighter LRU 캐시 도입
 
-### 🛠️ 안정성 개선
-- **FolderWatcher 타임아웃** - 5초 제한으로 무한 블로킹 방지
-- **모델 변경 안내** - 재인덱싱 필요성 표시
-- **검색 히스토리 중복 방지** - 5분 내 동일 쿼리 필터링
+### 🔌 완전 오프라인 지원
+- **정적 자원 다운로더** - `download_static.py`로 jsPDF, AutoTable 등 필수 라이브러리 로컬 저장
+- **자동 폴백 시스템** - CDN 연결 실패 시 로컬 리소스 자동 전환, 시스템 폰트 폴백
+- **검증된 모델 다운로드** - `download_models.py`를 통한 안정적인 모델 준비
+
+### 🧠 임베딩 백엔드 시스템
+- **설정 가능한 임베딩 엔진** - torch / onnx_fp32 / onnx_int8 선택 가능
+- **ONNX Runtime 지원** - 인텀 없이 경량 추론 가능
+- **자동 Fallback** - ONNX 실패 시 torch로 자동 전환
+- **GUI 설정** - 서버 GUI에서 백엔드 선택 UI 추가
 
 ### 📦 이전 버전
 | 버전 | 주요 변경 |
 |------|----------|
+| v2.5 | 벡터 검색 최적화, DB 인덱스, API 경량화 |
 | v2.4 | 검색 캐시 히트율 향상, DB PRAGMA 최적화 |
 | v2.3 | BM25 최적화, Lazy Import, 예외 처리 강화 |
 | v2.2 | API 호환성, LangChain 버전 대응 |
@@ -150,7 +156,11 @@ pyinstaller regulation_search_onefile.spec --clean
 │       ├── document.py        # 문서 추출/파싱/분할/비교
 │       ├── db.py              # SQLite 싱글톤 DB 관리
 │       ├── file_manager.py    # RevisionTracker, FolderWatcher
-│       └── metadata.py        # TagManager
+│       ├── metadata.py        # TagManager
+│       └── embeddings_backends/  # 임베딩 백엔드 (v2.6)
+│           ├── factory.py        # torch/onnx 선택
+│           ├── torch_backend.py  # PyTorch 백엔드
+│           └── onnx_backend.py   # ONNX Runtime 백엔드
 ├── 📁 static/                 # 프론트엔드 정적 파일
 │   ├── app.js                 # SPA 스타일 클라이언트
 │   ├── style.css              # CSS 스타일 (다크/라이트 테마)
@@ -159,8 +169,8 @@ pyinstaller regulation_search_onefile.spec --clean
 │   ├── index.html             # 메인 검색 페이지
 │   └── admin.html             # 관리자 페이지
 ├── 📁 config/                 # 런타임 설정
-│   ├── settings.json          # 사용자 설정
-│   └── regulations.db         # SQLite 데이터베이스
+│   ├── settings.json          # 사용자 설정 (런타임, gitignore됨; settings.example.json 참고)
+│   └── regulations.db         # SQLite 데이터베이스 (런타임, gitignore됨)
 ├── 📁 uploads/                # 업로드된 문서
 ├── 📁 revisions/              # 개정 이력 파일
 └── 📁 models/                 # AI 모델 캐시
@@ -245,6 +255,10 @@ class AppConfig:
     SEARCH_CACHE_SIZE = 1000
     MAX_CONCURRENT_SEARCHES = 10
     RATE_LIMIT_PER_MINUTE = 300
+    
+    # 임베딩 백엔드 (v2.6 신규)
+    EMBED_BACKEND = "torch"  # "torch" | "onnx_fp32" | "onnx_int8"
+    EMBED_NORMALIZE = True   # L2 정규화 여부
 ```
 
 ### 오프라인 모드 설정
@@ -253,7 +267,7 @@ class AppConfig:
 # 모델 다운로드
 python download_models.py
 
-# config/settings.json
+# config/settings.json (런타임 파일; config/settings.example.json에서 복사하여 사용)
 {
     "offline_mode": true,
     "local_model_path": "./models/snunlp--KR-SBERT-V40K-klueNLI-augSTS"

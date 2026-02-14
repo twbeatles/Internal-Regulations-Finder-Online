@@ -661,7 +661,7 @@ body {
     border-radius: var(--border-radius-full);
 }
 
-/* 결과 카드 */
+/* 결과 카드 (성능 최적화 v2.6.1: will-change, contain, GPU 가속) */
 .result-card {
     background: var(--bg-card);
     backdrop-filter: var(--glass-blur);
@@ -673,6 +673,17 @@ body {
     transition: all var(--transition-normal);
     position: relative;
     overflow: hidden;
+
+    /* 성능 최적화 */
+    will-change: transform, opacity;
+    /* GPU 가속 힌트 */
+    contain: layout style;
+    /* 레이아웃 격리 */
+}
+
+/* 애니메이션 완료 후 will-change 해제 (메모리 최적화) */
+.result-card.animation-done {
+    will-change: auto;
 }
 
 .result-card::before {
@@ -687,7 +698,8 @@ body {
 }
 
 .result-card:hover {
-    transform: translateY(-4px) translateX(2px);
+    /* GPU 가속 활용: translateZ(0) 추가 */
+    transform: translateY(-4px) translateX(2px) translateZ(0);
     box-shadow: var(--shadow-lg), var(--shadow-glow);
     border-color: rgba(255, 107, 138, 0.3);
 }
@@ -4230,4 +4242,58 @@ mark.highlight.active {
 
 .result-card:nth-child(10) {
     animation-delay: 0.45s;
+}
+
+/* ==========================================================================
+   성능 최적화 v2.6.1: 모션 감소 선호 대응 (접근성 + 성능)
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+
+    /* 아이콘 애니메이션 비활성화 */
+    .logo-icon,
+    .welcome-icon {
+        animation: none !important;
+    }
+
+    /* 펄스/플로트 효과 비활성화 */
+    .status-dot {
+        animation: none !important;
+    }
+
+    /* 결과 카드 애니메이션 비활성화 */
+    .result-card {
+        animation: none !important;
+        opacity: 1;
+        transform: none;
+    }
+
+    /* will-change 완전 비활성화 */
+    .result-card,
+    .result-card.animation-done {
+        will-change: auto !important;
+    }
+}
+
+/* ==========================================================================
+   추가 레이아웃 격리 (성능 최적화)
+   ========================================================================== */
+.search-container {
+    contain: layout;
+}
+
+.results-container {
+    contain: style;
+}
+
+.modal-content {
+    contain: layout style;
 }

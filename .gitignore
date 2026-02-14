@@ -1,0 +1,50 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# Test/Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+build_log*.txt
+*.log
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+
+# App runtime/user data (do not commit)
+uploads/
+revisions/
+logs/
+backup/
+config/settings.json
+config/secret_key*
+config/stats.json
+config/*.db
+config/*.db-*
+config/*.db.*
+config/*.sqlite
+config/*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Model cache (too large for GitHub)
+models/
+*.onnx

@@ -10,6 +10,15 @@
     <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com;">
 
+    <!-- 성능 최적화 v2.6.1: 외부 리소스 사전 연결 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com">
+
+    <!-- DNS 사전 조회 -->
+    <link rel="dns-prefetch" href="https://fonts.googleapis.com">
+    <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com">
+
     <!-- PWA 지원 (v2.0) -->
     <link rel="manifest" href="/static/manifest.json">
     <meta name="theme-color" content="#667eea">
@@ -19,9 +28,25 @@
     <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
 
     <title>사내 규정 검색기</title>
+
+    <!-- 오프라인/폐쇄망 지원 v2.6.1: 외부 리소스 비활성화 및 로컬 폴백 -->
+    <!-- Google Fonts (오프라인 시 시스템 폰트 사용)
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+    -->
+
+    <!-- CSS 프리로드 (v2.6.1 성능 최적화) -->
+    <link rel="preload" href="/static/style.css" as="style">
     <link rel="stylesheet" href="/static/style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap"
-        rel="stylesheet">
+
+    <!-- 폰트 스타일 재정의 (오프라인용) -->
+    <style>
+        body {
+            /* Google Fonts 로드 실패 시 시스템 폰트 우선 사용 */
+            font-family: 'Noto Sans KR', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+        }
+    </style>
 </head>
 
 <body>
@@ -327,11 +352,14 @@
         </div>
     </div>
 
-    <!-- jsPDF for PDF export -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
+    <!-- jsPDF for PDF export (v2.6.1: defer 로딩 최적화 & 오프라인 지원) -->
+    <!-- CDN fallback (인터넷 연결 시 작동) -->
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
+        onerror="this.onerror=null;this.src='/static/vendor/jspdf.umd.min.js';"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"
+        onerror="this.onerror=null;this.src='/static/vendor/jspdf.plugin.autotable.min.js';"></script>
 
-    <script src="/static/app.js"></script>
+    <script defer src="/static/app.js"></script>
 </body>
 
 </html>

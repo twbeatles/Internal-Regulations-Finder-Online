@@ -21,7 +21,8 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QSystemTrayIcon, QMenu, QMessageBox,
     QCheckBox, QGroupBox, QTextEdit, QFrame, QLineEdit, QDialog,
-    QDialogButtonBox, QFormLayout, QFileDialog, QSplashScreen, QProgressBar
+    QDialogButtonBox, QFormLayout, QFileDialog, QSplashScreen, QProgressBar,
+    QComboBox
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread
 from PyQt6.QtGui import QIcon, QAction, QFont, QColor, QPalette, QCloseEvent, QTextCharFormat, QPixmap
@@ -83,6 +84,12 @@ def initialize_server():
             # 오프라인 모드 설정
             AppConfig.OFFLINE_MODE = offline_mode
             AppConfig.LOCAL_MODEL_PATH = local_model_path
+            
+            # 임베딩 백엔드 설정 적용
+            embed_backend = settings.get('embed_backend', 'torch')
+            embed_normalize = settings.get('embed_normalize', True)
+            AppConfig.EMBED_BACKEND = embed_backend
+            AppConfig.EMBED_NORMALIZE = embed_normalize
             
             if folder and os.path.exists(folder):
                 logger.info(f"문서 폴더 초기화: {folder}")
@@ -166,7 +173,9 @@ class SettingsManager:
             'admin_password_hash': '', 
             'server_port': 8080,
             'offline_mode': False,
-            'local_model_path': ''
+            'local_model_path': '',
+            'embed_backend': 'torch',
+            'embed_normalize': True
         }
     
     def _save(self):
@@ -232,6 +241,27 @@ class SettingsManager:
     def set_local_model_path(self, path: str):
         """로컬 모델 경로 설정"""
         self._settings['local_model_path'] = path
+        self._save()
+    
+    # ========== 임베딩 백엔드 설정 ==========
+    
+    def get_embed_backend(self) -> str:
+        """임베딩 백엔드 반환 (torch, onnx_fp32, onnx_int8)"""
+        return self._settings.get('embed_backend', 'torch')
+    
+    def set_embed_backend(self, backend: str):
+        """임베딩 백엔드 설정"""
+        if backend in ('torch', 'onnx_fp32', 'onnx_int8'):
+            self._settings['embed_backend'] = backend
+            self._save()
+    
+    def get_embed_normalize(self) -> bool:
+        """임베딩 L2 정규화 여부 반환"""
+        return self._settings.get('embed_normalize', True)
+    
+    def set_embed_normalize(self, enabled: bool):
+        """임베딩 L2 정규화 설정"""
+        self._settings['embed_normalize'] = enabled
         self._save()
 
 
@@ -875,6 +905,69 @@ class ServerWindow(QMainWindow):
         offline_hint.setStyleSheet("color: #666; font-size: 10px;")
         settings_layout.addWidget(offline_hint)
         
+        # ========== 임베딩 백엔드 설정 ==========
+        embed_separator = QFrame()
+        embed_separator.setFrameShape(QFrame.Shape.HLine)
+        embed_separator.setStyleSheet("background-color: #0f3460;")
+        settings_layout.addWidget(embed_separator)
+        
+        embed_label = QLabel("🧠 임베딩 백엔드 설정")
+        embed_label.setStyleSheet("color: #e94560; font-weight: bold; margin-top: 5px;")
+        settings_layout.addWidget(embed_label)
+        
+        # 백엔드 선택 콤보박스
+        backend_layout = QHBoxLayout()
+        backend_label = QLabel("백엔드:")
+        backend_label.setStyleSheet("color: #888; font-size: 11px;")
+        backend_layout.addWidget(backend_label)
+        
+        self.embed_backend_combo = QComboBox()
+        self.embed_backend_combo.addItems([
+            "torch (PyTorch - 기본)",
+            "onnx_fp32 (ONNX FP32)",
+            "onnx_int8 (ONNX INT8 양자화)"
+        ])
+        # 현재 설정값으로 선택
+        current_backend = settings_manager.get_embed_backend()
+        backend_map = {'torch': 0, 'onnx_fp32': 1, 'onnx_int8': 2}
+        self.embed_backend_combo.setCurrentIndex(backend_map.get(current_backend, 0))
+        self.embed_backend_combo.currentIndexChanged.connect(self._on_embed_backend_changed)
+        self.embed_backend_combo.setStyleSheet("""
+            QComboBox {
+                background: #0f3460;
+                border: 1px solid #2a2a5e;
+                border-radius: 4px;
+                padding: 6px;
+                color: #eaeaea;
+                min-width: 180px;
+            }
+            QComboBox:focus { border-color: #e94560; }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView {
+                background: #0f3460;
+                color: #eaeaea;
+                selection-background-color: #e94560;
+            }
+        """)
+        backend_layout.addWidget(self.embed_backend_combo)
+        backend_layout.addStretch()
+        settings_layout.addLayout(backend_layout)
+        
+        # L2 정규화 체크박스
+        self.embed_normalize_check = QCheckBox("L2 정규화 활성화 (권장)")
+        self.embed_normalize_check.setChecked(settings_manager.get_embed_normalize())
+        self.embed_normalize_check.stateChanged.connect(self._on_embed_normalize_changed)
+        settings_layout.addWidget(self.embed_normalize_check)
+        
+        # 임베딩 백엔드 안내
+        embed_hint = QLabel("※ ONNX 백엔드 사용 시: pip install onnxruntime 및 model.onnx 파일 필요")
+        embed_hint.setStyleSheet("color: #666; font-size: 10px;")
+        settings_layout.addWidget(embed_hint)
+        
+        embed_hint2 = QLabel("※ 백엔드 변경 후 서버 재시작 필요, ONNX 실패 시 torch로 자동 전환")
+        embed_hint2.setStyleSheet("color: #666; font-size: 10px;")
+        settings_layout.addWidget(embed_hint2)
+        
         layout.addWidget(settings_group)
         
         # 로그 (확장된 영역)
@@ -1087,6 +1180,37 @@ class ServerWindow(QMainWindow):
         if folder:
             self.model_path_edit.setText(folder)
             logger.info(f"📂 모델 폴더 선택: {folder}")
+    
+    def _on_embed_backend_changed(self, index):
+        """임베딩 백엔드 변경 시"""
+        backend_map = {0: 'torch', 1: 'onnx_fp32', 2: 'onnx_int8'}
+        backend = backend_map.get(index, 'torch')
+        settings_manager.set_embed_backend(backend)
+        
+        # AppConfig 런타임 업데이트
+        if AppConfig:
+            AppConfig.EMBED_BACKEND = backend
+        
+        logger.info(f"🧠 임베딩 백엔드 변경: {backend} (재시작 필요)")
+        
+        # 재시작 필요 알림
+        QMessageBox.information(
+            self,
+            "설정 변경",
+            f"임베딩 백엔드가 '{backend}'로 변경되었습니다.\n"
+            "변경 사항을 적용하려면 서버를 재시작하세요."
+        )
+    
+    def _on_embed_normalize_changed(self, state):
+        """임베딩 정규화 설정 변경 시"""
+        enabled = state == Qt.CheckState.Checked.value
+        settings_manager.set_embed_normalize(enabled)
+        
+        # AppConfig 런타임 업데이트
+        if AppConfig:
+            AppConfig.EMBED_NORMALIZE = enabled
+        
+        logger.info(f"🧠 임베딩 L2 정규화: {'활성화' if enabled else '비활성화'} (재시작 필요)")
     
     def _restart_server(self):
         """서버 재시작"""

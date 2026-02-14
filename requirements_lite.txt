@@ -5,6 +5,7 @@
 # Flask 웹 프레임워크
 flask>=2.3.0
 flask-cors>=4.0.0
+flask-compress>=1.13  # v2.6.1 성능 최적화: Gzip 응답 압축
 
 # 프로덕션 서버
 waitress>=2.1.0

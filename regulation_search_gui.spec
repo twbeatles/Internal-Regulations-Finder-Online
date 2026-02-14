@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-사내 규정 검색기 v2.5 - GUI 빌드 Spec (안정화 버전)
+사내 규정 검색기 v2.6 - GUI 빌드 Spec (안정화 버전)
 빌드: pyinstaller regulation_search_gui.spec --clean
 
 특징:
@@ -8,6 +8,7 @@
 - AI/Vector 검색 포함
 - Python encodings 모듈 완전 포함
 - PyQt6 GUI 지원
+- 임베딩 백엔드 (torch/onnx) 지원
 
 예상 크기: 500-800MB (AI 포함)
 """
@@ -51,6 +52,12 @@ datas = [
 config_dir = os.path.join(project_dir, 'config')
 if os.path.exists(config_dir):
     datas.append((config_dir, 'config'))
+
+# models 폴더 (ONNX 모델 포함)
+models_dir = os.path.join(project_dir, 'models')
+if os.path.exists(models_dir):
+    datas.append((models_dir, 'models'))
+    print(f"[INFO] models 폴더 포함: {models_dir}")
 
 # PyQt6 데이터
 try:
@@ -131,7 +138,11 @@ hiddenimports = [
     'threading',
     'queue',
     'concurrent.futures',
+    'concurrent.futures',
     'multiprocessing',
+    
+    # === Compression (v2.6.1) ===
+    'flask_compress',
     
     # === 문서 처리 ===
     'docx',
@@ -161,6 +172,9 @@ hiddenimports = [
     # === FAISS ===
     'faiss',
     
+    # === ONNX Runtime ===
+    'onnxruntime',
+    
     # === 시스템 ===
     'psutil',
     'hashlib',
@@ -179,6 +193,7 @@ hiddenimports = [
 hiddenimports += collect_submodules('app')
 hiddenimports += collect_submodules('app.routes')
 hiddenimports += collect_submodules('app.services')
+hiddenimports += collect_submodules('app.services.embeddings_backends')
 
 # encodings 전체 (안전을 위해)
 hiddenimports += collect_submodules('encodings')

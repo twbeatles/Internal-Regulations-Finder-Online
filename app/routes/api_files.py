@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import threading
+from pathlib import Path
 from flask import Blueprint, jsonify, request, send_file
 from werkzeug.utils import secure_filename
 from app.services.search import qa_system
@@ -8,6 +9,7 @@ from app.utils import logger, FileUtils, TaskResult, get_app_directory, api_erro
 from app.config import AppConfig
 from app.constants import ErrorMessages, HttpStatus
 from app.exceptions import DocumentNotFoundError, DocumentError
+from app.auth import admin_required
 
 files_bp = Blueprint('files', __name__)
 file_lock = threading.Lock()
@@ -33,10 +35,19 @@ def _find_file_path(filename: str) -> str:
     Raises:
         DocumentNotFoundError: 파일을 찾을 수 없는 경우
     """
+    filename = os.path.basename((filename or "").replace("\\", "/"))
+    if not filename:
+        raise DocumentNotFoundError(filename)
+
+    matches = []
     for fp in qa_system.file_infos.keys():
         if os.path.basename(fp) == filename:
-            return fp
-    raise DocumentNotFoundError(filename)
+            matches.append(fp)
+    if not matches:
+        raise DocumentNotFoundError(filename)
+    if len(matches) > 1:
+        raise DocumentError(f"동일한 파일명이 여러 개 존재합니다: {filename}")
+    return matches[0]
 
 @files_bp.route('/files', methods=['GET'])
 def list_files():
@@ -55,6 +66,7 @@ def list_file_names():
         return api_error(f'파일 목록 조회 실패: {str(e)}')
 
 @files_bp.route('/files/all', methods=['DELETE'])
+@admin_required
 def delete_all_files():
     """모든 로드된 파일 일괄 삭제 (인덱스 및 캐시 초기화)"""
     if not acquire_file_lock():
@@ -75,8 +87,9 @@ def delete_all_files():
         for fp in file_paths:
             try:
                 # uploads 폴더 내 파일인 경우에만 실제 삭제
-                if fp.startswith(upload_dir) and os.path.exists(fp):
-                    os.remove(fp)
+                p = Path(fp).resolve()
+                if Path(upload_dir).resolve() in p.parents and p.exists():
+                    p.unlink()
                     deleted_files.append(os.path.basename(fp))
                 else:
                     deleted_files.append(os.path.basename(fp))  # 인덱스에서만 제거
@@ -119,6 +132,7 @@ def delete_all_files():
         file_lock.release()
 
 @files_bp.route('/files/<path:filename>', methods=['DELETE'])
+@admin_required
 def delete_file(filename):
     """파일 삭제 및 인덱스 정리"""
     with file_lock:
@@ -126,7 +140,7 @@ def delete_file(filename):
             target_path = _find_file_path(filename)
             
             # 1. 실제 파일 삭제
-            os.remove(target_path)
+            Path(target_path).unlink()
             
             # 2. file_infos에서 제거
             if target_path in qa_system.file_infos:
@@ -191,20 +205,36 @@ def upload_file():
     upload_folder = qa_system.current_folder or os.path.join(get_app_directory(), AppConfig.UPLOAD_FOLDER)
     os.makedirs(upload_folder, exist_ok=True)
     
-    filename = secure_filename(file.filename)
-    # 한글 파일명 보존 (secure_filename이 제거할 수 있음)
-    if not filename or filename == '_':
-        filename = file.filename
-    
-    save_path = os.path.join(upload_folder, filename)
+    original_name = file.filename
+    filename = FileUtils.sanitize_upload_filename(original_name)
+
+    if not FileUtils.allowed_file(filename):
+        ext = os.path.splitext(filename)[1]
+        return jsonify({'success': False, 'message': f'{ErrorMessages.FILE_TYPE_NOT_SUPPORTED}: {ext}'}), HttpStatus.BAD_REQUEST
+
+    upload_root = Path(upload_folder).resolve()
+    save_path = (upload_root / filename).resolve()
+    if upload_root not in save_path.parents:
+        return jsonify({'success': False, 'message': '유효하지 않은 파일명입니다'}), HttpStatus.BAD_REQUEST
+
+    if save_path.exists():
+        stem = save_path.stem
+        suffix = save_path.suffix
+        for i in range(1, 1000):
+            candidate = (upload_root / f"{stem}_{i}{suffix}").resolve()
+            if not candidate.exists():
+                save_path = candidate
+                break
+        else:
+            return jsonify({'success': False, 'message': '동일 파일명이 너무 많습니다'}), HttpStatus.SERVICE_UNAVAILABLE
     
     with file_lock:
         try:
-            file.save(save_path)
+            file.save(str(save_path))
             logger.info(f"파일 저장 완료: {save_path}")
             
             # 업로드 후 즉시 인덱싱 처리
-            result = qa_system.process_single_file(save_path)
+            result = qa_system.process_single_file(str(save_path))
             
             # 캐시 무효화 (새 파일이 검색에 즉시 반영되도록)
             if hasattr(qa_system, '_search_cache'):
@@ -214,13 +244,17 @@ def upload_file():
                 return jsonify({
                     'success': True, 
                     'message': result.message,
-                    'data': result.data
+                    'data': result.data,
+                    'filename': save_path.name,
+                    'original_filename': original_name
                 })
             else:
                 return jsonify({
                     'success': True,  # 파일은 저장됨
                     'message': f'파일 저장 완료 (인덱싱 실패: {result.message})',
-                    'indexed': False
+                    'indexed': False,
+                    'filename': save_path.name,
+                    'original_filename': original_name
                 })
         except IOError as e:
             logger.error(f"파일 저장 오류: {e}")
@@ -242,13 +276,15 @@ def upload_file():
 def get_tags():
     file_path = request.args.get('file')
     if file_path:
-        tags = qa_system.tag_manager.get_tags(file_path)
+        normalized = os.path.basename((file_path or "").replace("\\", "/"))
+        tags = qa_system.tag_manager.get_tags(normalized)
         return jsonify({'success': True, 'tags': tags})
     else:
-        # 전체 태그 통계
-        return jsonify({'success': True, 'tags': []}) # Not implemented fully
+        stats = qa_system.tag_manager.get_tag_stats()
+        return jsonify({'success': True, 'tags': qa_system.tag_manager.get_all_tags(), 'stats': stats})
 
 @files_bp.route('/tags', methods=['POST'])
+@admin_required
 def add_tag():
     data = request.json or {}
     file_path = data.get('file')
@@ -260,11 +296,13 @@ def add_tag():
     if not tag or not isinstance(tag, str) or not tag.strip():
         return jsonify({'success': False, 'message': '태그가 필요합니다'}), HttpStatus.BAD_REQUEST
     
-    if qa_system.tag_manager.add_tag(file_path, tag.strip()):
+    normalized = os.path.basename((file_path or "").replace("\\", "/"))
+    if qa_system.tag_manager.add_tag(normalized, tag.strip()):
         return jsonify({'success': True})
     return jsonify({'success': False, 'message': '태그 추가 실패'})
 
 @files_bp.route('/tags', methods=['DELETE'])
+@admin_required
 def remove_tag():
     data = request.json or {}
     file_path = data.get('file')
@@ -276,7 +314,8 @@ def remove_tag():
     if not tag or not isinstance(tag, str):
         return jsonify({'success': False, 'message': '태그가 필요합니다'}), HttpStatus.BAD_REQUEST
     
-    if qa_system.tag_manager.remove_tag(file_path, tag):
+    normalized = os.path.basename((file_path or "").replace("\\", "/"))
+    if qa_system.tag_manager.remove_tag(normalized, tag):
         return jsonify({'success': True})
     return jsonify({'success': False, 'message': '태그 삭제 실패'})
 
