@@ -1987,22 +1987,11 @@ async function performSearch(options = {}) {
 
     // 고급검색: 서버 변경 없이 프론트 후처리로 최소 지원
     const parsed = AdvancedSearch.parseQuery(query);
-    const advancedActive =
-        AdvancedSearch.isOpen ||
-        parsed.useRegex ||
-        /\b(AND|OR|NOT)\b/i.test(query) ||
-        /"[^"]+"/.test(query);
+    const advancedActive = AdvancedSearch.isActive(query, parsed);
 
-    // NOT/연산자 등을 포함한 검색어는 서버에는 "포함 토큰" 위주로 전달 (후처리 필터와 조합)
-    let serverQuery = query;
-    if (advancedActive && !parsed.useRegex) {
-        const tokens = [
-            ...(parsed.exactPhrases || []),
-            ...(parsed.mustInclude || []),
-            ...(parsed.shouldInclude || [])
-        ].map(t => String(t || '').trim()).filter(Boolean);
-        if (tokens.length > 0) serverQuery = tokens.join(' ');
-    }
+    // 고급 검색어는 서버에는 "후보를 넓히는" 텍스트 쿼리로 전달하고,
+    // 최종 필터링은 프론트에서 수행
+    const serverQuery = advancedActive ? AdvancedSearch.deriveServerQuery(parsed) : query;
 
     let result;
     try {
@@ -2043,27 +2032,13 @@ async function performSearch(options = {}) {
 
     let finalResults = result.results || [];
 
-    // Advanced search: AND/OR/NOT/"..."
+    // Advanced search: AND/OR/NOT/"..."/regex
     if (advancedActive && finalResults.length > 0) {
-        finalResults = AdvancedSearch.filterResults(finalResults, parsed);
+        const before = finalResults.length;
+        finalResults = AdvancedSearch.filterResults(finalResults, parsed, { silent: !!auto });
 
-        // Regex 후처리 (안전 제한)
-        if (parsed.useRegex) {
-            const pattern = (parsed.original || '').trim();
-            if (pattern.length > 80) {
-                Toast.warning('정규식 제한', '정규식 패턴은 80자 이하만 지원합니다');
-            } else {
-                try {
-                    const re = new RegExp(pattern, 'i');
-                    finalResults = finalResults.filter(item => {
-                        const content = (item.content || '');
-                        const source = (item.source || '');
-                        return re.test(content) || re.test(source);
-                    });
-                } catch (e) {
-                    Toast.error('정규식 오류', '정규식 패턴이 올바르지 않습니다');
-                }
-            }
+        if (!auto && before !== finalResults.length) {
+            Toast.info('고급 검색 적용', `${before}개 → ${finalResults.length}개`);
         }
     }
 
