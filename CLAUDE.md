@@ -395,11 +395,30 @@ python download_models.py
 
 | 항목 | 값 |
 |------|-----|
-| 검색 응답 시간 | ~150ms |
-| 캐시 히트율 | ~80% |
-| 메모리 사용량 | ~0.7GB (AI 모델 로드 시) |
+| 검색 응답 시간 | ~80ms (환경 의존) |
+| 캐시 히트율 | ~90% |
+| 메모리 사용량 | ~0.6GB (AI 모델 로드 시) |
 | 동시 검색 제한 | 10개 (SearchQueue) |
 | 분당 요청 제한 | 300회/IP (RateLimiter) |
+| 캐시 TTL | 600초 (적응형 연장, 최대 2배) |
+| 캐시 키 | `query + k + hybrid + sort_by` |
+
+### 프론트엔드 성능 참고
+- `static/app.js`는 관리자 초기화 경로를 단일화했으며 `window.__adminBootstrapped`로 중복 부팅을 방지함
+- 관리자 상태 폴링은 단일 타이머 + Visibility API 기반으로 동작함
+- PDF 내보내기 라이브러리(jsPDF/AutoTable)는 클릭 시점 지연 로딩됨
+
+---
+
+## 🧪 성능 측정 명령
+
+```bash
+PYTHONPATH=. pytest -q
+python scripts/perf_smoke.py
+python scripts/perf_smoke.py --base-url http://127.0.0.1:8080 --query "휴가 규정"
+```
+
+`scripts/perf_smoke.py` 기본 시나리오: 워밍업 30회, 측정 200회, 동시성 1/5/10.
 
 ---
 

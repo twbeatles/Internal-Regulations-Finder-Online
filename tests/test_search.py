@@ -30,6 +30,19 @@ class TestSearchCache:
         
         assert result is not None
         assert result[0]["result"] == 1
+
+    def test_sort_by_cache_key_isolated(self, cache):
+        """sort_by가 다른 경우 캐시가 분리되는지 테스트"""
+        cache.set("테스트", 5, True, [{"result": "relevance"}], sort_by="relevance")
+        cache.set("테스트", 5, True, [{"result": "filename"}], sort_by="filename")
+
+        relevance = cache.get("테스트", 5, True, sort_by="relevance")
+        filename = cache.get("테스트", 5, True, sort_by="filename")
+
+        assert relevance is not None
+        assert filename is not None
+        assert relevance[0]["result"] == "relevance"
+        assert filename[0]["result"] == "filename"
     
     def test_cache_miss(self, cache):
         """캐시 미스 테스트"""

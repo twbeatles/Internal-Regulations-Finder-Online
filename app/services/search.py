@@ -10,6 +10,7 @@ import re
 import gc
 import shutil
 import hashlib  # _get_cache_dir에서 사용
+from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional, Any
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -111,9 +112,10 @@ class BM25Light:
     - term frequency를 fit() 시점에 미리 계산하여 검색 성능 40-50% 향상
     - __slots__ 사용으로 메모리 효율화
     """
+    # NOTE: Keep this class fast and memory-efficient; it runs on every search.
     __slots__ = ['k1', 'b', 'doc_lens', 'doc_len_norm', 'avgdl', 'idf', 'N', '_lock', 'postings']
 
-    # Fast token extraction for large texts (avoid regex-sub + split allocations).
+    # Faster token extraction than "regex sub + split" for large texts.
     _TOKEN_EXTRACT = re.compile(r"[0-9A-Za-z가-힣_]{2,}")
     
     def __init__(self, k1: float = 1.5, b: float = 0.75):
@@ -125,7 +127,7 @@ class BM25Light:
         self.idf: Dict[str, float] = {}
         self.N = 0
         self._lock = threading.RLock()
-        # inverted index: term -> list[(doc_idx, tf)]
+        # Inverted index: term -> list[(doc_idx, tf)]
         self.postings: Dict[str, List[Tuple[int, int]]] = {}
     
     def _tokenize(self, text: str) -> List[str]:
@@ -139,8 +141,8 @@ class BM25Light:
         문서 인덱싱
 
         Query-time 성능 최적화:
-        - postings(역색인) 구축: 쿼리 토큰이 포함된 문서만 스코어링
-        - 문서 길이 정규화 항(len_norm) 사전 계산
+        - inverted index(postings) 구축: 쿼리 토큰이 포함된 문서만 스코어링
+        - doc length normalization 사전 계산
         """
         with self._lock:
             self.doc_lens = []
@@ -148,7 +150,7 @@ class BM25Light:
             df = Counter()
 
             self.postings = {}
-            
+
             for idx, doc in enumerate(docs):
                 tokens = self._tokenize(doc)
                 dl = len(tokens)
@@ -159,6 +161,7 @@ class BM25Light:
                 tf = Counter(tokens)
                 df.update(tf.keys())
 
+                # Fill postings with per-doc term frequency.
                 for term, freq in tf.items():
                     lst = self.postings.get(term)
                     if lst is None:
@@ -171,6 +174,7 @@ class BM25Light:
             self.idf = {t: math.log((self.N - f + 0.5) / (f + 0.5) + 1) for t, f in df.items()}
             del df
 
+            # Precompute length normalization per doc (avoid division in hot path).
             if self.avgdl > 0:
                 k1 = self.k1
                 b = self.b
@@ -179,7 +183,7 @@ class BM25Light:
             gc.collect()
     
     def search(self, query: str, top_k: int = 5) -> List[Tuple[int, float]]:
-        """검색 수행 (postings 기반)"""
+        """검색 수행 (postings 기반: 쿼리 토큰이 포함된 문서만 스코어링)"""
         with self._lock:
             if not self.postings or not query:
                 return []
@@ -187,7 +191,7 @@ class BM25Light:
             if not q_tokens:
                 return []
             
-            # 중복 제거 + postings 있는 토큰만
+            # 쿼리 토큰 정규화: 중복 제거 + postings 있는 토큰만
             terms = []
             seen = set()
             for t in q_tokens:
@@ -199,18 +203,21 @@ class BM25Light:
             if not terms:
                 return []
 
+            # Hot-path locals
             k1 = self.k1
             k1p1 = k1 + 1.0
             doc_len_norm = self.doc_len_norm
-            postings = self.postings
             idf_map = self.idf
+            postings = self.postings
 
             scores: Dict[int, float] = {}
+
             for term in terms:
                 idf = idf_map.get(term, 0.0)
                 if idf <= 0:
                     continue
                 for doc_idx, tf in postings.get(term, ()):
+                    # Skip empty docs or missing norms defensively.
                     if doc_idx >= len(doc_len_norm):
                         continue
                     denom = tf + doc_len_norm[doc_idx]
@@ -222,8 +229,30 @@ class BM25Light:
             if not scores:
                 return []
 
+            # Avoid full sort when candidate set is large.
             import heapq
             return heapq.nlargest(top_k, scores.items(), key=lambda x: x[1])
+    
+    def _score_optimized(self, query_idf: Dict[str, float], doc_tf: Counter, doc_len: int) -> float:
+        """
+        최적화된 BM25 점수 계산
+        - 사전 계산된 term frequency 사용
+        - 쿼리 IDF 미리 필터링
+        """
+        if self.avgdl == 0:
+            return 0.0
+        
+        score = 0.0
+        len_norm = self.k1 * (1 - self.b + self.b * doc_len / self.avgdl)
+        
+        for term, idf in query_idf.items():
+            tf = doc_tf.get(term, 0)
+            if tf > 0:
+                num = tf * (self.k1 + 1)
+                den = tf + len_norm
+                score += idf * num / den
+        
+        return score
     
     def clear(self):
         """인덱스 초기화"""
@@ -251,19 +280,29 @@ class SearchCache:
         - 적응형 TTL: 히트 횟수에 따라 최대 2배까지 TTL 연장
     """
     
-    def __init__(self, max_size: int = 1000, ttl_seconds: int = 600, adaptive_ttl: bool = False):
+    @dataclass
+    class CacheEntry:
+        timestamp: float
+        result: Any
+        hit_count: int = 0
+
+    def __init__(self, max_size: int = 1000, ttl_seconds: int = 600, adaptive_ttl: bool = None):
         from collections import OrderedDict
         self.cache: OrderedDict = OrderedDict()
         self.max_size = max_size
         self.ttl = ttl_seconds
-        self.adaptive_ttl = adaptive_ttl  # 적응형 TTL 활성화 여부
+        if adaptive_ttl is None:
+            self.adaptive_ttl = getattr(AppConfig, 'ADAPTIVE_CACHE_TTL', True)
+        else:
+            self.adaptive_ttl = bool(adaptive_ttl)
+        self.max_ttl_factor = 2.0
         self._lock = threading.Lock()
         # 통계
         self._hits = 0
         self._misses = 0
         self._evictions = 0
     
-    def _make_key(self, query: str, k: int, hybrid: bool) -> str:
+    def _make_key(self, query: str, k: int, hybrid: bool, sort_by: str = 'relevance') -> str:
         """캐시 키 생성 (쿼리 정규화로 히트율 향상)
         
         정규화:
@@ -272,47 +311,51 @@ class SearchCache:
         - 앞뒤 공백 제거
         """
         normalized = ' '.join(query.lower().split())
-        return f"{normalized}|{k}|{hybrid}"
+        sort_key = str(sort_by or 'relevance').strip().lower()
+        return f"{normalized}|{k}|{hybrid}|{sort_key}"
+
+    def _effective_ttl(self, entry: "SearchCache.CacheEntry") -> float:
+        if not self.adaptive_ttl:
+            return float(self.ttl)
+        # 첫 캐시 히트에서는 TTL을 늘리지 않아 테스트/기대 동작과 일치.
+        extra_hits = max(0, int(entry.hit_count) - 1)
+        factor = min(self.max_ttl_factor, 1.0 + extra_hits * 0.1)
+        return float(self.ttl) * factor
     
-    def get(self, query: str, k: int, hybrid: bool) -> Optional[Any]:
-        key = self._make_key(query, k, hybrid)
+    def get(self, query: str, k: int, hybrid: bool, sort_by: str = 'relevance') -> Optional[Any]:
+        key = self._make_key(query, k, hybrid, sort_by)
         with self._lock:
-            if key in self.cache:
-                entry = self.cache[key]
-                timestamp, result, hit_count = entry if len(entry) == 3 else (*entry, 0)
-                
-                # 적응형 TTL: 히트 횟수에 따라 TTL 연장 (최대 2배)
-                if self.adaptive_ttl:
-                    effective_ttl = self.ttl * min(2.0, 1.0 + hit_count * 0.1)
-                else:
-                    effective_ttl = self.ttl
-                
-                if time.time() - timestamp < effective_ttl:
-                    # 히트 횟수 증가 및 LRU 이동
-                    self.cache[key] = (timestamp, result, hit_count + 1)
+            entry = self.cache.get(key)
+            if entry is not None:
+                now = time.time()
+                if now - entry.timestamp < self._effective_ttl(entry):
+                    entry.hit_count += 1
                     self.cache.move_to_end(key)
                     self._hits += 1
-                    return result
-                # 만료된 항목 제거
+                    return entry.result
                 del self.cache[key]
                 self._evictions += 1
             self._misses += 1
         return None
     
-    def set(self, query: str, k: int, hybrid: bool, result: Any):
-        key = self._make_key(query, k, hybrid)
+    def set(self, query: str, k: int, hybrid: bool, result: Any, sort_by: str = 'relevance'):
+        key = self._make_key(query, k, hybrid, sort_by)
         with self._lock:
             # 이미 존재하면 히트 카운트 유지하며 갱신
             old_hit_count = 0
             if key in self.cache:
-                entry = self.cache[key]
-                old_hit_count = entry[2] if len(entry) == 3 else 0
+                old_entry = self.cache[key]
+                old_hit_count = int(old_entry.hit_count)
                 del self.cache[key]
             # 크기 초과 시 가장 오래된 항목 제거 (O(1))
             while len(self.cache) >= self.max_size:
                 self.cache.popitem(last=False)
                 self._evictions += 1
-            self.cache[key] = (time.time(), result, old_hit_count)
+            self.cache[key] = SearchCache.CacheEntry(
+                timestamp=time.time(),
+                result=result,
+                hit_count=old_hit_count
+            )
     
     def clear(self):
         with self._lock:
@@ -338,7 +381,8 @@ class SearchCache:
                 'misses': self._misses,
                 'evictions': self._evictions,
                 'hit_rate': round(hit_rate, 2),
-                'ttl_seconds': self.ttl
+                'ttl_seconds': self.ttl,
+                'adaptive_ttl': self.adaptive_ttl,
             }
     
     def invalidate_by_file(self, filename: str) -> int:
@@ -355,8 +399,7 @@ class SearchCache:
             # 캐시된 결과에서 해당 파일 포함 항목 제거
             keys_to_remove = []
             for key, entry in self.cache.items():
-                # entry: (timestamp, result) or (timestamp, result, hit_count)
-                result = entry[1] if isinstance(entry, tuple) and len(entry) >= 2 else None
+                result = entry.result
                 if isinstance(result, list):
                     for item in result:
                         if isinstance(item, dict) and item.get('source') == filename:
@@ -537,11 +580,7 @@ class RegulationQASystem:
         self.file_infos: Dict[str, FileInfo] = {}
         self.current_folder = ""
         self._lock = threading.RLock()
-        self._search_cache = SearchCache(
-            AppConfig.SEARCH_CACHE_SIZE,
-            ttl_seconds=getattr(AppConfig, "SEARCH_CACHE_TTL", 600),
-            adaptive_ttl=getattr(AppConfig, "ADAPTIVE_CACHE_TTL", False),
-        )
+        self._search_cache = SearchCache(AppConfig.SEARCH_CACHE_SIZE)
         self._search_history = SearchHistory()
         self._keyword_cache: List[str] = []
         self._executor = ThreadPoolExecutor(max_workers=AppConfig.MAX_WORKERS)
@@ -755,16 +794,16 @@ class RegulationQASystem:
             traceback.print_exc()
             return TaskResult(False, f"파일 처리 오류: {str(e)}")
     
-    def process_documents(self, folder: str, files: List[str], progress_cb=None) -> TaskResult:
+    def process_documents(self, folder: str, files: List[str], progress_cb=None, force_reindex: bool = False) -> TaskResult:
         # AI 모델 없어도 BM25로 동작 가능 (Lite 모드 지원)
         if not self.embedding_model:
             logger.info("AI 모델 없음 - BM25 전용 모드로 문서 처리")
         
         
         with self._lock:
-            return self._process_internal(folder, files, progress_cb)
+            return self._process_internal(folder, files, progress_cb, force_reindex=force_reindex)
     
-    def _process_internal(self, folder: str, files: List[str], progress_cb) -> TaskResult:
+    def _process_internal(self, folder: str, files: List[str], progress_cb, force_reindex: bool = False) -> TaskResult:
         # Lazy import 실행 (이미 로드되었으면 스킵)
         _lazy_import_langchain()
         
@@ -782,27 +821,39 @@ class RegulationQASystem:
                 meta['size'] if meta else 0
             )
             
-        if progress_cb: progress_cb(5, "캐시 확인...")
-        
-        cache_info = self._load_cache_info(cache_dir)
+        if progress_cb:
+            progress_cb(5, "캐시 확인...")
+
+        cache_info = {}
         to_process, cached = [], []
-        
-        for fp in files:
-            fname = os.path.basename(fp)
-            meta = FileUtils.get_metadata(fp)
-            if meta and fname in cache_info:
-                cm = cache_info[fname]
-                if cm.get('size') == meta['size'] and cm.get('mtime') == meta['mtime']:
-                    cached.append(fp)
-                    self.file_infos[fp].status = FileStatus.CACHED
-                    self.file_infos[fp].chunks = cm.get('chunks', 0)
-                    continue
-            to_process.append(fp)
+
+        if force_reindex:
+            # 강제 재인덱싱: 기존 캐시를 우회하고 전체 파일 재처리.
+            self.vector_store = None
+            if os.path.exists(cache_dir):
+                try:
+                    shutil.rmtree(cache_dir)
+                except Exception as e:
+                    logger.debug(f"강제 재인덱싱 캐시 삭제 실패(무시): {e}")
+            to_process = list(files)
+        else:
+            cache_info = self._load_cache_info(cache_dir)
+            for fp in files:
+                fname = os.path.basename(fp)
+                meta = FileUtils.get_metadata(fp)
+                if meta and fname in cache_info:
+                    cm = cache_info[fname]
+                    if cm.get('size') == meta['size'] and cm.get('mtime') == meta['mtime']:
+                        cached.append(fp)
+                        self.file_infos[fp].status = FileStatus.CACHED
+                        self.file_infos[fp].chunks = cm.get('chunks', 0)
+                        continue
+                to_process.append(fp)
             
         self.documents, self.doc_meta = [], []
         
         # Load Cache
-        if cached and os.path.exists(os.path.join(cache_dir, "index.faiss")):
+        if (not force_reindex) and cached and os.path.exists(os.path.join(cache_dir, "index.faiss")):
             try:
                 if progress_cb: progress_cb(10, "캐시 로드...")
                 self.vector_store = FAISS.load_local(
@@ -893,7 +944,12 @@ class RegulationQASystem:
                     new_docs.append(
                         Document(
                             page_content=chunk_text,
-                            metadata={"doc_id": doc_id, "source": fname, "path": fp, "chunk_id": chunk_count},
+                            metadata={
+                                "doc_id": doc_id,
+                                "source": fname,
+                                "path": fp,
+                                "chunk_id": chunk_count,
+                            },
                         )
                     )
                     self.documents.append(chunk_text)
@@ -1010,7 +1066,8 @@ class RegulationQASystem:
     def _save_cache(self, cache_dir: str, old_info: Dict, new_info: Dict):
         try:
             os.makedirs(cache_dir, exist_ok=True)
-            self.vector_store.save_local(cache_dir)
+            if self.vector_store and hasattr(self.vector_store, "save_local"):
+                self.vector_store.save_local(cache_dir)
             
             # 캐시 메타데이터 포함
             cache_meta = {
@@ -1072,7 +1129,7 @@ class RegulationQASystem:
             self._is_loading = True
             try:
                 def cb(p, msg): self._load_progress = f"{p}% {msg}"
-                res = self.process_documents(folder_path, files, cb)
+                res = self.process_documents(folder_path, files, cb, force_reindex=force_reindex)
                 if not res.success: self._load_error = res.message
                 
                 try:
@@ -1105,7 +1162,7 @@ class RegulationQASystem:
         query = query.strip()
         if len(query) < 2: return TaskResult(False, "검색어가 너무 짧습니다 (최소 2자)")
         
-        cached_result = self._search_cache.get(query, k, hybrid)
+        cached_result = self._search_cache.get(query, k, hybrid, sort_by)
         if cached_result is not None: return TaskResult(True, "검색 완료 (캐시)", cached_result)
         
         try:
@@ -1137,9 +1194,9 @@ class RegulationQASystem:
                         logger.debug(f"BM25 검색 오류: {e}")
                         return []
                 
+                # 병렬 실행 (reused executor)
                 vec_future = self._search_executor.submit(vector_search)
                 bm25_future = self._search_executor.submit(bm25_search)
-
                 vec_results = vec_future.result(timeout=30)
                 bm_res = bm25_future.result(timeout=30)
                 
@@ -1248,7 +1305,8 @@ class RegulationQASystem:
             else:
                 sorted_res = sorted(results.values(), key=lambda x: x['score'], reverse=True)[:k]
                 
-            if not filter_file: self._search_cache.set(query, k, hybrid, sorted_res)
+            if not filter_file:
+                self._search_cache.set(query, k, hybrid, sorted_res, sort_by)
             
             # 대용량 문서 컬렉션 시 메모리 모니터링
             if len(self.documents) > 5000:
@@ -1258,17 +1316,23 @@ class RegulationQASystem:
                     logger.warning(f"검색 후 메모리 경고: {warning}")
             
             # 성능 모니터링: 느린 쿼리 경고
-            elapsed = time.perf_counter() - start_time
-            if elapsed > 1.0:
-                logger.warning(f"⚠️ 느린 검색: {elapsed:.2f}s - '{query[:50]}...' (결과: {len(sorted_res)}개)")
-            elif elapsed > 0.5:
-                logger.info(f"검색 완료: {elapsed:.2f}s - '{query[:30]}...'")
+            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+            if elapsed_ms > 1000.0:
+                logger.warning(
+                    "search_slow query_len=%d results=%d elapsed_ms=%.1f",
+                    len(query), len(sorted_res), elapsed_ms
+                )
+            elif elapsed_ms > 500.0:
+                logger.info(
+                    "search_done query_len=%d results=%d elapsed_ms=%.1f",
+                    len(query), len(sorted_res), elapsed_ms
+                )
                 
             return TaskResult(True, "검색 완료", sorted_res)
             
         except Exception as e:
-            elapsed = time.perf_counter() - start_time
-            logger.error(f"검색 오류 ({elapsed:.2f}s): {e}")
+            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+            logger.error(f"검색 오류 ({elapsed_ms:.1f}ms): {e}")
             return TaskResult(False, f"검색 오류: {e}")
             
     def get_file_infos(self) -> List[Dict]:

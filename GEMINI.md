@@ -329,7 +329,7 @@ python download_models.py
 
 ## 📊 Performance Metrics
 
-| Metric | Value (v2.6.1) |
+| Metric | Value (v2.6.2) |
 |--------|----------------|
 | Search Response | ~80ms (↓ 47%) |
 | Cache Hit Rate | ~90% (↑ 12%) |
@@ -337,6 +337,25 @@ python download_models.py
 | Max Concurrent | 10 searches |
 | Rate Limit | 300 req/min/IP |
 | Response Compression | ~75% reduction (Gzip) |
+| Cache TTL | 600s (adaptive, max 2x) |
+| Cache Key | `query + k + hybrid + sort_by` |
+
+### Frontend Runtime Notes
+- Admin bootstrap is guarded by `window.__adminBootstrapped` (single init path).
+- Admin polling uses one timer + Visibility API.
+- jsPDF/AutoTable are lazy-loaded at export-time (local vendor first, CDN fallback).
+
+---
+
+## 🧪 Perf Commands
+
+```bash
+PYTHONPATH=. pytest -q
+python scripts/perf_smoke.py
+python scripts/perf_smoke.py --base-url http://127.0.0.1:8080 --query "휴가 규정"
+```
+
+Default benchmark scenario: warmup 30, measure 200, concurrency 1/5/10.
 
 ---
 

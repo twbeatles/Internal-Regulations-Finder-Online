@@ -612,6 +612,7 @@ class DocumentComparator:
 class TextHighlighter:
     # 정규식 패턴 캐시 (v2.6.1 성능 최적화)
     _pattern_cache = {}
+    _query_pattern_cache = {}
     _CACHE_MAX_SIZE = 100
     
     @classmethod
@@ -626,23 +627,40 @@ class TextHighlighter:
                     del cls._pattern_cache[key]
             cls._pattern_cache[keyword] = re.compile(re.escape(keyword), re.IGNORECASE)
         return cls._pattern_cache[keyword]
+
+    @classmethod
+    def _get_cached_query_pattern(cls, query: str):
+        """쿼리 전체에 대한 단일 정규식 패턴 캐시"""
+        keywords = sorted(
+            {kw.strip() for kw in str(query or '').split() if len(kw.strip()) >= 2},
+            key=len,
+            reverse=True
+        )
+        if not keywords:
+            return None
+
+        cache_key = "\x1f".join(keywords)
+        if cache_key not in cls._query_pattern_cache:
+            if len(cls._query_pattern_cache) >= cls._CACHE_MAX_SIZE:
+                # 오래된 항목 절반 제거
+                keys_to_remove = list(cls._query_pattern_cache.keys())[:cls._CACHE_MAX_SIZE // 2]
+                for key in keys_to_remove:
+                    del cls._query_pattern_cache[key]
+            alternation = "|".join(re.escape(kw) for kw in keywords)
+            cls._query_pattern_cache[cache_key] = re.compile(f"({alternation})", re.IGNORECASE)
+        return cls._query_pattern_cache[cache_key]
     
     @staticmethod
     def highlight(text: str, query: str, tag: str = 'mark') -> str:
-        """검색어 하이라이트 (성능 최적화: 캐싱된 패턴 사용)"""
+        """검색어 하이라이트 (성능 최적화: 쿼리 단일 패턴 + 캐싱)"""
         if not text or not query:
             return text
-        
-        keywords = [kw.strip() for kw in query.split() if len(kw.strip()) >= 2]
-        if not keywords:
+
+        pattern = TextHighlighter._get_cached_query_pattern(query)
+        if pattern is None:
             return text
-        
-        result = text
-        for keyword in keywords:
-            pattern = TextHighlighter._get_cached_pattern(keyword)
-            result = pattern.sub(f'<{tag}>\\g<0></{tag}>', result)
-        
-        return result
+
+        return pattern.sub(f'<{tag}>\\g<0></{tag}>', text)
     
     @staticmethod
     def extract_keywords(documents: List[str], top_k: int = 50) -> List[str]:

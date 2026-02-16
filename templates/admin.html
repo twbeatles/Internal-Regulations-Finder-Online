@@ -289,20 +289,7 @@
     <!-- 토스트 알림 -->
     <div id="toast-container" class="toast-container"></div>
 
-    <script src="/static/app.js"></script>
-    <script>
-        // 관리자 페이지 초기화
-        document.addEventListener('DOMContentLoaded', () => {
-            initAdmin();
-        });
-
-        // 비밀번호 입력 시 엔터 키 처리
-        document.getElementById('auth-password')?.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                submitAdminAuth();
-            }
-        });
-    </script>
+    <script defer src="/static/app.js"></script>
 </body>
 
 </html>

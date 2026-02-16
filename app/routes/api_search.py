@@ -2,6 +2,7 @@
 import time
 from flask import Blueprint, jsonify, request
 from app.services.search import qa_system, search_queue, rate_limiter
+from app.services.document import TextHighlighter
 from app.config import AppConfig
 from app.constants import HttpStatus, ErrorMessages
 from app.utils import logger
@@ -68,28 +69,28 @@ def search_route():
         max_content_len = getattr(AppConfig, 'MAX_CONTENT_PREVIEW', 1500)
         
         if res.success and res.data:
-            from app.services.document import TextHighlighter
-            
             for item in res.data:
                 # 콘텐츠 길이 제한 (응답 크기 감소)
-                content = item.get('content', '')
+                content = item.get('content') or ''
                 if len(content) > max_content_len:
-                    item['content'] = content[:max_content_len] + '...'
+                    content = content[:max_content_len] + '...'
+                    item['content'] = content
                     item['is_truncated'] = True
                 
                 # 하이라이트 사전 계산 (클라이언트 부담 감소)
                 if not item.get('content_highlighted'):
-                    item['content_highlighted'] = TextHighlighter.highlight(
-                        item['content'], query
-                    )
+                    item['content_highlighted'] = TextHighlighter.highlight(content, query)
                 
                 # 점수 소수점 제한 (JSON 크기 감소)
-                if 'score' in item:
-                    item['score'] = round(item['score'], 4)
-                if 'vec_score' in item:
-                    item['vec_score'] = round(item['vec_score'], 4)
-                if 'bm25_score' in item:
-                    item['bm25_score'] = round(item['bm25_score'], 4)
+                score = item.get('score')
+                if isinstance(score, (int, float)):
+                    item['score'] = round(score, 4)
+                vec_score = item.get('vec_score')
+                if isinstance(vec_score, (int, float)):
+                    item['vec_score'] = round(vec_score, 4)
+                bm25_score = item.get('bm25_score')
+                if isinstance(bm25_score, (int, float)):
+                    item['bm25_score'] = round(bm25_score, 4)
         
         # 성능 로깅
         duration_ms = (time.perf_counter() - start_time) * 1000

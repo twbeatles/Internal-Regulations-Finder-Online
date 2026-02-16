@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 import os
 import threading
+from collections import OrderedDict
 from pathlib import Path
 from flask import Blueprint, jsonify, request, send_file
 from werkzeug.utils import secure_filename
 from app.services.search import qa_system
+from app.services.document import DocumentExtractor
 from app.utils import logger, FileUtils, TaskResult, get_app_directory, api_error, api_success
 from app.config import AppConfig
 from app.constants import ErrorMessages, HttpStatus
@@ -14,6 +16,10 @@ from app.auth import admin_required
 files_bp = Blueprint('files', __name__)
 file_lock = threading.Lock()
 LOCK_TIMEOUT = 30  # 파일 잠금 타임아웃 (초)
+_preview_extractor = DocumentExtractor()
+_preview_cache_lock = threading.Lock()
+_preview_cache: OrderedDict = OrderedDict()
+_PREVIEW_CACHE_MAX_SIZE = 128
 
 def acquire_file_lock(timeout=LOCK_TIMEOUT):
     """파일 잠금 획득 (타임아웃 지원)
@@ -22,6 +28,38 @@ def acquire_file_lock(timeout=LOCK_TIMEOUT):
         bool: 잠금 획득 성공 여부
     """
     return file_lock.acquire(timeout=timeout)
+
+def _preview_cache_get(cache_key: str):
+    with _preview_cache_lock:
+        payload = _preview_cache.get(cache_key)
+        if payload is not None:
+            _preview_cache.move_to_end(cache_key)
+        return payload
+
+def _preview_cache_set(cache_key: str, payload: dict):
+    with _preview_cache_lock:
+        if cache_key in _preview_cache:
+            del _preview_cache[cache_key]
+        while len(_preview_cache) >= _PREVIEW_CACHE_MAX_SIZE:
+            _preview_cache.popitem(last=False)
+        _preview_cache[cache_key] = payload
+
+def _build_preview_payload(filename: str, target_path: str, content: str, length: int) -> dict:
+    text = content or ''
+    preview = text[:length]
+    truncated = len(text) > length
+    info = qa_system.file_infos.get(target_path)
+    return {
+        'success': True,
+        'filename': filename,
+        'preview': preview,
+        'content': preview,  # 프론트엔드 하위호환
+        'total_length': len(text),
+        'truncated': truncated,
+        'is_truncated': truncated,  # 프론트엔드 하위호환
+        'status': getattr(getattr(info, 'status', None), 'value', '완료'),
+        'chunks': getattr(info, 'chunks', 0),
+    }
 
 def _find_file_path(filename: str) -> str:
     """파일명으로 전체 경로 찾기
@@ -35,6 +73,7 @@ def _find_file_path(filename: str) -> str:
     Raises:
         DocumentNotFoundError: 파일을 찾을 수 없는 경우
     """
+    # Route uses <path:filename>; normalize to basename to avoid path injection.
     filename = os.path.basename((filename or "").replace("\\", "/"))
     if not filename:
         raise DocumentNotFoundError(filename)
@@ -208,6 +247,7 @@ def upload_file():
     original_name = file.filename
     filename = FileUtils.sanitize_upload_filename(original_name)
 
+    # Ensure allowed extension after sanitization (defense-in-depth).
     if not FileUtils.allowed_file(filename):
         ext = os.path.splitext(filename)[1]
         return jsonify({'success': False, 'message': f'{ErrorMessages.FILE_TYPE_NOT_SUPPORTED}: {ext}'}), HttpStatus.BAD_REQUEST
@@ -217,6 +257,7 @@ def upload_file():
     if upload_root not in save_path.parents:
         return jsonify({'success': False, 'message': '유효하지 않은 파일명입니다'}), HttpStatus.BAD_REQUEST
 
+    # Avoid overwriting existing file.
     if save_path.exists():
         stem = save_path.stem
         suffix = save_path.suffix
@@ -276,10 +317,12 @@ def upload_file():
 def get_tags():
     file_path = request.args.get('file')
     if file_path:
+        # Store tags by basename to avoid leaking absolute paths.
         normalized = os.path.basename((file_path or "").replace("\\", "/"))
         tags = qa_system.tag_manager.get_tags(normalized)
         return jsonify({'success': True, 'tags': tags})
     else:
+        # 전체 태그 통계
         stats = qa_system.tag_manager.get_tag_stats()
         return jsonify({'success': True, 'tags': qa_system.tag_manager.get_all_tags(), 'stats': stats})
 
@@ -403,26 +446,43 @@ def get_file_preview(filename):
     """파일 미리보기 (텍스트 일부 반환)"""
     try:
         target_path = _find_file_path(filename)
-        length = request.args.get('length', 2000, type=int)
-        
-        # 문서 추출
-        from app.services.document import DocumentExtractor
-        extractor = DocumentExtractor()
-        content, error = extractor.extract(target_path)
-        
-        if error:
-            return jsonify({'success': False, 'message': error}), 400
-        
-        # 미리보기 길이 제한
-        preview = content[:length] if content else ''
-        
-        return jsonify({
-            'success': True,
-            'filename': filename,
-            'preview': preview,
-            'total_length': len(content) if content else 0,
-            'truncated': len(content) > length if content else False
-        })
+        length = request.args.get('length', 2000, type=int) or 2000
+        length = max(200, min(length, 10000))
+
+        try:
+            mtime = os.path.getmtime(target_path)
+        except OSError:
+            mtime = 0
+
+        cache_key = f"{target_path}|{mtime}|{length}"
+        cached = _preview_cache_get(cache_key)
+        if cached is not None:
+            return jsonify(cached)
+
+        ext = os.path.splitext(target_path)[1].lower()
+
+        # TXT는 앞부분만 빠르게 읽어서 응답 (미리보기 목적).
+        if ext == '.txt':
+            try:
+                with open(target_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    head = f.read(length + 1)
+                    if len(head) <= length:
+                        rest = f.read()
+                        content = head + rest
+                    else:
+                        content = head
+            except Exception as e:
+                return jsonify({'success': False, 'message': f'텍스트 미리보기 실패: {e}'}), 400
+
+            payload = _build_preview_payload(filename, target_path, content, length)
+        else:
+            content, error = _preview_extractor.extract(target_path)
+            if error:
+                return jsonify({'success': False, 'message': error}), 400
+            payload = _build_preview_payload(filename, target_path, content, length)
+
+        _preview_cache_set(cache_key, payload)
+        return jsonify(payload)
     except DocumentNotFoundError:
         return api_error("파일을 찾을 수 없습니다", status_code=HttpStatus.NOT_FOUND)
     except Exception as e:

@@ -24,6 +24,25 @@
 - **자동 Fallback** - ONNX 실패 시 torch로 자동 전환
 - **GUI 설정** - 서버 GUI에서 백엔드 선택 UI 추가
 
+## ✨ v2.6.2 업데이트 (2026-02)
+
+### 🚀 성능 리팩토링
+- **클라이언트 중복 제거** - 관리자 초기화/업로드/상태 갱신 레거시 블록 정리
+- **관리자 부트스트랩 단일화** - `initAdmin()` idempotent 가드 + 단일 폴링 루프
+- **API 소프트 캐시** - `/api/status`, `/api/stats` 1.5초 메모리 캐시로 중복 호출 억제
+- **PDF 지연 로딩** - jsPDF/AutoTable을 내보내기 클릭 시점에 로드 (로컬 vendor 우선)
+
+### 🧠 서버 검색 경로 최적화
+- **SearchCache 구조 개선** - 튜플 대신 명시 엔트리 구조 사용
+- **캐시 키 정합성 강화** - `sort_by`를 캐시 키에 포함
+- **TTL 정책 정리** - 기본 TTL + 적응형 연장(상한 2배)
+- **하이라이트 최적화** - 쿼리 단일 정규식 패턴 캐시 적용
+
+### 📄 파일 미리보기 최적화
+- **Preview LRU 캐시** - `path+mtime+length` 기반 캐시
+- **TXT fast-path** - 미리보기 요청 시 선두 텍스트 우선 읽기
+- **추출기 재사용** - 요청마다 `DocumentExtractor` 재생성 제거
+
 ### 📦 이전 버전
 | 버전 | 주요 변경 |
 |------|----------|
@@ -169,8 +188,8 @@ pyinstaller regulation_search_onefile.spec --clean
 │   ├── index.html             # 메인 검색 페이지
 │   └── admin.html             # 관리자 페이지
 ├── 📁 config/                 # 런타임 설정
-│   ├── settings.json          # 사용자 설정 (런타임, gitignore됨; settings.example.json 참고)
-│   └── regulations.db         # SQLite 데이터베이스 (런타임, gitignore됨)
+│   ├── settings.json          # 사용자 설정
+│   └── regulations.db         # SQLite 데이터베이스
 ├── 📁 uploads/                # 업로드된 문서
 ├── 📁 revisions/              # 개정 이력 파일
 └── 📁 models/                 # AI 모델 캐시
@@ -267,7 +286,7 @@ class AppConfig:
 # 모델 다운로드
 python download_models.py
 
-# config/settings.json (런타임 파일; config/settings.example.json에서 복사하여 사용)
+# config/settings.json
 {
     "offline_mode": true,
     "local_model_path": "./models/snunlp--KR-SBERT-V40K-klueNLI-augSTS"
@@ -278,12 +297,12 @@ python download_models.py
 
 ## 📊 성능 벤치마크
 
-| 항목 | v2.4 | v2.5 |
-|------|------|------|
-| 검색 응답 시간 | ~150ms | ~120ms |
-| 캐시 히트율 | 80% | 85% |
-| 메모리 사용량 | 0.7GB | 0.65GB |
-| API 응답 크기 | 기준 | -20% |
+| 항목 | v2.5 | v2.6.2 |
+|------|------|--------|
+| 검색 응답 시간 | ~120ms | ~80ms |
+| 캐시 히트율 | ~85% | ~90% |
+| 메모리 사용량 | ~0.65GB | ~0.60GB |
+| 응답 압축 | 기본 | Gzip 활성화 |
 
 ### 성능 특성
 
@@ -291,8 +310,24 @@ python download_models.py
 |------|-----|
 | 동시 검색 제한 | 10개 (SearchQueue) |
 | 분당 요청 제한 | 300회/IP (RateLimiter) |
-| 캐시 TTL | 300초 |
+| 캐시 TTL | 600초 (적응형 최대 2배) |
+| 캐시 키 | `query + k + hybrid + sort_by` |
 | 최대 업로드 | 50MB |
+
+---
+
+## 🧪 성능 측정
+
+```bash
+# 테스트 실행 (표준)
+PYTHONPATH=. pytest -q
+
+# 검색 API 스모크 벤치마크
+python scripts/perf_smoke.py
+python scripts/perf_smoke.py --base-url http://127.0.0.1:8080 --query "휴가 규정"
+```
+
+`scripts/perf_smoke.py`는 워밍업 30회, 측정 200회, 동시성 1/5/10 기준으로 p50/p95/p99, 평균 응답 크기, 에러율을 출력합니다.
 
 ---
 
