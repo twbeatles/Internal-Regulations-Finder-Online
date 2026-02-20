@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-\"\"\"
+"""
 사내 규정 검색기 v2.6 - 초경량 GUI 빌드 Spec
 빌드: pyinstaller regulation_search_ultra_lite_gui.spec
 

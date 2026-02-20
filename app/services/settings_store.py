@@ -130,9 +130,9 @@ def verify_admin_password(password: str) -> bool:
 
     stored_hash = get_admin_password_hash()
 
-    # Back-compat: if no password set, allow default "admin".
+    # Fail-closed: no configured password means admin login is disabled.
     if not stored_hash:
-        return password == "admin"
+        return False
 
     # Legacy format: raw sha256 hex.
     if _SHA256_HEX_RE.match(stored_hash):
@@ -162,4 +162,3 @@ def set_admin_password(password: str) -> bool:
         settings["admin_password_hash"] = hashlib.sha256(password.encode("utf-8")).hexdigest()
 
     return store.save(settings)
-

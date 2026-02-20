@@ -474,3 +474,37 @@ class AppConfig:
 - [ ] API 응답은 `api_success()` / `api_error()` 헬퍼 사용
 - [ ] 로깅은 `logger` 객체 사용 (print 금지)
 - [ ] 경로 검증 (Path Traversal 방지)
+
+---
+
+## 📌 v2.7 구현 반영 메모 (2026-02-20)
+
+### API/스키마
+- `POST /api/search`는 `filter_file_id`를 지원하며 `filter_file`은 하위호환으로 유지.
+- `/api/status`는 `progress`와 `load_progress`를 동시에 제공.
+- `/api/sync/status`는 기존 필드와 함께 `status` 객체를 병행 제공.
+- `/api/revisions` GET은 `history`와 `revisions`를 동시에 제공.
+- `/api/tags/auto`는 `suggested_tags`와 `tags`를 동시에 제공.
+
+### 파일 식별자 정책
+- 파일 식별은 `filename`보다 `file_id`를 우선 사용.
+- `file_id`는 정규화된 절대경로 기반 해시(`FileUtils.make_file_id`)로 생성.
+- by-id 라우트:
+  - `GET /api/files/by-id/<file_id>/preview`
+  - `GET /api/files/by-id/<file_id>/download`
+  - `DELETE /api/files/by-id/<file_id>`
+  - `GET /api/files/by-id/<file_id>/versions`
+  - `GET /api/files/by-id/<file_id>/versions/<version>`
+  - `GET /api/files/by-id/<file_id>/versions/compare`
+
+### 보안 정책
+- 기본 관리자 비밀번호 fallback 제거(미설정 시 인증 실패).
+- 상태 변경 API에 `admin_required` 적용:
+  - `/api/upload`, `/api/upload/folder`, `/api/revisions` POST,
+  - `/api/tags/set`, `/api/tags/auto`, `/api/cache/clear`
+- 검색 결과 렌더링은 서버 HTML 신뢰 대신 클라이언트 escape 기반 하이라이트 사용.
+- 리비전 파일 저장은 안전 파일명 + `revisions` 루트 내부 경로 검증 필수.
+
+### Lite(BM25-only) 경로
+- 임베딩 모델 미로드 상태에서도 캐시/검색 경로가 동작하도록 분기 강화.
+- 벡터 캐시 로드는 `embedding_model && FAISS`일 때만 활성화.

@@ -6,6 +6,7 @@ from app.services.document import TextHighlighter
 from app.config import AppConfig
 from app.constants import HttpStatus, ErrorMessages
 from app.utils import logger
+from app.auth import admin_required
 from app.exceptions import (
     SearchError, SearchTimeoutError, SearchRateLimitError, 
     SearchQueueFullError, ModelNotLoadedError
@@ -55,13 +56,14 @@ def search_route():
         hybrid = data.get('hybrid', True)
         sort_by = data.get('sort_by', 'relevance')
         filter_file = data.get('filter_file')
+        filter_file_id = data.get('filter_file_id')
         
         # 검색 히스토리 저장
         if getattr(qa_system, '_search_history', None):
              qa_system._search_history.add(query)
         
         # 검색 수행
-        res = qa_system.search(query, k, hybrid, sort_by, filter_file)
+        res = qa_system.search(query, k, hybrid, sort_by, filter_file, filter_file_id)
         
         # ====================================================================
         # 응답 최적화 v2.6.1: 콘텐츠 길이 제한 및 하이라이트 사전 처리
@@ -154,6 +156,7 @@ def get_suggestions():
     return jsonify({'suggestions': suggestions})
 
 @search_bp.route('/cache/clear', methods=['POST'])
+@admin_required
 def clear_cache():
     """검색 캐시 초기화"""
     try:

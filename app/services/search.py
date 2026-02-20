@@ -681,12 +681,10 @@ class RegulationQASystem:
     def _get_cache_dir(self, folder: str) -> str:
         """FAISS 캐시 디렉토리 경로 생성
         
-        Raises:
-            ModelNotLoadedError: 모델이 로드되지 않은 경우
+        BM25-only 모드(모델 미로드)도 캐시 경로를 생성합니다.
         """
-        if not self.model_id:
-            raise ModelNotLoadedError()
-        h1 = hashlib.md5(self.model_id.encode()).hexdigest()[:6]
+        model_key = self.model_id or "bm25-only"
+        h1 = hashlib.md5(model_key.encode()).hexdigest()[:6]
         h2 = hashlib.md5(folder.encode()).hexdigest()[:6]
         return os.path.join(self.cache_path, f"{h2}_{h1}")
     
@@ -699,9 +697,6 @@ class RegulationQASystem:
         Returns:
             TaskResult: 처리 결과
         """
-        if not self.embedding_model:
-            return TaskResult(False, "모델이 로드되지 않았습니다")
-        
         if not os.path.exists(file_path):
             return TaskResult(False, f"파일을 찾을 수 없습니다: {file_path}")
         
@@ -723,6 +718,7 @@ class RegulationQASystem:
                 return TaskResult(False, "문서 분할 결과가 없습니다")
             
             filename = os.path.basename(file_path)
+            file_id = FileUtils.make_file_id(file_path)
             file_size = os.path.getsize(file_path)
             
             # file_infos에 추가
@@ -743,13 +739,14 @@ class RegulationQASystem:
                         'doc_id': doc_id,
                         'source': filename,
                         'path': file_path,
+                        'file_id': file_id,
                         'chunk_id': i,
                         'total_chunks': len(chunks),
                     }
                 )
             
             # 벡터스토어 업데이트 (있으면 추가, 없으면 생성)
-            if self.embedding_model and FAISS:
+            if self.embedding_model and FAISS and Document:
                 try:
                     docs = []
                     base_doc_id = len(self.documents) - len(chunks)
@@ -761,6 +758,7 @@ class RegulationQASystem:
                                     'doc_id': base_doc_id + i,
                                     'source': filename,
                                     'path': file_path,
+                                    'file_id': file_id,
                                     'chunk_id': i,
                                     'total_chunks': len(chunks),
                                 },
@@ -804,8 +802,9 @@ class RegulationQASystem:
             return self._process_internal(folder, files, progress_cb, force_reindex=force_reindex)
     
     def _process_internal(self, folder: str, files: List[str], progress_cb, force_reindex: bool = False) -> TaskResult:
-        # Lazy import 실행 (이미 로드되었으면 스킵)
-        _lazy_import_langchain()
+        # 벡터 인덱싱 사용 시에만 LangChain 의존성 로드
+        if self.embedding_model:
+            _lazy_import_langchain()
         
         self.current_folder = folder
         cache_dir = self._get_cache_dir(folder)
@@ -853,7 +852,13 @@ class RegulationQASystem:
         self.documents, self.doc_meta = [], []
         
         # Load Cache
-        if (not force_reindex) and cached and os.path.exists(os.path.join(cache_dir, "index.faiss")):
+        if (
+            (not force_reindex)
+            and self.embedding_model
+            and FAISS
+            and cached
+            and os.path.exists(os.path.join(cache_dir, "index.faiss"))
+        ):
             try:
                 if progress_cb: progress_cb(10, "캐시 로드...")
                 self.vector_store = FAISS.load_local(
@@ -871,10 +876,32 @@ class RegulationQASystem:
                             for i, meta in enumerate(self.doc_meta):
                                 if isinstance(meta, dict) and 'doc_id' not in meta:
                                     meta['doc_id'] = i
+                                if isinstance(meta, dict) and 'file_id' not in meta:
+                                    path = meta.get('path', '')
+                                    meta['file_id'] = FileUtils.make_file_id(path) if path else ""
             except Exception as e:
                 logger.warning(f"캐시 로드 실패: {e}")
                 to_process, cached = files, []
                 self.vector_store = None
+
+        # BM25-only 모드에서도 docs.json 기반 캐시 로드는 가능해야 함.
+        if (not force_reindex) and cached and not self.documents:
+            docs_path = os.path.join(cache_dir, "docs.json")
+            if os.path.exists(docs_path):
+                try:
+                    with open(docs_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        self.documents = data.get('docs', [])
+                        self.doc_meta = data.get('meta', [])
+                        if isinstance(self.doc_meta, list):
+                            for i, meta in enumerate(self.doc_meta):
+                                if isinstance(meta, dict) and 'doc_id' not in meta:
+                                    meta['doc_id'] = i
+                                if isinstance(meta, dict) and 'file_id' not in meta:
+                                    path = meta.get('path', '')
+                                    meta['file_id'] = FileUtils.make_file_id(path) if path else ""
+                except Exception as e:
+                    logger.warning(f"docs.json 캐시 로드 실패: {e}")
         
         if not to_process:
             self._build_bm25()
@@ -882,9 +909,7 @@ class RegulationQASystem:
             return TaskResult(True, f"캐시에서 {len(cached)}개 파일 로드", 
                             {'chunks': len(self.documents), 'cached': len(cached), 'new': 0})
         
-        splitter = CharacterTextSplitter(
-            separator="\n\n", chunk_size=AppConfig.CHUNK_SIZE, chunk_overlap=AppConfig.CHUNK_OVERLAP
-        )
+        splitter = DocumentSplitter(chunk_size=AppConfig.CHUNK_SIZE, chunk_overlap=AppConfig.CHUNK_OVERLAP)
         failed, new_docs, new_cache_info = [], [], {}
         
         # Parallel Extraction
@@ -922,6 +947,7 @@ class RegulationQASystem:
         
         for fp, fname, content, error, meta in extracted_results:
             self.file_infos[fp].status = FileStatus.PROCESSING
+            file_id = FileUtils.make_file_id(fp)
             if error:
                 failed.append(f"{fname} ({error})")
                 self.file_infos[fp].status = FileStatus.FAILED
@@ -934,26 +960,34 @@ class RegulationQASystem:
                 continue
                 
             try:
-                chunks = splitter.split_text(content)
+                chunks = splitter.split(content)
                 chunk_count = 0
                 for chunk in chunks:
                     chunk_text = chunk.strip()
                     if not chunk_text:
                         continue
                     doc_id = len(self.documents)
-                    new_docs.append(
-                        Document(
-                            page_content=chunk_text,
-                            metadata={
-                                "doc_id": doc_id,
-                                "source": fname,
-                                "path": fp,
-                                "chunk_id": chunk_count,
-                            },
+                    if self.embedding_model and FAISS and Document:
+                        new_docs.append(
+                            Document(
+                                page_content=chunk_text,
+                                metadata={
+                                    "doc_id": doc_id,
+                                    "source": fname,
+                                    "path": fp,
+                                    "file_id": file_id,
+                                    "chunk_id": chunk_count,
+                                },
+                            )
                         )
-                    )
                     self.documents.append(chunk_text)
-                    self.doc_meta.append({"doc_id": doc_id, "source": fname, "path": fp, "chunk_id": chunk_count})
+                    self.doc_meta.append({
+                        "doc_id": doc_id,
+                        "source": fname,
+                        "path": fp,
+                        "file_id": file_id,
+                        "chunk_id": chunk_count
+                    })
                     chunk_count += 1
                 self.file_infos[fp].status = FileStatus.SUCCESS
                 self.file_infos[fp].chunks = chunk_count
@@ -1017,8 +1051,9 @@ class RegulationQASystem:
                     mismatches = []
                     
                     # 모델 ID 검증
-                    if cache_meta.get('model_id') != self.model_id:
-                        mismatches.append(f"model_id: {cache_meta.get('model_id')} -> {self.model_id}")
+                    expected_model_id = self.model_id or "bm25-only"
+                    if cache_meta.get('model_id') != expected_model_id:
+                        mismatches.append(f"model_id: {cache_meta.get('model_id')} -> {expected_model_id}")
                     
                     # 백엔드 검증
                     current_backend = getattr(AppConfig, 'EMBED_BACKEND', 'torch')
@@ -1071,7 +1106,7 @@ class RegulationQASystem:
             
             # 캐시 메타데이터 포함
             cache_meta = {
-                'model_id': self.model_id,
+                'model_id': self.model_id or "bm25-only",
                 'embed_backend': getattr(AppConfig, 'EMBED_BACKEND', 'torch'),
                 'embed_normalize': getattr(AppConfig, 'EMBED_NORMALIZE', True),
                 'chunk_size': AppConfig.CHUNK_SIZE,
@@ -1151,7 +1186,15 @@ class RegulationQASystem:
         self._executor.submit(bg_process)
         return TaskResult(True, "초기화 시작됨 (백그라운드 처리)")
 
-    def search(self, query: str, k: int = 5, hybrid: bool = True, sort_by: str = 'relevance', filter_file: str = None) -> TaskResult:
+    def search(
+        self,
+        query: str,
+        k: int = 5,
+        hybrid: bool = True,
+        sort_by: str = 'relevance',
+        filter_file: str = None,
+        filter_file_id: str = None
+    ) -> TaskResult:
         """검색 수행 (성능 모니터링 포함)"""
         start_time = time.perf_counter()  # time 모듈은 이미 모듈 상단에서 import됨
         
@@ -1216,6 +1259,7 @@ class RegulationQASystem:
                             'content': self.documents[doc_id] if isinstance(doc_id, int) and 0 <= doc_id < len(self.documents) else doc.page_content,
                             'source': meta.get('source', '?'),
                             'path': meta.get('path', ''),
+                            'file_id': meta.get('file_id') or (FileUtils.make_file_id(meta.get('path', '')) if meta.get('path') else ''),
                             'vec_score': score,
                             'bm25_score': 0
                         }
@@ -1236,6 +1280,7 @@ class RegulationQASystem:
                                     'content': self.documents[idx],
                                     'source': meta.get('source', '?'),
                                     'path': meta.get('path', ''),
+                                    'file_id': meta.get('file_id') or (FileUtils.make_file_id(meta.get('path', '')) if meta.get('path') else ''),
                                     'vec_score': 0,
                                     'bm25_score': norm
                                 }
@@ -1262,6 +1307,7 @@ class RegulationQASystem:
                                 'content': self.documents[doc_id] if isinstance(doc_id, int) and 0 <= doc_id < len(self.documents) else doc.page_content,
                                 'source': meta.get('source', '?'),
                                 'path': meta.get('path', ''),
+                                'file_id': meta.get('file_id') or (FileUtils.make_file_id(meta.get('path', '')) if meta.get('path') else ''),
                                 'vec_score': score,
                                 'bm25_score': 0
                             }
@@ -1288,10 +1334,13 @@ class RegulationQASystem:
                                         'content': self.documents[idx],
                                         'source': meta.get('source', '?'),
                                         'path': meta.get('path', ''),
+                                        'file_id': meta.get('file_id') or (FileUtils.make_file_id(meta.get('path', '')) if meta.get('path') else ''),
                                         'vec_score': 0,
                                         'bm25_score': norm
                                     }
                                 
+            if filter_file_id:
+                results = {k: v for k, v in results.items() if v.get('file_id') == filter_file_id}
             if filter_file:
                 results = {k: v for k, v in results.items() if v['source'] == filter_file}
                 
@@ -1305,7 +1354,7 @@ class RegulationQASystem:
             else:
                 sorted_res = sorted(results.values(), key=lambda x: x['score'], reverse=True)[:k]
                 
-            if not filter_file:
+            if not filter_file and not filter_file_id:
                 self._search_cache.set(query, k, hybrid, sorted_res, sort_by)
             
             # 대용량 문서 컬렉션 시 메모리 모니터링

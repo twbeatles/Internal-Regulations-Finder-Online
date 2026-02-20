@@ -116,6 +116,31 @@ function escapeHtml(str) {
         .replace(/'/g, "&#039;");
 }
 
+function escapeRegExp(str) {
+    return String(str || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function highlightSafeText(text, query) {
+    const source = String(text || '');
+    const keywords = Array.from(
+        new Set(
+            String(query || '')
+                .split(/\s+/)
+                .map(s => s.trim())
+                .filter(s => s.length >= 2)
+        )
+    ).sort((a, b) => b.length - a.length);
+
+    if (!keywords.length) return escapeHtml(source);
+
+    const pattern = new RegExp(`(${keywords.map(escapeRegExp).join('|')})`, 'gi');
+    const parts = source.split(pattern);
+    return parts.map((part, idx) => {
+        if (idx % 2 === 1) return `<mark>${escapeHtml(part)}</mark>`;
+        return escapeHtml(part);
+    }).join('');
+}
+
 /**
  * 토스트 알림 표시
  * @param {string} message - 표시할 메시지
@@ -1061,11 +1086,16 @@ const API = {
         return this.fetch('/api/status');
     },
 
-    search(query, k = 5, hybrid = true, highlight = true, filterFile = null, sortBy = 'relevance') {
+    search(query, k = 5, hybrid = true, highlight = true, filterFileId = null, sortBy = 'relevance', filterFileName = null) {
         return this.fetch('/api/search', {
             method: 'POST',
             cancelKey: 'search',
-            body: JSON.stringify({ query, k, hybrid, highlight, filter_file: filterFile, sort_by: sortBy })
+            body: JSON.stringify({
+                query, k, hybrid, highlight,
+                filter_file_id: filterFileId,
+                filter_file: filterFileName,
+                sort_by: sortBy
+            })
         });
     },
 
@@ -1109,6 +1139,21 @@ const API = {
         };
     },
 
+    async uploadFolder(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const response = await fetch('/api/upload/folder', {
+                method: 'POST',
+                credentials: 'include',
+                body: formData
+            });
+            return await response.json();
+        } catch (error) {
+            return { success: false, message: error.message || '폴더 업로드 실패' };
+        }
+    },
+
     reprocessFiles() {
         return this.fetch('/api/process', { method: 'POST' });
     },
@@ -1132,8 +1177,16 @@ const API = {
         return this.fetch(`/api/files/${encodeURIComponent(filename)}`, { method: 'DELETE' });
     },
 
+    deleteFileById(fileId) {
+        return this.fetch(`/api/files/by-id/${encodeURIComponent(fileId)}`, { method: 'DELETE' });
+    },
+
     getFilePreview(filename, length = 2000) {
         return this.fetch(`/api/files/${encodeURIComponent(filename)}/preview?length=${length}`);
+    },
+
+    getFilePreviewById(fileId, length = 2000) {
+        return this.fetch(`/api/files/by-id/${encodeURIComponent(fileId)}/preview?length=${length}`);
     },
 
     // 관리자 인증 API
@@ -1183,9 +1236,20 @@ const API = {
         return this.fetch(`/api/revisions?filename=${encodeURIComponent(filename)}`);
     },
 
+    getRevisionsById(fileId) {
+        return this.fetch(`/api/revisions?file_id=${encodeURIComponent(fileId)}`);
+    },
+
     // 태그 관리
     getFileTags(filename) {
         return this.fetch(`/api/tags?file=${encodeURIComponent(filename)}`).then(res => {
+            if (!res.success) return { success: false, tags: [] };
+            return { success: true, tags: res.tags || [] };
+        });
+    },
+
+    getFileTagsById(fileId) {
+        return this.fetch(`/api/tags?file_id=${encodeURIComponent(fileId)}`).then(res => {
             if (!res.success) return { success: false, tags: [] };
             return { success: true, tags: res.tags || [] };
         });
@@ -1198,10 +1262,24 @@ const API = {
         });
     },
 
+    setFileTagsById(fileId, tags) {
+        return this.fetch('/api/tags/set', {
+            method: 'POST',
+            body: JSON.stringify({ file_id: fileId, tags })
+        });
+    },
+
     autoTagFile(filename) {
         return this.fetch('/api/tags/auto', {
             method: 'POST',
             body: JSON.stringify({ filename })
+        });
+    },
+
+    autoTagFileById(fileId) {
+        return this.fetch('/api/tags/auto', {
+            method: 'POST',
+            body: JSON.stringify({ file_id: fileId })
         });
     },
 
@@ -1408,7 +1486,7 @@ const AppState = {
 
         if (result.loading) {
             badge.classList.add('loading');
-            text.textContent = result.progress || '로딩 중...';
+            text.textContent = result.progress || result.load_progress || '로딩 중...';
             this.ready = false;
         } else if (result.ready) {
             badge.classList.add('ready');
@@ -1705,12 +1783,16 @@ async function loadFileListForFilter(selectedValue = null) {
 
     const result = await API.getFileNames();
     if (result.success && result.files) {
-        // 기존 옵션 유지 (전체 파일)
-        const existingOptions = filterSelect.innerHTML;
         let html = '<option value="">전체 파일</option>';
 
-        result.files.forEach(filename => {
-            html += `<option value="${escapeHtml(filename)}">${escapeHtml(filename)}</option>`;
+        result.files.forEach(file => {
+            if (typeof file === 'string') {
+                html += `<option value="${escapeHtml(file)}">${escapeHtml(file)}</option>`;
+                return;
+            }
+            const value = file.file_id || file.name || '';
+            const label = file.label || file.name || value;
+            html += `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`;
         });
 
         filterSelect.innerHTML = html;
@@ -1904,10 +1986,10 @@ async function performSearch() {
     resultsContainer.innerHTML = SkeletonLoading.createSearchSkeleton(k);
 
     const hybrid = hybridCheck?.checked !== false;
-    const filter = filterFile?.value || null;
+    const filterId = filterFile?.value || null;
     const sort = sortBy?.value || 'relevance';
 
-    const result = await API.search(query, k, hybrid, true, filter, sort);
+    const result = await API.search(query, k, hybrid, true, filterId, sort, null);
 
     if (!result.success) {
         resultsContainer.innerHTML = `
@@ -2031,8 +2113,11 @@ function createResultCard(item, index) {
     const bookmarkTitle = isBookmarked ? '북마크 해제' : '북마크 추가';
     const bookmarkClass = isBookmarked ? 'bookmarked' : '';
 
-    // 서버에서 하이라이트된 컨텐츠 사용 (없으면 일반 컨텐츠)
-    const displayContent = item.content_highlighted || escapeHtml(item.content || '');
+    // 서버 제공 HTML을 직접 신뢰하지 않고, 안전한 클라이언트 하이라이트만 사용
+    const displayContent = highlightSafeText(item.content || '', lastRenderedQuery || '');
+    const downloadHref = item.file_id
+        ? `/api/files/by-id/${encodeURIComponent(item.file_id)}/download`
+        : `/api/files/${encodeURIComponent(item.source || '')}/download`;
 
     // 콘텐츠 길이에 따라 접기 버튼 표시
     const contentLength = (item.content || '').length;
@@ -2065,7 +2150,7 @@ function createResultCard(item, index) {
             <button class="btn btn-secondary btn-copy" data-index="${index}">
                 📋 복사
             </button>
-            <a href="/api/files/${encodeURIComponent(item.source || '')}/download" 
+            <a href="${downloadHref}" 
                class="btn btn-primary" 
                download
                title="원본 파일 다운로드">
@@ -2375,8 +2460,11 @@ const FolderSync = {
 
     async checkStatus() {
         const result = await API.getSyncStatus();
-        if (result.success && result.status) {
-            this.updateUI(result.status.running);
+        if (result.success) {
+            const running = (result.status && typeof result.status.running === 'boolean')
+                ? result.status.running
+                : !!result.is_syncing;
+            this.updateUI(running);
         }
     },
 
@@ -2432,11 +2520,11 @@ async function uploadFiles(files) {
     // 파일 필터링
     const validFiles = Array.from(files).filter(f => {
         const ext = f.name.split('.').pop().toLowerCase();
-        return ['txt', 'docx', 'pdf'].includes(ext);
+        return ['txt', 'docx', 'pdf', 'xlsx', 'xls', 'hwp'].includes(ext);
     });
 
     if (validFiles.length === 0) {
-        Toast.warning('지원되지 않는 형식', '.txt, .docx, .pdf 파일만 지원됩니다');
+        Toast.warning('지원되지 않는 형식', '.txt, .docx, .pdf, .xlsx, .xls, .hwp 파일만 지원됩니다');
         return;
     }
 
@@ -2506,28 +2594,28 @@ async function loadFiles() {
         <tr>
             <td>${statusIcons[file.status] || '?'} ${file.status}</td>
             <td>
-                <span class="file-name-link" onclick="previewFile('${escapeJs(file.name)}')" title="클릭하여 미리보기">
+                <span class="file-name-link" onclick="previewFile('${escapeJs(file.file_id || '')}', '${escapeJs(file.name)}')" title="클릭하여 미리보기">
                     ${escapeHtml(file.name)}
                 </span>
             </td>
             <td>${formatSize(file.size)}</td>
             <td>${file.chunks}</td>
             <td>
-                <button class="btn btn-secondary btn-sm" onclick="VersionManager.open('${escapeJs(file.name)}')" title="버전 비교">
+                <button class="btn btn-secondary btn-sm" onclick="VersionManager.open('${escapeJs(file.file_id || '')}','${escapeJs(file.name)}')" title="버전 비교">
                     📋 비교
                 </button>
             </td>
             <td class="file-actions">
-                <button class="btn btn-secondary btn-sm" onclick="previewFile('${escapeJs(file.name)}')" title="미리보기">
+                <button class="btn btn-secondary btn-sm" onclick="previewFile('${escapeJs(file.file_id || '')}', '${escapeJs(file.name)}')" title="미리보기">
                     👁️
                 </button>
-                <button class="btn btn-secondary btn-sm" onclick="manageTags('${escapeJs(file.name)}')" title="태그 관리">
+                <button class="btn btn-secondary btn-sm" onclick="manageTags('${escapeJs(file.file_id || '')}','${escapeJs(file.name)}')" title="태그 관리">
                     🏷️
                 </button>
-                <button class="btn btn-secondary btn-sm" onclick="showRevisions('${escapeJs(file.name)}')" title="변경 이력">
+                <button class="btn btn-secondary btn-sm" onclick="showRevisions('${escapeJs(file.file_id || '')}','${escapeJs(file.name)}')" title="변경 이력">
                     🕒
                 </button>
-                <button class="btn btn-danger btn-sm" onclick="deleteFile('${escapeJs(file.name)}')" title="삭제">
+                <button class="btn btn-danger btn-sm" onclick="deleteFile('${escapeJs(file.file_id || '')}','${escapeJs(file.name)}')" title="삭제">
                     🗑️
                 </button>
             </td>
@@ -2536,12 +2624,13 @@ async function loadFiles() {
 }
 
 // 파일 삭제
-async function deleteFile(filename) {
-    if (!confirm(`"${filename}" 파일을 삭제하시겠습니까?\n\n주의: 삭제 후 인덱스 재처리가 필요할 수 있습니다.`)) {
+async function deleteFile(fileId, filename = '') {
+    const label = filename || fileId;
+    if (!confirm(`"${label}" 파일을 삭제하시겠습니까?\n\n주의: 삭제 후 인덱스 재처리가 필요할 수 있습니다.`)) {
         return;
     }
 
-    const result = await API.deleteFile(filename);
+    const result = fileId ? await API.deleteFileById(fileId) : await API.deleteFile(filename);
 
     if (result.success) {
         Toast.success('파일 삭제', result.message);
@@ -2557,7 +2646,7 @@ async function deleteFile(filename) {
 }
 
 // 파일 미리보기
-async function previewFile(filename) {
+async function previewFile(fileId, filename = '') {
     // 기존 모달 제거
     const existingModal = document.getElementById('preview-modal');
     if (existingModal) existingModal.remove();
@@ -2565,7 +2654,9 @@ async function previewFile(filename) {
     // 로딩 표시
     Toast.info('로딩', '파일 내용을 불러오는 중...');
 
-    const result = await API.getFilePreview(filename);
+    const result = fileId
+        ? await API.getFilePreviewById(fileId)
+        : await API.getFilePreview(filename);
 
     if (!result.success) {
         Toast.error('미리보기 실패', result.message);
@@ -2579,7 +2670,7 @@ async function previewFile(filename) {
     modal.innerHTML = `
         <div class="modal-content preview-modal">
             <div class="modal-header">
-                <h3>📄 ${escapeHtml(filename)}</h3>
+                <h3>📄 ${escapeHtml(filename || result.filename || '파일 미리보기')}</h3>
                 <button class="modal-close" onclick="closePreviewModal()">✕</button>
             </div>
             <div class="modal-info">
@@ -2834,9 +2925,9 @@ async function submitAdminAuth() {
 // 태그 및 리비전 관리
 // ============================================================================
 
-async function manageTags(filename) {
+async function manageTags(fileId, filename = '') {
     Toast.info('로딩', '태그 정보를 불러오는 중...');
-    const result = await API.getFileTags(filename);
+    const result = fileId ? await API.getFileTagsById(fileId) : await API.getFileTags(filename);
     const existingTags = result.success ? result.tags : [];
 
     // 모달 생성
@@ -2845,7 +2936,7 @@ async function manageTags(filename) {
     modal.innerHTML = `
         <div class="modal-content" style="max-width: 500px;">
             <div class="modal-header">
-                <h3>🏷️ 태그 관리: ${escapeHtml(filename)}</h3>
+                <h3>🏷️ 태그 관리: ${escapeHtml(filename || fileId)}</h3>
                 <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
             </div>
             <div class="modal-body" style="padding: 20px;">
@@ -2887,7 +2978,8 @@ async function manageTags(filename) {
     window.removeTag = async (tag) => {
         currentTags = currentTags.filter(t => t !== tag);
         renderTags();
-        await API.setFileTags(filename, currentTags);
+        if (fileId) await API.setFileTagsById(fileId, currentTags);
+        else await API.setFileTags(filename, currentTags);
     };
 
     tagInput.addEventListener('keypress', async (e) => {
@@ -2897,7 +2989,8 @@ async function manageTags(filename) {
                 currentTags.push(newTag);
                 tagInput.value = '';
                 renderTags();
-                await API.setFileTags(filename, currentTags);
+                if (fileId) await API.setFileTagsById(fileId, currentTags);
+                else await API.setFileTags(filename, currentTags);
             }
         }
     });
@@ -2906,15 +2999,17 @@ async function manageTags(filename) {
         autoTagBtn.disabled = true;
         autoTagBtn.textContent = '생성 중...';
 
-        const res = await API.autoTagFile(filename);
-        if (res.success && res.tags) {
+        const res = fileId ? await API.autoTagFileById(fileId) : await API.autoTagFile(filename);
+        const nextTags = res.tags || res.suggested_tags || [];
+        if (res.success && nextTags.length > 0) {
             // 중복 제거 후 병합
-            const newTags = res.tags.filter(t => !currentTags.includes(t));
+            const newTags = nextTags.filter(t => !currentTags.includes(t));
             if (newTags.length > 0) {
                 currentTags = [...currentTags, ...newTags];
                 renderTags();
                 // 실제로 태그를 저장해야 함
-                await API.setFileTags(filename, currentTags);
+                if (fileId) await API.setFileTagsById(fileId, currentTags);
+                else await API.setFileTags(filename, currentTags);
                 Toast.success('자동 태그', `${newTags.length}개 태그가 추가되었습니다`);
             } else {
                 Toast.info('자동 태그', '추가할 새로운 태그가 없습니다');
@@ -2931,11 +3026,11 @@ async function manageTags(filename) {
     tagInput.focus();
 }
 
-async function showRevisions(filename) {
+async function showRevisions(fileId, filename = '') {
     Toast.info('로딩', '리비전 정보를 불러오는 중...');
-    const result = await API.getRevisions(filename);
+    const result = fileId ? await API.getRevisionsById(fileId) : await API.getRevisions(filename);
 
-    const revisions = result.success ? result.revisions : [];
+    const revisions = result.success ? (result.revisions || result.history || []) : [];
 
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
@@ -2956,7 +3051,7 @@ async function showRevisions(filename) {
     modal.innerHTML = `
         <div class="modal-content" style="max-width: 700px;">
             <div class="modal-header">
-                <h3>🕒 변경 이력: ${escapeHtml(filename)}</h3>
+                <h3>🕒 변경 이력: ${escapeHtml(filename || fileId)}</h3>
                 <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">✕</button>
             </div>
             <div class="modal-body" style="padding: 0;">
@@ -3590,7 +3685,8 @@ const AdvancedSearch = {
 // ============================================================================
 const VersionManager = {
     modal: null,
-    currentFile: null,
+    currentFileId: null,
+    currentFileName: null,
     versions: [],
 
     init() {
@@ -3605,13 +3701,16 @@ const VersionManager = {
         });
     },
 
-    async open(filename) {
-        this.currentFile = filename;
+    async open(fileId, filename = '') {
+        this.currentFileId = fileId || null;
+        this.currentFileName = filename || null;
         Toast.info('로딩', '버전 정보를 불러오는 중...');
 
         try {
-            const result = await API.getRevisions(filename);
-            this.versions = result.success ? result.revisions : [];
+            const result = this.currentFileId
+                ? await API.getRevisionsById(this.currentFileId)
+                : await API.getRevisions(this.currentFileName || '');
+            this.versions = result.success ? (result.revisions || result.history || []) : [];
 
             // 셀렉트 박스 채우기
             const leftSelect = document.getElementById('version-left');
@@ -3671,7 +3770,10 @@ const VersionManager = {
 
         try {
             // API 호출 (서버에서 비교 결과 받기)
-            const result = await API.fetch(`/api/files/${encodeURIComponent(this.currentFile)}/versions/compare?v1=${v1}&v2=${v2}`);
+            const endpoint = this.currentFileId
+                ? `/api/files/by-id/${encodeURIComponent(this.currentFileId)}/versions/compare?v1=${v1}&v2=${v2}`
+                : `/api/files/${encodeURIComponent(this.currentFileName || '')}/versions/compare?v1=${v1}&v2=${v2}`;
+            const result = await API.fetch(endpoint);
 
             if (result.success && result.diff) {
                 this.renderDiff(result.diff);

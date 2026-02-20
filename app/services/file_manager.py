@@ -3,9 +3,10 @@ import os
 import hashlib
 import json
 import threading
+from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional, Any
-from app.utils import logger, get_app_directory
+from app.utils import logger, get_app_directory, FileUtils
 from app.config import AppConfig
 from app.services.db import db
 from app.services.document import DocumentComparator
@@ -16,20 +17,41 @@ class RevisionTracker:
     def __init__(self):
         self.revisions_dir = os.path.join(get_app_directory(), 'revisions')
         os.makedirs(self.revisions_dir, exist_ok=True)
+        self._revisions_root = Path(self.revisions_dir).resolve()
+
+    def _safe_revision_filename(self, display_name: str, version: str, timestamp: str) -> str:
+        safe_base = FileUtils.sanitize_upload_filename(display_name or "document.txt")
+        stem = Path(safe_base).stem
+        stem = stem or "document"
+        return f"{stem}_{version}_{timestamp}.txt"
+
+    def _select_keys(self, primary_key: str, legacy_key: Optional[str] = None) -> List[str]:
+        keys = [str(primary_key or "").strip()]
+        if legacy_key:
+            keys.append(str(legacy_key).strip())
+        seen = set()
+        ordered = []
+        for key in keys:
+            if key and key not in seen:
+                seen.add(key)
+                ordered.append(key)
+        return ordered
     
-    def save_revision(self, filename: str, content: str, note: str = "") -> Dict:
+    def save_revision(self, file_key: str, content: str, note: str = "", display_name: str = "") -> Dict:
         """새 버전 저장"""
         try:
             # 다음 버전 번호 결정
-            row = db.fetchone("SELECT COUNT(*) as cnt FROM revisions WHERE filename=?", (filename,))
+            row = db.fetchone("SELECT COUNT(*) as cnt FROM revisions WHERE filename=?", (file_key,))
             next_ver_num = (row['cnt'] if row else 0) + 1
             version = f"v{next_ver_num}"
             
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             
             # 파일 저장
-            revision_filename = f"{filename}_{version}_{timestamp}.txt"
-            revision_path = os.path.join(self.revisions_dir, revision_filename)
+            revision_filename = self._safe_revision_filename(display_name or file_key, version, timestamp)
+            revision_path = (self._revisions_root / revision_filename).resolve()
+            if self._revisions_root not in revision_path.parents:
+                raise ValueError("유효하지 않은 리비전 파일 경로입니다")
             
             with open(revision_path, 'w', encoding='utf-8') as f:
                 f.write(content)
@@ -38,46 +60,65 @@ class RevisionTracker:
             db.execute("""
                 INSERT INTO revisions (filename, version, content, comment) 
                 VALUES (?, ?, ?, ?)
-            """, (filename, version, revision_filename, note))
+            """, (file_key, version, revision_filename, note))
             
             return {
                 'version': version,
                 'date': datetime.now().isoformat(),
                 'note': note,
-                'file': revision_filename
+                'file': revision_filename,
+                'display_name': display_name
             }
         except Exception as e:
             logger.error(f"개정 이력 저장 실패: {e}")
             raise e
     
-    def get_history(self, filename: str) -> List[Dict]:
+    def get_history(self, file_key: str, legacy_key: Optional[str] = None) -> List[Dict]:
         """버전 히스토리 조회"""
-        rows = db.fetchall("SELECT * FROM revisions WHERE filename=? ORDER BY id DESC", (filename,))
+        keys = self._select_keys(file_key, legacy_key)
+        if not keys:
+            return []
+        placeholders = ",".join("?" for _ in keys)
+        rows = db.fetchall(
+            f"SELECT * FROM revisions WHERE filename IN ({placeholders}) ORDER BY id DESC",
+            tuple(keys)
+        )
         history = []
         for r in rows:
             history.append({
                 'version': r['version'],
                 'date': r['created_at'],
                 'note': r['comment'],
-                'file': r['content']  # content 컬럼에 파일명이 저장되어 있음
+                'file': r['content'],  # content 컬럼에 파일명이 저장되어 있음
+                'key': r['filename']
             })
         return history
     
-    def get_revision(self, filename: str, version: str) -> Optional[str]:
+    def get_revision(self, file_key: str, version: str, legacy_key: Optional[str] = None) -> Optional[str]:
         """특정 버전 내용 조회"""
-        row = db.fetchone("SELECT content FROM revisions WHERE filename=? AND version=?", (filename, version))
+        keys = self._select_keys(file_key, legacy_key)
+        if not keys:
+            return None
+        placeholders = ",".join("?" for _ in keys)
+        row = db.fetchone(
+            f"SELECT content FROM revisions WHERE filename IN ({placeholders}) AND version=? ORDER BY id DESC",
+            tuple(keys + [version])
+        )
         if row:
             revision_filename = row['content']
-            revision_path = os.path.join(self.revisions_dir, revision_filename)
-            if os.path.exists(revision_path):
+            revision_path = (self._revisions_root / revision_filename).resolve()
+            if self._revisions_root not in revision_path.parents:
+                logger.warning(f"리비전 경로 차단됨: {revision_filename}")
+                return None
+            if revision_path.exists():
                 with open(revision_path, 'r', encoding='utf-8') as f:
                     return f.read()
         return None
     
-    def compare_versions(self, filename: str, v1: str, v2: str) -> Optional[Dict]:
+    def compare_versions(self, file_key: str, v1: str, v2: str, legacy_key: Optional[str] = None) -> Optional[Dict]:
         """버전 간 비교"""
-        content1 = self.get_revision(filename, v1)
-        content2 = self.get_revision(filename, v2)
+        content1 = self.get_revision(file_key, v1, legacy_key=legacy_key)
+        content2 = self.get_revision(file_key, v2, legacy_key=legacy_key)
         
         if content1 is None or content2 is None:
             return None

@@ -385,3 +385,37 @@ Default benchmark scenario: warmup 30, measure 200, concurrency 1/5/10.
 - [ ] API 응답: `api_success()` / `api_error()` 사용
 - [ ] 로깅: `logger` 객체 사용 (print 금지)
 - [ ] 경로: Path Traversal 방지 검증
+
+---
+
+## 📌 v2.7 반영 노트 (2026-02-20)
+
+### Security
+- Admin password fallback (`"admin"`) removed; auth is fail-closed when unset.
+- Mutating endpoints now require admin auth:
+  - `POST /api/upload`
+  - `POST /api/upload/folder`
+  - `POST /api/revisions`
+  - `POST /api/tags/set`
+  - `POST /api/tags/auto`
+  - `POST /api/cache/clear`
+- Search result rendering migrated to client-side safe highlight (escape-first).
+- Revision save path hardened with sanitized names + revisions-root boundary checks.
+
+### API Compatibility
+- `/api/status` returns both `progress` and `load_progress`.
+- `/api/sync/status` returns both legacy keys and `status` object.
+- `/api/revisions` GET returns both `history` and `revisions`.
+- `/api/tags/auto` returns both `suggested_tags` and `tags`.
+
+### File Identity
+- Introduced `file_id` (normalized absolute path hash).
+- Search responses and file list payloads include `file_id`.
+- Search request supports `filter_file_id` with `filter_file` compatibility.
+- New by-id routes for preview/download/delete/versions/compare.
+
+### Functional Fixes
+- ZIP folder upload implemented: `POST /api/upload/folder` (zip-slip guarded).
+- Download route restored (by-id + legacy filename route).
+- Frontend upload extension filter aligned with backend (`txt/docx/pdf/xlsx/xls/hwp`).
+- PWA icon paths aligned via `static/icons/icon-192.png`, `static/icons/icon-512.png`.

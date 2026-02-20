@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from typing import List, Dict
+from typing import List, Dict, Optional
 from app.services.db import db
 from app.utils import logger
 
@@ -27,6 +27,20 @@ class TagManager:
         # DB 연결은 db 객체 사용
         pass
     
+    @staticmethod
+    def _normalize_keys(primary: str, fallback_keys: Optional[List[str]] = None) -> List[str]:
+        keys = [str(primary or "").strip()]
+        if fallback_keys:
+            keys.extend(str(k).strip() for k in fallback_keys if str(k).strip())
+        # unique + order preserve
+        seen = set()
+        ordered = []
+        for key in keys:
+            if key and key not in seen:
+                seen.add(key)
+                ordered.append(key)
+        return ordered
+
     def add_tag(self, filename: str, tag: str) -> bool:
         """태그 추가"""
         try:
@@ -43,9 +57,17 @@ class TagManager:
         except Exception:
             return False
     
-    def get_tags(self, filename: str) -> List[str]:
-        """파일의 태그 목록 반환"""
-        rows = db.fetchall("SELECT tag FROM tags WHERE filename=?", (filename,))
+    def get_tags(self, filename: str, fallback_keys: Optional[List[str]] = None) -> List[str]:
+        """파일의 태그 목록 반환 (primary key + fallback keys 지원)"""
+        keys = self._normalize_keys(filename, fallback_keys)
+        if not keys:
+            return []
+
+        placeholders = ",".join("?" for _ in keys)
+        rows = db.fetchall(
+            f"SELECT DISTINCT tag FROM tags WHERE filename IN ({placeholders}) ORDER BY tag",
+            tuple(keys)
+        )
         return [r['tag'] for r in rows]
     
     def set_tags(self, filename: str, tags: List[str]):

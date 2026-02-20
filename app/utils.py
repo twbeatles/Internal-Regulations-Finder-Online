@@ -4,6 +4,7 @@ import sys
 import logging
 import json
 import re
+import hashlib
 from datetime import datetime
 from typing import Optional, Tuple, Dict, Any, List, Union
 from enum import Enum
@@ -99,6 +100,7 @@ class TaskResult:
 @dataclass
 class FileInfo:
     path: str
+    file_id: str = ""
     name: str = ""
     extension: str = ""
     size: int = 0
@@ -110,6 +112,8 @@ class FileInfo:
     
     def __post_init__(self):
         """데이터 검증 및 자동 필드 설정"""
+        if not self.file_id and self.path:
+            self.file_id = FileUtils.make_file_id(self.path)
         # name이 비어있으면 path에서 추출
         if not self.name and self.path:
             self.name = os.path.basename(self.path)
@@ -121,6 +125,7 @@ class FileInfo:
         """JSON 직렬화용 딕셔너리 변환"""
         return {
             "path": self.path,
+            "file_id": self.file_id,
             "name": self.name,
             "extension": self.extension,
             "size": self.size,
@@ -144,6 +149,7 @@ class FileInfo:
         
         return cls(
             path=data.get('path', data.get('name', '')),  # path가 없으면 name 사용
+            file_id=data.get('file_id', ''),
             name=data.get('name', ''),
             extension=data.get('extension', ''),
             size=data.get('size', 0),
@@ -272,8 +278,8 @@ class MemoryMonitor:
         return result
 
 class FileUtils:
-    _FILENAME_SAFE_CHARS_RE = re.compile(r"[^0-9A-Za-z가-힣._()\\[\\]{}\\-\\s]+")
-    _FILENAME_WS_RE = re.compile(r"\\s+")
+    _FILENAME_SAFE_CHARS_RE = re.compile(r"[^0-9A-Za-z가-힣._()\[\]{}\-\s]+")
+    _FILENAME_WS_RE = re.compile(r"\s+")
 
     @staticmethod
     def safe_read(path: str, encoding: str = 'utf-8') -> Tuple[Optional[str], Optional[str]]:
@@ -304,6 +310,12 @@ class FileUtils:
     def allowed_file(filename: str) -> bool:
         ext = os.path.splitext(filename)[1].lower()
         return ext in AppConfig.SUPPORTED_EXTENSIONS
+
+    @staticmethod
+    def make_file_id(path: str) -> str:
+        """Create a stable file id from normalized absolute path."""
+        normalized = os.path.normcase(os.path.normpath(os.path.abspath(str(path or ""))))
+        return hashlib.sha1(normalized.encode("utf-8", errors="ignore")).hexdigest()[:24]
 
     @staticmethod
     def sanitize_upload_filename(original: str) -> str:

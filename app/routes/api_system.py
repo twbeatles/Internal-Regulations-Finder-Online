@@ -73,6 +73,13 @@ def verify_password():
     if not password:
         return jsonify({'success': False, 'message': '비밀번호가 필요합니다'}), 400
 
+    stored_hash = get_settings_store().load().get('admin_password_hash', '')
+    if not stored_hash and not os.environ.get("ADMIN_PASSWORD") and not os.environ.get("ADMIN_PASSWORD_HASH"):
+        return jsonify({
+            'success': False,
+            'message': '관리자 비밀번호가 설정되지 않았습니다. 설정 파일/GUI/환경변수에서 먼저 설정해주세요.'
+        }), 503
+
     if verify_admin_password(password):
         session['admin_authenticated'] = True
         return jsonify({'success': True})
@@ -84,6 +91,7 @@ def status():
     return jsonify({
         'ready': qa_system.is_ready,
         'loading': qa_system.is_loading,
+        'progress': qa_system.load_progress,  # alias for frontend compatibility
         'load_progress': qa_system.load_progress,
         'load_error': qa_system.load_error,
         'model': qa_system.model_name
@@ -170,12 +178,19 @@ def health():
 @system_bp.route('/sync/status', methods=['GET'])
 def sync_status():
     """동기화 상태 반환"""
-    return jsonify({
-        'success': True,
-        'is_syncing': qa_system.is_loading,
+    status_obj = {
+        'running': qa_system.is_loading,
         'current_folder': getattr(qa_system, 'current_folder', ''),
         'progress': qa_system.load_progress,
         'error': qa_system.load_error
+    }
+    return jsonify({
+        'success': True,
+        'is_syncing': status_obj['running'],
+        'current_folder': status_obj['current_folder'],
+        'progress': status_obj['progress'],
+        'error': status_obj['error'],
+        'status': status_obj
     })
 
 @system_bp.route('/sync/start', methods=['POST'])
@@ -284,13 +299,15 @@ def admin_auth():
     if not password:
         return jsonify({'success': False, 'message': '비밀번호가 필요합니다'}), 400
 
+    stored_hash = get_settings_store().load().get('admin_password_hash', '')
+    if not stored_hash and not os.environ.get("ADMIN_PASSWORD") and not os.environ.get("ADMIN_PASSWORD_HASH"):
+        return jsonify({
+            'success': False,
+            'message': '관리자 비밀번호가 설정되지 않았습니다. 설정 파일/GUI/환경변수에서 먼저 설정해주세요.'
+        }), 503
+
     if verify_admin_password(password):
         session['admin_authenticated'] = True
-
-        stored_hash = get_settings_store().load().get('admin_password_hash', '')
-        if not stored_hash and not os.environ.get("ADMIN_PASSWORD") and not os.environ.get("ADMIN_PASSWORD_HASH"):
-            logger.info("관리자 로그인 성공 (기본 비밀번호 'admin' 사용 중 - 변경 권장)")
-            return jsonify({'success': True, 'message': "로그인 성공 (기본 비밀번호 'admin' 사용 중 - 변경 권장)"})
 
         logger.info("관리자 로그인 성공")
         return jsonify({'success': True, 'message': '로그인 성공'})

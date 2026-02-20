@@ -374,5 +374,39 @@ class TestIntegration:
         assert queue.get_stats()['processed'] == 10
 
 
+class TestLiteMode:
+    def test_cache_dir_without_model_id(self):
+        from app.services.search import RegulationQASystem
+
+        qa = RegulationQASystem()
+        try:
+            qa.model_id = None
+            cache_dir = qa._get_cache_dir("C:/tmp/folder")
+            assert cache_dir
+            assert isinstance(cache_dir, str)
+        finally:
+            qa.cleanup()
+
+    def test_search_filter_file_id(self):
+        from app.services.search import RegulationQASystem, BM25Light
+
+        qa = RegulationQASystem()
+        try:
+            qa.documents = ["휴가 규정 안내", "보안 규정 안내"]
+            qa.doc_meta = [
+                {"doc_id": 0, "source": "a.txt", "path": "C:/a.txt", "file_id": "id-a"},
+                {"doc_id": 1, "source": "b.txt", "path": "C:/b.txt", "file_id": "id-b"},
+            ]
+            qa.bm25 = BM25Light()
+            qa.bm25.fit(qa.documents)
+
+            res = qa.search("규정", hybrid=True, filter_file_id="id-a")
+            assert res.success is True
+            assert len(res.data) >= 1
+            assert all(item.get("file_id") == "id-a" for item in res.data)
+        finally:
+            qa.cleanup()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

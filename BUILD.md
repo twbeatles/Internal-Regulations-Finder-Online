@@ -96,3 +96,23 @@ No module named 'torch'
 - [ ] 브라우저 접속 확인 (`localhost:8080`)
 - [ ] 검색 기능 테스트
 - [ ] 압축 및 배포
+
+---
+
+## 🔄 v2.7 빌드 반영 메모 (2026-02-20)
+
+### 코드 변경 관련 빌드 영향
+- `file_id` 기반 API 추가, ZIP 업로드 구현, 보안/인증 강화는 Python 소스 레벨 변경이며 빌드 시스템(PyInstaller) 자체 설정 변경은 필수 아님.
+- PWA 아이콘 경로 정합화(`static/icons/icon-192.png`, `static/icons/icon-512.png`)는 `static` 폴더 전체가 spec의 `datas`에 포함되어 자동 반영됨.
+
+### `.spec` 점검 결과
+- 주요 spec(`regulation_search_gui.spec`, `regulation_search_ultra_lite_gui.spec`, `regulation_search_onefile.spec`, `regulation_search_ultra_lite.spec`) 모두 `datas`에 `(project_dir/static, static)`를 포함.
+- `excluded_datas` 규칙에 `icons` 또는 `icon-*.png`를 직접 제거하는 패턴이 없어 추가 수정 없이 신규 아이콘 포함 가능.
+- 결론:
+  - 기능 변경 관점에서는 별도 spec 구조 변경이 불필요.
+  - 단, 실제 빌드 과정에서 `regulation_search_ultra_lite_gui.spec` 시작 docstring이 `\"\"\"`로 오기입되어 있어 `"""`로 1줄 수정 필요(문법 오류 해결).
+
+### 권장 검증
+1. 빌드 후 `dist/.../static/icons/`에 `icon-192.png`, `icon-512.png` 존재 확인
+2. 실행 후 PWA install prompt 및 서비스워커 install 로그 확인
+3. 관리자 화면에서 ZIP 업로드/파일 다운로드/리비전 기능 스모크 테스트
