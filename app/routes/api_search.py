@@ -133,12 +133,30 @@ def get_history():
     """검색 기록 반환"""
     history = getattr(qa_system, '_search_history', None)
     if not history:
-        return jsonify({'recent': [], 'popular': []})
+        return jsonify({'success': True, 'recent': [], 'popular': [], 'popular_legacy': []})
         
     limit = request.args.get('limit', 10, type=int)
+    popular = history.get_popular(limit)
+    normalized_popular = []
+    popular_legacy = []
+
+    for item in popular:
+        if isinstance(item, dict):
+            query = str(item.get('query', ''))
+            count = int(item.get('count', 0) or 0)
+        elif isinstance(item, (tuple, list)) and len(item) >= 2:
+            query = str(item[0])
+            count = int(item[1] or 0)
+        else:
+            continue
+        normalized_popular.append({'query': query, 'count': count})
+        popular_legacy.append([query, count])
+
     return jsonify({
+        'success': True,
         'recent': history.get_recent(limit),
-        'popular': history.get_popular(limit)
+        'popular': normalized_popular,
+        'popular_legacy': popular_legacy
     })
 
 # 새로 추가: /search/suggest (자동완성)
@@ -150,10 +168,10 @@ def get_suggestions():
     
     history = getattr(qa_system, '_search_history', None)
     if not history or not query:
-        return jsonify({'suggestions': []})
+        return jsonify({'success': True, 'suggestions': []})
     
     suggestions = history.suggest(query, limit)
-    return jsonify({'suggestions': suggestions})
+    return jsonify({'success': True, 'suggestions': suggestions})
 
 @search_bp.route('/cache/clear', methods=['POST'])
 @admin_required

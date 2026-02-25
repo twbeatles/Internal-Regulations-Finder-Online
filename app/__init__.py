@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import os
-import json
 import secrets
 from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
@@ -53,9 +52,10 @@ def create_app():
             logger.warning(f"세션 시크릿 키 파일 생성 실패, 임시 키 사용: {e}")
     app.secret_key = secret
 
-    # Safer default cookie settings for session-based admin auth.
-    app.config.setdefault('SESSION_COOKIE_HTTPONLY', True)
-    app.config.setdefault('SESSION_COOKIE_SAMESITE', 'Lax')
+    # Safer cookie settings for session-based admin auth.
+    app.config['SESSION_COOKIE_HTTPONLY'] = bool(getattr(AppConfig, 'SESSION_COOKIE_HTTPONLY', True))
+    app.config['SESSION_COOKIE_SAMESITE'] = getattr(AppConfig, 'SESSION_COOKIE_SAMESITE', 'Lax')
+    app.config['SESSION_COOKIE_SECURE'] = bool(getattr(AppConfig, 'SESSION_COOKIE_SECURE', False))
     
     # JSON Provider 설정
     if CustomJSONProvider:
@@ -82,7 +82,28 @@ def create_app():
     except ImportError:
         logger.warning("flask-compress 미설치 - 응답 압축 비활성화 (pip install flask-compress)")
         
-    CORS(app, supports_credentials=True)
+    allowed_origins = getattr(AppConfig, 'CORS_ALLOWED_ORIGINS', [])
+    if isinstance(allowed_origins, str):
+        allowed_origins = [allowed_origins]
+    allowed_origins = [str(origin).strip() for origin in allowed_origins if str(origin).strip()]
+
+    if allowed_origins:
+        CORS(app, supports_credentials=True, origins=allowed_origins)
+        logger.info(f"CORS allowlist 적용: {len(allowed_origins)}개 origin")
+    else:
+        # Empty allowlist intentionally blocks cross-origin access.
+        CORS(app, supports_credentials=True, origins=[])
+        logger.warning("CORS allowlist가 비어 있어 cross-origin 요청이 차단됩니다")
+
+    @app.after_request
+    def cors_audit_log(response):
+        origin = request.headers.get('Origin')
+        if origin and request.path.startswith('/api/'):
+            if response.headers.get('Access-Control-Allow-Origin'):
+                logger.info(f"CORS 허용: {origin} -> {request.path}")
+            else:
+                logger.warning(f"CORS 차단: {origin} -> {request.path}")
+        return response
     
     # DB 초기화
     db.init_db()

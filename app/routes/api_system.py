@@ -11,6 +11,16 @@ from app.services.settings_store import get_settings_store, verify_admin_passwor
 
 system_bp = Blueprint('system', __name__)
 
+
+def _to_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
 @system_bp.route('/models', methods=['GET'])
 def get_models():
     """사용 가능한 모델 목록 반환"""
@@ -46,17 +56,32 @@ def set_model():
         current_folder = getattr(qa_system, 'current_folder', '')
         offline_mode = getattr(qa_system, 'offline_mode', False)
         local_model_path = getattr(qa_system, 'local_model_path', '')
+        reindex_requested = _to_bool(data.get('reindex', True), True)
         
         # 모델 로드 (기존 load_model 메서드 활용)
         result = qa_system.load_model(model_name, offline_mode, local_model_path)
         
         if result.success:
-            logger.info(f"모델 변경 완료: {model_name}")
+            reindex_triggered = False
+            reindex_result = None
+            if reindex_requested and current_folder and os.path.isdir(current_folder):
+                reindex_triggered = True
+                reindex_result = qa_system.initialize(current_folder, force_reindex=True)
+
+            logger.info(
+                "모델 변경 완료: %s (reindex_requested=%s, reindex_triggered=%s)",
+                model_name, reindex_requested, reindex_triggered
+            )
+
             return jsonify({
                 'success': True, 
                 'message': f'모델이 {model_name}(으)로 변경되었습니다',
                 'current': model_name,
-                'note': '검색 성능 최적화를 위해 문서 재처리를 권장합니다'
+                'note': '검색 성능 최적화를 위해 문서 재처리를 권장합니다',
+                'reindex_requested': reindex_requested,
+                'reindex_triggered': reindex_triggered,
+                'reindex_started': reindex_result.success if reindex_result is not None else False,
+                'reindex_message': reindex_result.message if reindex_result is not None else ''
             })
         else:
             return jsonify({'success': False, 'message': result.message}), 500
@@ -89,6 +114,7 @@ def verify_password():
 def status():
     """서버 상태 반환"""
     return jsonify({
+        'success': True,
         'ready': qa_system.is_ready,
         'loading': qa_system.is_loading,
         'progress': qa_system.load_progress,  # alias for frontend compatibility
@@ -169,7 +195,10 @@ def health():
     if queue_stats.get('active', 0) > 8:
         status_info['warning'] = 'High search load'
     
-    return jsonify(status_info)
+    return jsonify({
+        'success': True,
+        **status_info
+    })
 
 # ============================================================================
 # Sync API (v2.0) - 폴더 동기화 관련 엔드포인트
@@ -242,12 +271,9 @@ def sync_start():
 @system_bp.route('/sync/stop', methods=['POST'])
 @admin_required
 def sync_stop():
-    """동기화 중지 (현재는 미구현 - graceful shutdown 필요)"""
-    # TODO: ThreadPoolExecutor 작업 취소 로직 구현
-    return jsonify({
-        'success': True,
-        'message': '동기화 중지 요청됨 (현재 작업은 완료될 때까지 계속됩니다)'
-    })
+    """동기화 중지 요청"""
+    result = qa_system.request_sync_stop()
+    return jsonify(result.to_dict())
 
 # ============================================================================
 # Process API - 문서 재처리 엔드포인트

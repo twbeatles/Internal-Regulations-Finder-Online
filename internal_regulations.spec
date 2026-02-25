@@ -23,6 +23,7 @@ hiddenimports = [
     # Flask & Extensions
     'flask', 'flask.json', 'flask_cors',
     'werkzeug', 'jinja2',
+    'waitress', 'waitress.server',
     
     # Core Dependencies
     'watchdog', 'openpyxl', 'olefile', 'pytesseract', 'pdf2image', 'PIL', 'sqlite3',

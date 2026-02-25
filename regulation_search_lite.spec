@@ -73,7 +73,7 @@ hiddenimports = [
     'app.config',
     'app.utils',
     'app.routes',
-    'app.routes.main',
+    'app.routes.main_routes',
     'app.routes.api_search',
     'app.routes.api_files',
     'app.routes.api_system',

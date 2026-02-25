@@ -407,6 +407,36 @@ class TestLiteMode:
         finally:
             qa.cleanup()
 
+    def test_process_single_file_uses_app_chunk_policy(self, tmp_path, monkeypatch):
+        from app.config import AppConfig
+        from app.services.search import RegulationQASystem
+
+        captured = {}
+
+        class _DummySplitter:
+            def __init__(self, chunk_size, chunk_overlap):
+                captured["chunk_size"] = chunk_size
+                captured["chunk_overlap"] = chunk_overlap
+
+            def split(self, text):
+                return [text]
+
+        test_file = tmp_path / "sample.txt"
+        test_file.write_text("샘플 텍스트", encoding="utf-8")
+
+        qa = RegulationQASystem()
+        try:
+            monkeypatch.setattr("app.services.search.DocumentSplitter", _DummySplitter)
+            monkeypatch.setattr(qa.extractor, "extract", lambda _: ("샘플 텍스트", None), raising=False)
+
+            result = qa.process_single_file(str(test_file))
+
+            assert result.success is True
+            assert captured["chunk_size"] == AppConfig.CHUNK_SIZE
+            assert captured["chunk_overlap"] == AppConfig.CHUNK_OVERLAP
+        finally:
+            qa.cleanup()
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

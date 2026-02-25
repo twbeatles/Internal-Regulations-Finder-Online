@@ -17,12 +17,30 @@ const STATIC_ASSETS = [
     '/static/icons/icon-512.png'
 ];
 
-// API 캐시 패턴 (검색 결과 등)
-const API_CACHE_PATTERNS = [
+// API 캐시 허용 목록 (GET만 캐시)
+const API_GET_CACHE_ALLOWLIST = [
     '/api/status',
+    '/api/health',
     '/api/files/names',
     '/api/categories'
 ];
+
+// 인증/관리 계열 API는 캐시 금지
+const API_CACHE_DENY_PREFIXES = [
+    '/api/admin',
+    '/api/verify_password',
+    '/api/upload',
+    '/api/sync',
+    '/api/process'
+];
+
+function isApiCacheAllowed(pathname) {
+    return API_GET_CACHE_ALLOWLIST.includes(pathname);
+}
+
+function isApiCacheDenied(pathname) {
+    return API_CACHE_DENY_PREFIXES.some(prefix => pathname.startsWith(prefix));
+}
 
 // 설치 이벤트 - 정적 리소스 캐싱
 self.addEventListener('install', (event) => {
@@ -61,12 +79,24 @@ self.addEventListener('fetch', (event) => {
 
     // API 요청 처리
     if (url.pathname.startsWith('/api/')) {
-        // 검색은 네트워크만 사용, 기타 API는 네트워크 우선
-        if (url.pathname === '/api/search') {
+        // 상태 변경 요청은 항상 네트워크 전용
+        if (request.method !== 'GET') {
             event.respondWith(fetch(request));
-        } else {
-            event.respondWith(networkFirst(request, API_CACHE));
+            return;
         }
+
+        // 인증/관리 계열은 GET이라도 캐시하지 않음
+        if (isApiCacheDenied(url.pathname)) {
+            event.respondWith(fetch(request));
+            return;
+        }
+
+        // allowlist에 있는 GET API만 캐시 사용
+        if (isApiCacheAllowed(url.pathname)) {
+            event.respondWith(networkFirst(request, API_CACHE));
+            return;
+        }
+        event.respondWith(fetch(request));
         return;
     }
 
@@ -107,6 +137,10 @@ async function cacheFirst(request, cacheName) {
 
 // 네트워크 우선 전략
 async function networkFirst(request, cacheName) {
+    if (request.method !== 'GET') {
+        return fetch(request);
+    }
+
     try {
         const networkResponse = await fetch(request);
 

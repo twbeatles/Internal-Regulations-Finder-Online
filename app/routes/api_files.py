@@ -5,11 +5,11 @@ import shutil
 import threading
 from collections import OrderedDict
 from pathlib import Path
+from typing import List, Optional, Tuple
 from flask import Blueprint, jsonify, request, send_file
-from werkzeug.utils import secure_filename
 from app.services.search import qa_system
 from app.services.document import DocumentExtractor
-from app.utils import logger, FileUtils, TaskResult, get_app_directory, api_error, api_success
+from app.utils import logger, FileUtils, get_app_directory, api_error, api_success
 from app.config import AppConfig
 from app.constants import ErrorMessages, HttpStatus
 from app.exceptions import DocumentNotFoundError, DocumentError
@@ -22,6 +22,74 @@ _preview_extractor = DocumentExtractor()
 _preview_cache_lock = threading.Lock()
 _preview_cache: OrderedDict = OrderedDict()
 _PREVIEW_CACHE_MAX_SIZE = 128
+
+
+def _to_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _get_request_bool(name: str, default=False) -> bool:
+    query_value = request.args.get(name)
+    if query_value is not None:
+        return _to_bool(query_value, default)
+    payload = request.get_json(silent=True) or {}
+    if isinstance(payload, dict) and name in payload:
+        return _to_bool(payload.get(name), default)
+    form_value = request.form.get(name)
+    if form_value is not None:
+        return _to_bool(form_value, default)
+    return default
+
+
+def _parse_limit(name: str, default: int, minimum: int = 1) -> Tuple[Optional[int], Optional[str]]:
+    raw = request.form.get(name)
+    if raw is None or str(raw).strip() == "":
+        value = default
+    else:
+        try:
+            value = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return None, f"{name}는 정수여야 합니다"
+    if value < minimum:
+        return None, f"{name}는 {minimum} 이상이어야 합니다"
+    return value, None
+
+
+def _get_delete_roots() -> List[Path]:
+    roots: List[Path] = []
+    uploads_root = (Path(get_app_directory()) / AppConfig.UPLOAD_FOLDER).resolve()
+    roots.append(uploads_root)
+
+    current_folder = getattr(qa_system, 'current_folder', '') or ''
+    if current_folder:
+        try:
+            roots.append(Path(current_folder).resolve())
+        except Exception:
+            pass
+
+    # 중복 제거
+    unique = []
+    seen = set()
+    for root in roots:
+        key = str(root)
+        if key not in seen:
+            seen.add(key)
+            unique.append(root)
+    return unique
+
+
+def _is_source_delete_allowed(target_path: Path) -> bool:
+    roots = _get_delete_roots()
+    for root in roots:
+        if root == target_path or root in target_path.parents:
+            return True
+    return False
 
 def _build_file_ref(path: str) -> dict:
     name = os.path.basename(path)
@@ -138,7 +206,7 @@ def list_file_names():
 @files_bp.route('/files/all', methods=['DELETE'])
 @admin_required
 def delete_all_files():
-    """모든 로드된 파일 일괄 삭제 (인덱스 및 캐시 초기화)"""
+    """모든 로드된 파일 일괄 삭제 (기본: index_only)"""
     if not acquire_file_lock():
         return jsonify({
             'success': False,
@@ -146,23 +214,27 @@ def delete_all_files():
         }), HttpStatus.SERVICE_UNAVAILABLE
     
     try:
+        delete_source = _get_request_bool('delete_source', False)
+        deletion_policy = 'delete_source' if delete_source else 'index_only'
         deleted_count = len(qa_system.file_infos)
         file_paths = list(qa_system.file_infos.keys())
         
-        # 실제 파일 삭제 (uploads 폴더 내 파일만)
-        upload_dir = os.path.join(get_app_directory(), 'uploads')
+        # 실제 파일 삭제는 delete_source=true일 때만 수행
         deleted_files = []
         failed_files = []
+        deleted_source_count = 0
         
         for fp in file_paths:
             try:
-                # uploads 폴더 내 파일인 경우에만 실제 삭제
                 p = Path(fp).resolve()
-                if Path(upload_dir).resolve() in p.parents and p.exists():
-                    p.unlink()
-                    deleted_files.append(os.path.basename(fp))
-                else:
-                    deleted_files.append(os.path.basename(fp))  # 인덱스에서만 제거
+                if delete_source:
+                    if _is_source_delete_allowed(p):
+                        if p.exists():
+                            p.unlink()
+                            deleted_source_count += 1
+                    else:
+                        failed_files.append(f"{os.path.basename(fp)}: 허용된 경로 외 원본 파일 삭제 불가")
+                deleted_files.append(os.path.basename(fp))
             except Exception as e:
                 failed_files.append(f"{os.path.basename(fp)}: {str(e)}")
         
@@ -178,12 +250,19 @@ def delete_all_files():
             qa_system.bm25 = None
         
         logger.info(f"일괄 삭제 완료: {deleted_count}개 파일 제거")
+        logger.info(
+            "파일 일괄 삭제 정책 적용: policy=%s, deleted_from_index=%s, deleted_source=%s",
+            deletion_policy, deleted_count, deleted_source_count
+        )
         
         result = {
             'success': True,
             'message': f'{deleted_count}개 파일이 삭제되었습니다',
             'deleted_count': deleted_count,
-            'deleted_files': deleted_files
+            'deleted_files': deleted_files,
+            'deletion_policy': deletion_policy,
+            'deleted_from_index': deleted_count,
+            'deleted_source': deleted_source_count
         }
         
         if failed_files:
@@ -217,15 +296,31 @@ def _delete_file_impl(filename: str = None, file_id: str = None):
     with file_lock:
         try:
             target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
+            delete_source = _get_request_bool('delete_source', False)
+            deletion_policy = 'delete_source' if delete_source else 'index_only'
+            deleted_source = False
+            source_delete_error = ""
+
+            # 1) 원본 파일 삭제 (옵션)
+            if delete_source:
+                path_obj = Path(target_path).resolve()
+                if _is_source_delete_allowed(path_obj):
+                    try:
+                        if path_obj.exists():
+                            path_obj.unlink()
+                            deleted_source = True
+                    except Exception as e:
+                        source_delete_error = str(e)
+                else:
+                    source_delete_error = "허용된 경로 외 원본 파일은 삭제할 수 없습니다"
             
-            # 1. 실제 파일 삭제
-            Path(target_path).unlink()
-            
-            # 2. file_infos에서 제거
+            # 2) file_infos에서 제거
+            deleted_from_index = False
             if target_path in qa_system.file_infos:
                 del qa_system.file_infos[target_path]
+                deleted_from_index = True
             
-            # 3. documents 및 doc_meta에서 해당 파일 관련 항목 제거
+            # 3) documents 및 doc_meta에서 해당 파일 관련 항목 제거
             if qa_system.documents and qa_system.doc_meta:
                 indices_to_remove = [
                     i for i, meta in enumerate(qa_system.doc_meta)
@@ -237,17 +332,32 @@ def _delete_file_impl(filename: str = None, file_id: str = None):
                         del qa_system.documents[idx]
                     if idx < len(qa_system.doc_meta):
                         del qa_system.doc_meta[idx]
+                if indices_to_remove:
+                    deleted_from_index = True
                 
                 # BM25 인덱스 재구축 필요
                 if indices_to_remove and hasattr(qa_system, '_build_bm25'):
                     qa_system._build_bm25()
             
-            # 4. 캐시 무효화
+            # 4) 캐시 무효화
             if hasattr(qa_system, '_search_cache'):
                 qa_system._search_cache.invalidate_by_file(resolved_name)
             
-            logger.info(f"파일 삭제 완료: {resolved_name} ({resolved_id})")
-            return jsonify(api_success("파일이 삭제되었습니다", file_id=resolved_id, filename=resolved_name))
+            logger.info(
+                "파일 삭제 완료: name=%s file_id=%s policy=%s deleted_source=%s deleted_from_index=%s",
+                resolved_name, resolved_id, deletion_policy, deleted_source, deleted_from_index
+            )
+            payload = api_success(
+                "파일 삭제 처리 완료",
+                file_id=resolved_id,
+                filename=resolved_name,
+                deletion_policy=deletion_policy,
+                deleted_source=deleted_source,
+                deleted_from_index=deleted_from_index
+            )
+            if source_delete_error:
+                payload['source_delete_error'] = source_delete_error
+            return jsonify(payload)
             
         except DocumentNotFoundError:
             return api_error("파일을 찾을 수 없습니다", status_code=HttpStatus.NOT_FOUND)
@@ -373,6 +483,20 @@ def upload_folder():
     os.makedirs(upload_folder, exist_ok=True)
     upload_root = Path(upload_folder).resolve()
 
+    max_entries, err = _parse_limit('max_entries', AppConfig.ZIP_MAX_ENTRIES, minimum=1)
+    if err:
+        return jsonify({'success': False, 'message': err}), HttpStatus.BAD_REQUEST
+    max_uncompressed_bytes, err = _parse_limit(
+        'max_uncompressed_bytes', AppConfig.ZIP_MAX_UNCOMPRESSED_BYTES, minimum=1
+    )
+    if err:
+        return jsonify({'success': False, 'message': err}), HttpStatus.BAD_REQUEST
+    max_single_file_bytes, err = _parse_limit(
+        'max_single_file_bytes', AppConfig.ZIP_MAX_SINGLE_FILE_BYTES, minimum=1
+    )
+    if err:
+        return jsonify({'success': False, 'message': err}), HttpStatus.BAD_REQUEST
+
     success_items = []
     failed_items = []
     skipped_items = []
@@ -380,7 +504,59 @@ def upload_folder():
     try:
         with file_lock:
             with zipfile.ZipFile(file.stream) as zf:
-                for info in zf.infolist():
+                entries = [info for info in zf.infolist() if not info.is_dir()]
+                if len(entries) > max_entries:
+                    logger.warning(
+                        "ZIP 업로드 차단: max_entries 초과 (%s > %s)",
+                        len(entries), max_entries
+                    )
+                    return jsonify({
+                        'success': False,
+                        'message': f'ZIP 항목 수 제한 초과: {len(entries)} > {max_entries}',
+                        'reason': 'max_entries_exceeded',
+                        'limits': {
+                            'max_entries': max_entries,
+                            'max_uncompressed_bytes': max_uncompressed_bytes,
+                            'max_single_file_bytes': max_single_file_bytes
+                        }
+                    }), 413
+
+                total_uncompressed = 0
+                for info in entries:
+                    file_size = int(getattr(info, 'file_size', 0) or 0)
+                    if file_size > max_single_file_bytes:
+                        logger.warning(
+                            "ZIP 업로드 차단: max_single_file_bytes 초과 (%s > %s) member=%s",
+                            file_size, max_single_file_bytes, info.filename
+                        )
+                        return jsonify({
+                            'success': False,
+                            'message': f'ZIP 단일 파일 제한 초과: {info.filename}',
+                            'reason': 'max_single_file_bytes_exceeded',
+                            'limits': {
+                                'max_entries': max_entries,
+                                'max_uncompressed_bytes': max_uncompressed_bytes,
+                                'max_single_file_bytes': max_single_file_bytes
+                            }
+                        }), 413
+                    total_uncompressed += file_size
+                    if total_uncompressed > max_uncompressed_bytes:
+                        logger.warning(
+                            "ZIP 업로드 차단: max_uncompressed_bytes 초과 (%s > %s)",
+                            total_uncompressed, max_uncompressed_bytes
+                        )
+                        return jsonify({
+                            'success': False,
+                            'message': 'ZIP 전체 압축해제 용량 제한 초과',
+                            'reason': 'max_uncompressed_bytes_exceeded',
+                            'limits': {
+                                'max_entries': max_entries,
+                                'max_uncompressed_bytes': max_uncompressed_bytes,
+                                'max_single_file_bytes': max_single_file_bytes
+                            }
+                        }), 413
+
+                for info in entries:
                     if info.is_dir():
                         continue
 
@@ -441,6 +617,11 @@ def upload_folder():
             'success_count': len(success_items),
             'failed_count': len(failed_items),
             'skipped_count': len(skipped_items),
+            'limits': {
+                'max_entries': max_entries,
+                'max_uncompressed_bytes': max_uncompressed_bytes,
+                'max_single_file_bytes': max_single_file_bytes
+            },
             'success_items': success_items,
             'failed_items': failed_items,
             'skipped_items': skipped_items

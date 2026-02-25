@@ -30,6 +30,8 @@ hiddenimports = [
     'flask_cors',
     'werkzeug',
     'jinja2',
+    'waitress',
+    'waitress.server',
     
     # DB & 유틸리티
     'sqlite3',

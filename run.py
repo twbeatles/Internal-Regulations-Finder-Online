@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 import os
-import json
 import signal
 import sys
 import threading
 from app import app
 from app.config import AppConfig
-from app.utils import logger, setup_logger, get_app_directory
+from app.utils import logger, setup_logger
 from app.services.search import qa_system
 from app.services.db import db
 from app.services.settings_store import get_settings_store
@@ -99,6 +98,8 @@ def initialize_server():
 
 if __name__ == '__main__':
     setup_logger()
+    app_env = os.environ.get("APP_ENV", getattr(AppConfig, "APP_ENV", "development")).strip().lower()
+    is_production = app_env == "production"
     
     # 종료 시그널 핸들러 등록
     signal.signal(signal.SIGINT, graceful_shutdown)
@@ -115,13 +116,17 @@ if __name__ == '__main__':
     try:
         from waitress import serve
         logger.info(f"🚀 Waitress 서버 시작 (Port: {AppConfig.SERVER_PORT}, Threads: {AppConfig.SERVER_THREADS})")
-        serve(app, host='0.0.0.0', port=AppConfig.SERVER_PORT, threads=AppConfig.SERVER_THREADS)
+        serve(app, host=AppConfig.SERVER_HOST, port=AppConfig.SERVER_PORT, threads=AppConfig.SERVER_THREADS)
     except ImportError:
-        logger.warning("⚠️ Waitress가 설치되지 않았습니다. 개발용 서버로 실행합니다.")
+        if is_production:
+            logger.error("❌ APP_ENV=production 환경에서는 waitress가 필수입니다. 서버를 종료합니다.")
+            sys.exit(1)
+
+        logger.warning("⚠️ Waitress가 설치되지 않아 개발용 서버로 fallback 실행합니다.")
         app.run(
-            host='0.0.0.0',
+            host=AppConfig.SERVER_HOST,
             port=AppConfig.SERVER_PORT,
-            debug=True,
-            use_reloader=False, 
+            debug=False,
+            use_reloader=False,
             threaded=True
         )

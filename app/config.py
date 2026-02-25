@@ -1,14 +1,50 @@
 # -*- coding: utf-8 -*-
-from typing import Dict, Set
+import os
+from typing import Dict, List
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_list(name: str, default_csv: str) -> List[str]:
+    raw = os.environ.get(name, default_csv)
+    if isinstance(raw, list):
+        values = [str(v).strip() for v in raw]
+        return [v for v in values if v]
+    return [part.strip() for part in str(raw).split(",") if part.strip()]
 
 class AppConfig:
     APP_NAME = "사내 규정 검색기"
     APP_VERSION = "2.6.1"  # v2.6.1 성능 최적화 리팩토링
+    APP_ENV = os.environ.get("APP_ENV", "development").strip().lower()
     
     # 서버 설정
     SERVER_HOST = "0.0.0.0"
     SERVER_PORT = 8080
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
+
+    # 보안/런타임 정책
+    CORS_ALLOWED_ORIGINS = _env_list(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:8080,http://127.0.0.1:8080"
+    )
+    SESSION_COOKIE_HTTPONLY = _env_bool("SESSION_COOKIE_HTTPONLY", True)
+    SESSION_COOKIE_SAMESITE = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax").strip() or "Lax"
+    SESSION_COOKIE_SECURE = _env_bool("SESSION_COOKIE_SECURE", APP_ENV == "production")
     
     # 오프라인 모드 설정 (폐쇄망 지원)
     OFFLINE_MODE = False  # True면 인터넷 연결 없이 로컬 모델만 사용
@@ -67,4 +103,9 @@ class AppConfig:
     
     # 검색 결과 콘텐츠 미리보기 최대 길이
     MAX_CONTENT_PREVIEW = 1500
+
+    # ZIP 업로드 제한 (압축폭탄 방지)
+    ZIP_MAX_ENTRIES = _env_int("ZIP_MAX_ENTRIES", 1000)
+    ZIP_MAX_UNCOMPRESSED_BYTES = _env_int("ZIP_MAX_UNCOMPRESSED_BYTES", 200 * 1024 * 1024)
+    ZIP_MAX_SINGLE_FILE_BYTES = _env_int("ZIP_MAX_SINGLE_FILE_BYTES", 50 * 1024 * 1024)
 

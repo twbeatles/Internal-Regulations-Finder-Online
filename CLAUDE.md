@@ -413,7 +413,7 @@ python download_models.py
 ## 🧪 성능 측정 명령
 
 ```bash
-PYTHONPATH=. pytest -q
+pytest -q
 python scripts/perf_smoke.py
 python scripts/perf_smoke.py --base-url http://127.0.0.1:8080 --query "휴가 규정"
 ```
@@ -456,7 +456,7 @@ class AppConfig:
     RATE_LIMIT_PER_MINUTE = 300
     
     # 임베딩 백엔드 (v2.6 신규)
-    EMBED_BACKEND = "torch"  # "torch" | "onnx_fp32" | "onnx_int8"
+    EMBED_BACKEND = "onnx_fp32"  # "torch" | "onnx_fp32" | "onnx_int8"
     EMBED_NORMALIZE = True   # L2 정규화 여부
 ```
 
@@ -508,3 +508,14 @@ class AppConfig:
 ### Lite(BM25-only) 경로
 - 임베딩 모델 미로드 상태에서도 캐시/검색 경로가 동작하도록 분기 강화.
 - 벡터 캐시 로드는 `embedding_model && FAISS`일 때만 활성화.
+
+### v2.8 추가 반영 (2026-02-25)
+- CORS는 `CORS_ALLOWED_ORIGINS` allowlist 기반으로만 허용되며, API 응답에 CORS 허용/차단 로그가 남는다.
+- 세션 쿠키 정책(`SESSION_COOKIE_HTTPONLY`, `SESSION_COOKIE_SAMESITE`, `SESSION_COOKIE_SECURE`)은 명시 설정으로 강제된다.
+- `/api/search/history`는 `success`와 `popular_legacy`를 포함하고, `popular` 표준 포맷은 `[{query, count}]`다.
+- `/api/search/suggest`, `/api/status`, `/api/health`는 `success` envelope를 사용한다.
+- 삭제 API 기본 정책은 `index_only`, 원본 삭제는 `delete_source=true`일 때만 수행된다.
+- `/api/upload/folder`는 ZIP 제한 파라미터(`max_entries`, `max_uncompressed_bytes`, `max_single_file_bytes`)를 지원한다.
+- `/api/models`는 `reindex` 기본값이 `true`이며, 실제 재인덱스 트리거 결과를 응답한다.
+- `/api/sync/stop`은 TODO가 아니라 실제 취소 이벤트를 통해 동기화 중단 요청을 처리한다.
+- Service Worker는 `GET allowlist` API만 캐시하고 인증/관리/비GET 요청은 캐시하지 않는다.

@@ -1,5 +1,16 @@
 # IMPLEMENTATION_REVIEW.md
 
+> 업데이트(2026-02-25): 본 문서는 **사전 점검 리포트**이며, 이후 A-01~A-15 개선 구현이 완료되었습니다.  
+> 최신 구현 상태와 검증 결과는 `IMPLEMENTATION_AUDIT_2026-02-25.md`의 "구현 완료 현황" 섹션을 우선 참조하세요.
+
+### 반영 완료된 핵심 항목(요약)
+- CORS allowlist/세션 쿠키 정책/운영 fail-fast(waitress) 적용
+- `/api/search/history`/`/api/search/suggest`/`/api/status`/`/api/health` 스키마 정합화
+- 파일 삭제 기본 `index_only`, ZIP 제한 파라미터 도입
+- `/api/sync/stop` 취소 이벤트 구현, 모델 변경 시 기본 재인덱스 정책 반영
+- 프론트(XSS/하이라이트/테마), Service Worker 캐시 정책 정합화
+- 테스트 진입점 `pytest -q` 단일화
+
 ## 1. 목적/범위
 
 ### 목적
@@ -38,7 +49,7 @@
 - URL 맵 점검으로 실제 등록 라우트 확인.
 - 대표 API 호출로 응답 스키마 확인.
 - 테스트 실행:
-  - `python -m pytest -q` 기준 통과 확인
+  - `pytest -q` 기준 통과 확인
 
 ---
 
@@ -179,17 +190,16 @@
 - 검증 테스트:
   - 자동태그 후 태그 칩 즉시 렌더링 및 저장 확인.
 
-### H-06. ZIP 폴더 업로드 기능 런타임 오류
+### H-06. ZIP 폴더 업로드 기능 런타임 오류 (해결됨)
 - 증상:
-  - `uploadFolderZip()`가 `API.uploadFolder(file)` 호출(`static/app.js:2341`),
-  - `API.uploadFolder`는 미구현 주석만 존재(`static/app.js:1180`).
+  - 사전 점검 시점에는 `uploadFolderZip()` 경로에서 API 연결 불일치가 존재했음.
+  - 현재는 `POST /api/upload/folder` 및 클라이언트 호출 경로가 구현되어 정상 동작.
 - 영향:
-  - 관리자 페이지에서 ZIP 업로드 즉시 JS 오류.
+  - (과거) 관리자 페이지에서 ZIP 업로드 즉시 JS 오류 가능.
 - 원인:
-  - UI 기능 노출 대비 API 구현 누락.
+  - (과거) UI 기능 노출 대비 API 구현 누락.
 - 권장 수정안:
-  - 선택지 A: 백엔드 ZIP 업로드/해제/인덱싱 구현 + API 메서드 추가.
-  - 선택지 B: 기능 비활성화(버튼 숨김/안내 문구)로 오동작 제거.
+  - 백엔드 ZIP 업로드/해제/인덱싱 구현 + API 메서드 연결(완료).
 - 검증 테스트:
   - ZIP 업로드 경로에서 JS 에러가 발생하지 않는지 확인.
 
@@ -288,16 +298,15 @@
 
 ## Low
 
-### L-01. `pytest -q` vs `python -m pytest -q` 실행 일관성 저하 (DevEx)
+### L-01. 테스트 진입점 일관성 저하 (해결됨)
 - 증상:
-  - 환경에 따라 `pytest -q`에서 import path 이슈가 발생할 수 있으나, `python -m pytest -q`는 통과.
+  - 사전 점검 시점에는 환경에 따라 `pytest -q` import path 이슈가 발생했음.
 - 영향:
-  - CI/개발자 로컬 실행 방식 불일치로 혼선.
+  - (과거) CI/개발자 로컬 실행 방식 불일치로 혼선.
 - 원인:
-  - 테스트 실행 진입점/환경 변수 의존.
+  - (과거) 테스트 실행 진입점/환경 변수 의존.
 - 권장 수정안:
-  - `README.md` 테스트 실행 명령을 `python -m pytest -q`로 통일.
-  - 필요 시 `pytest.ini`에 `pythonpath` 설정.
+  - `pytest.ini`에 `pythonpath = .` 설정 및 `README.md` 실행 명령 `pytest -q` 통일(완료).
 
 ---
 
@@ -400,9 +409,9 @@
 - 자동태그 키 불일치:
   - 프론트: `static/app.js:2910`
   - 백엔드: `app/routes/api_files.py:567`
-- ZIP 업로드 미구현 호출:
-  - 호출: `static/app.js:2341`
-  - 미구현 주석: `static/app.js:1180`
+- ZIP 업로드 이슈(현재 해결):
+  - 호출 경로: `static/app.js`
+  - 구현 상태: `POST /api/upload/folder` + 클라이언트 연동 완료
 - XSS 위험 경로:
   - 하이라이트 생성: `app/routes/api_search.py:81`, `app/routes/api_search.py:82`
   - 렌더링: `static/app.js:2035`, `static/app.js:2045`
@@ -469,7 +478,7 @@
 12. sanitize 정규식 수정 및 관련 테스트 보강.
 
 ### 검증
-- 자동 테스트: `python -m pytest -q` 통과.
+- 자동 테스트: `pytest -q` 통과.
 - 신규 회귀 테스트 파일:
   - `tests/test_api_compat.py`
   - `tests/test_file_identity.py`

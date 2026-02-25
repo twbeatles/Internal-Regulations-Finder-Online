@@ -546,9 +546,9 @@ class SearchHistory:
         rows = db.fetchall("SELECT query, MAX(timestamp) as ts FROM search_history GROUP BY query ORDER BY ts DESC LIMIT ?", (limit,))
         return [r['query'] for r in rows]
             
-    def get_popular(self, limit: int = 10) -> List[Tuple[str, int]]:
+    def get_popular(self, limit: int = 10) -> List[Dict[str, Any]]:
         rows = db.fetchall("SELECT query, COUNT(*) as cnt FROM search_history GROUP BY query ORDER BY cnt DESC LIMIT ?", (limit,))
-        return [(r['query'], r['cnt']) for r in rows]
+        return [{'query': r['query'], 'count': int(r['cnt'])} for r in rows]
             
     def suggest(self, prefix: str, limit: int = 5) -> List[str]:
         rows = db.fetchall("SELECT DISTINCT query FROM search_history WHERE query LIKE ? ORDER BY timestamp DESC LIMIT ?", (f"{prefix}%", limit))
@@ -568,6 +568,8 @@ class RegulationQASystem:
         self.model_name = ""
         self.embed_backend = ""  # 현재 사용 중인 백엔드
         self.embed_normalize = True  # 현재 정규화 설정
+        self.offline_mode = bool(getattr(AppConfig, 'OFFLINE_MODE', False))
+        self.local_model_path = getattr(AppConfig, 'LOCAL_MODEL_PATH', '') or ''
         self.extractor = DocumentExtractor()
         self.cache_path = os.path.join(os.path.dirname(get_app_directory()), "reg_qa_server_v10")
         if not os.path.exists(self.cache_path):
@@ -590,6 +592,8 @@ class RegulationQASystem:
         self._is_loading = False
         self._load_progress = ""
         self._load_error = ""
+        self._cancel_event = threading.Event()
+        self._cancel_reason = ""
         
         # v2.0 Components
         self.tag_manager = TagManager()
@@ -618,6 +622,33 @@ class RegulationQASystem:
     @property
     def load_error(self) -> str:
         return self._load_error
+
+    def request_sync_stop(self) -> TaskResult:
+        """백그라운드 동기화 중단 요청"""
+        if not self._is_loading:
+            return TaskResult(True, "진행 중인 동기화 작업이 없습니다")
+
+        self._cancel_reason = "사용자 요청으로 동기화가 중단되었습니다"
+        self._cancel_event.set()
+        self._load_progress = "중단 요청 처리 중..."
+        logger.info("동기화 중단 요청 수신")
+        return TaskResult(True, "동기화 중단 요청을 수신했습니다")
+
+    def _cancelled_result(self, progress_cb=None) -> TaskResult:
+        message = self._cancel_reason or "사용자 요청으로 동기화가 중단되었습니다"
+        if progress_cb:
+            progress_cb(100, "중단됨")
+        self._load_error = message
+
+        # 중단 시점까지 확보된 문서로 BM25 재구축하여 내부 상태 일관성 유지
+        try:
+            if self.documents:
+                self._build_bm25()
+        except Exception as e:
+            logger.warning(f"중단 처리 중 BM25 재구축 실패: {e}")
+
+        logger.info(message)
+        return TaskResult(False, message)
     
     def load_model(self, model_name: str, offline_mode: bool = None, local_model_path: str = None) -> TaskResult:
         if self._is_loading:
@@ -629,6 +660,8 @@ class RegulationQASystem:
         embed_backend = getattr(AppConfig, 'EMBED_BACKEND', 'torch')
         embed_normalize = getattr(AppConfig, 'EMBED_NORMALIZE', True)
         self._load_error = ""
+        self.offline_mode = bool(is_offline)
+        self.local_model_path = model_path_override or ""
         
         try:
             self._is_loading = True
@@ -711,7 +744,10 @@ class RegulationQASystem:
                 return TaskResult(False, "파일에서 텍스트를 추출할 수 없습니다")
             
             # 문서 분할
-            splitter = DocumentSplitter(chunk_size=500, chunk_overlap=50)
+            splitter = DocumentSplitter(
+                chunk_size=AppConfig.CHUNK_SIZE,
+                chunk_overlap=AppConfig.CHUNK_OVERLAP
+            )
             chunks = splitter.split(text)
             
             if not chunks:
@@ -797,6 +833,8 @@ class RegulationQASystem:
         if not self.embedding_model:
             logger.info("AI 모델 없음 - BM25 전용 모드로 문서 처리")
         
+        if self._cancel_event.is_set():
+            return self._cancelled_result(progress_cb)
         
         with self._lock:
             return self._process_internal(folder, files, progress_cb, force_reindex=force_reindex)
@@ -805,6 +843,8 @@ class RegulationQASystem:
         # 벡터 인덱싱 사용 시에만 LangChain 의존성 로드
         if self.embedding_model:
             _lazy_import_langchain()
+        if self._cancel_event.is_set():
+            return self._cancelled_result(progress_cb)
         
         self.current_folder = folder
         cache_dir = self._get_cache_dir(folder)
@@ -822,6 +862,8 @@ class RegulationQASystem:
             
         if progress_cb:
             progress_cb(5, "캐시 확인...")
+        if self._cancel_event.is_set():
+            return self._cancelled_result(progress_cb)
 
         cache_info = {}
         to_process, cached = [], []
@@ -850,6 +892,8 @@ class RegulationQASystem:
                 to_process.append(fp)
             
         self.documents, self.doc_meta = [], []
+        if self._cancel_event.is_set():
+            return self._cancelled_result(progress_cb)
         
         # Load Cache
         if (
@@ -931,6 +975,11 @@ class RegulationQASystem:
             futures = {executor.submit(extract_file, fp): fp for fp in to_process}
             completed = 0
             for future in as_completed(futures):
+                if self._cancel_event.is_set():
+                    for pending in futures:
+                        if not pending.done():
+                            pending.cancel()
+                    return self._cancelled_result(progress_cb)
                 fp = futures[future]
                 fname = os.path.basename(fp)
                 try:
@@ -946,6 +995,8 @@ class RegulationQASystem:
         if progress_cb: progress_cb(50, "텍스트 청킹 중...")
         
         for fp, fname, content, error, meta in extracted_results:
+            if self._cancel_event.is_set():
+                return self._cancelled_result(progress_cb)
             self.file_infos[fp].status = FileStatus.PROCESSING
             file_id = FileUtils.make_file_id(fp)
             if error:
@@ -963,6 +1014,8 @@ class RegulationQASystem:
                 chunks = splitter.split(content)
                 chunk_count = 0
                 for chunk in chunks:
+                    if self._cancel_event.is_set():
+                        return self._cancelled_result(progress_cb)
                     chunk_text = chunk.strip()
                     if not chunk_text:
                         continue
@@ -1000,6 +1053,8 @@ class RegulationQASystem:
 
         if not new_docs and not self.vector_store and not self.documents:
             return TaskResult(False, "처리 가능한 문서 없음", failed_items=failed)
+        if self._cancel_event.is_set():
+            return self._cancelled_result(progress_cb)
             
         # 벡터 인덱스 생성 (AI 모델이 있을 때만)
         if self.embedding_model and FAISS:
@@ -1016,9 +1071,13 @@ class RegulationQASystem:
                 logger.warning(f"벡터 인덱스 생성 실패 (BM25만 사용): {e}")
         else:
             if progress_cb: progress_cb(75, "BM25 전용 모드...")
+        if self._cancel_event.is_set():
+            return self._cancelled_result(progress_cb)
              
         if progress_cb: progress_cb(85, "키워드 인덱스 생성...")
         self._build_bm25()
+        if self._cancel_event.is_set():
+            return self._cancelled_result(progress_cb)
         
         if progress_cb: progress_cb(90, "캐시 저장...")
         self._save_cache(cache_dir, cache_info, new_cache_info)
@@ -1137,6 +1196,8 @@ class RegulationQASystem:
                 logger.warning(f"AI 모델 로드 오류, BM25 모드로 진행: {e}")
 
         self.current_folder = folder_path
+        self._cancel_event.clear()
+        self._cancel_reason = ""
         
         stats_path = os.path.join(get_app_directory(), 'config', 'stats.json')
         if os.path.exists(stats_path):
@@ -1162,6 +1223,7 @@ class RegulationQASystem:
         
         def bg_process():
             self._is_loading = True
+            self._load_error = ""
             try:
                 def cb(p, msg): self._load_progress = f"{p}% {msg}"
                 res = self.process_documents(folder_path, files, cb, force_reindex=force_reindex)
@@ -1181,7 +1243,12 @@ class RegulationQASystem:
                 self._load_error = str(e)
             finally:
                 self._is_loading = False
-                self._load_progress = "완료" if not self._load_error else f"오류: {self._load_error}"
+                if self._cancel_event.is_set():
+                    self._load_progress = "중단됨"
+                else:
+                    self._load_progress = "완료" if not self._load_error else f"오류: {self._load_error}"
+                self._cancel_event.clear()
+                self._cancel_reason = ""
         
         self._executor.submit(bg_process)
         return TaskResult(True, "초기화 시작됨 (백그라운드 처리)")
@@ -1446,6 +1513,8 @@ class RegulationQASystem:
         self._is_loading = False
         self._load_progress = ""
         self._load_error = ""
+        self._cancel_event.clear()
+        self._cancel_reason = ""
         
         # 가비지 컬렉션
         gc.collect()

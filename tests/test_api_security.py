@@ -2,6 +2,47 @@
 import io
 
 
+def test_cors_allowlist_blocks_unlisted_origin(monkeypatch):
+    from app import create_app
+    from app.config import AppConfig
+
+    monkeypatch.setattr(AppConfig, "CORS_ALLOWED_ORIGINS", ["https://allowed.example"], raising=False)
+
+    app = create_app()
+    app.config["TESTING"] = True
+    client = app.test_client()
+
+    blocked = client.get("/api/status", headers={"Origin": "https://blocked.example"})
+    assert blocked.status_code == 200
+    assert blocked.headers.get("Access-Control-Allow-Origin") is None
+
+    allowed = client.get("/api/status", headers={"Origin": "https://allowed.example"})
+    assert allowed.status_code == 200
+    assert allowed.headers.get("Access-Control-Allow-Origin") == "https://allowed.example"
+    assert allowed.headers.get("Access-Control-Allow-Credentials") == "true"
+
+
+def test_admin_login_set_cookie_attributes(monkeypatch):
+    from app import create_app
+    from app.config import AppConfig
+
+    monkeypatch.setenv("ADMIN_PASSWORD", "pw")
+    monkeypatch.setattr(AppConfig, "SESSION_COOKIE_HTTPONLY", True, raising=False)
+    monkeypatch.setattr(AppConfig, "SESSION_COOKIE_SAMESITE", "Strict", raising=False)
+    monkeypatch.setattr(AppConfig, "SESSION_COOKIE_SECURE", True, raising=False)
+
+    app = create_app()
+    app.config["TESTING"] = True
+    client = app.test_client()
+
+    resp = client.post("/api/admin/auth", json={"password": "pw"})
+    assert resp.status_code == 200
+    cookie = resp.headers.get("Set-Cookie", "")
+    assert "HttpOnly" in cookie
+    assert "SameSite=Strict" in cookie
+    assert "Secure" in cookie
+
+
 def test_upload_sanitizes_filename(tmp_path, monkeypatch):
     from app import create_app
     from app.services.search import qa_system

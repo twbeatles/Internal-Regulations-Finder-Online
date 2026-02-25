@@ -182,7 +182,7 @@ class AppConfig:
     LOCAL_MODEL_PATH = ""
     
     # 임베딩 백엔드 (v2.6 신규)
-    EMBED_BACKEND = "torch"  # "torch" | "onnx_fp32" | "onnx_int8"
+    EMBED_BACKEND = "onnx_fp32"  # "torch" | "onnx_fp32" | "onnx_int8"
     EMBED_NORMALIZE = True   # L2 정규화 여부
     
     # 성능 최적화 (v2.6.1 신규)
@@ -350,7 +350,7 @@ python download_models.py
 ## 🧪 Perf Commands
 
 ```bash
-PYTHONPATH=. pytest -q
+pytest -q
 python scripts/perf_smoke.py
 python scripts/perf_smoke.py --base-url http://127.0.0.1:8080 --query "휴가 규정"
 ```
@@ -419,3 +419,14 @@ Default benchmark scenario: warmup 30, measure 200, concurrency 1/5/10.
 - Download route restored (by-id + legacy filename route).
 - Frontend upload extension filter aligned with backend (`txt/docx/pdf/xlsx/xls/hwp`).
 - PWA icon paths aligned via `static/icons/icon-192.png`, `static/icons/icon-512.png`.
+
+### v2.8 Additions (2026-02-25)
+- CORS is allowlist-based via `CORS_ALLOWED_ORIGINS`; credentials are no longer reflected to arbitrary origins.
+- Session cookie policy is explicitly enforced (`HttpOnly`, `SameSite`, `Secure`).
+- `/api/search/history` now returns `success`, normalized `popular[{query,count}]`, and `popular_legacy`.
+- `/api/search/suggest`, `/api/status`, `/api/health` now include `success` envelopes.
+- File delete policy defaults to `index_only`; physical delete requires `delete_source=true`.
+- ZIP upload adds hard limits (`max_entries`, `max_uncompressed_bytes`, `max_single_file_bytes`).
+- `/api/models` defaults `reindex=true` and reports whether reindex was actually triggered.
+- `/api/sync/stop` is implemented using cancellation events (no longer TODO).
+- Service Worker caches only GET allowlisted APIs and never caches auth/admin or mutating API calls.

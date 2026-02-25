@@ -1355,14 +1355,34 @@ const Toast = {
 
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
-        toast.innerHTML = `
-            <span class="toast-icon">${icons[type]}</span>
-            <div class="toast-content">
-                <div class="toast-title">${title}</div>
-                ${message ? `<div class="toast-message">${message}</div>` : ''}
-            </div>
-            <button class="toast-close" onclick="Toast.close(this)">✕</button>
-        `;
+        const iconEl = document.createElement('span');
+        iconEl.className = 'toast-icon';
+        iconEl.textContent = icons[type] || icons.info;
+
+        const contentEl = document.createElement('div');
+        contentEl.className = 'toast-content';
+
+        const titleEl = document.createElement('div');
+        titleEl.className = 'toast-title';
+        titleEl.textContent = String(title || '');
+        contentEl.appendChild(titleEl);
+
+        if (message) {
+            const messageEl = document.createElement('div');
+            messageEl.className = 'toast-message';
+            messageEl.textContent = String(message);
+            contentEl.appendChild(messageEl);
+        }
+
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'toast-close';
+        closeBtn.type = 'button';
+        closeBtn.textContent = '✕';
+        closeBtn.addEventListener('click', () => this.remove(toast));
+
+        toast.appendChild(iconEl);
+        toast.appendChild(contentEl);
+        toast.appendChild(closeBtn);
 
         if (this.container) {
             this.container.appendChild(toast);
@@ -1646,15 +1666,29 @@ const Autocomplete = {
 
     async showHistory() {
         const result = await API.getSearchHistory(5);
-        if (result.success) {
+        if (result.success !== false) {
             const items = [];
             if (result.recent && result.recent.length > 0) {
                 items.push({ type: 'header', text: '최근 검색어' });
                 result.recent.forEach(q => items.push({ type: 'recent', text: q }));
             }
-            if (result.popular && result.popular.length > 0) {
+            const popular = Array.isArray(result.popular) ? result.popular : [];
+            const popularLegacy = Array.isArray(result.popular_legacy) ? result.popular_legacy : [];
+            if (popular.length > 0 || popularLegacy.length > 0) {
                 items.push({ type: 'header', text: '인기 검색어' });
-                result.popular.forEach(p => items.push({ type: 'popular', text: p.query, count: p.count }));
+                if (popular.length > 0) {
+                    popular.forEach((p) => {
+                        if (p && typeof p === 'object') {
+                            items.push({ type: 'popular', text: String(p.query || ''), count: Number(p.count || 0) });
+                        }
+                    });
+                } else {
+                    popularLegacy.forEach((p) => {
+                        if (Array.isArray(p) && p.length >= 2) {
+                            items.push({ type: 'popular', text: String(p[0] || ''), count: Number(p[1] || 0) });
+                        }
+                    });
+                }
             }
             this.renderHistory(items);
         }
@@ -2027,6 +2061,9 @@ function renderSearchResults(results, query) {
     const container = document.getElementById('results-container');
     if (!container) return;
 
+    lastRenderedQuery = String(query || '');
+    lastRenderedResults = Array.isArray(results) ? [...results] : [];
+
     // 결과 저장 (내보내기용)
     ExportResults.saveResults(results, query);
 
@@ -2072,7 +2109,7 @@ function renderSearchResults(results, query) {
     fragment.appendChild(header);
 
     // 검색 결과 저장 (이벤트 위임용)
-    currentSearchResults = results;
+    currentSearchResults = Array.isArray(results) ? [...results] : [];
 
     // 결과 카드 생성 (DocumentFragment에 추가)
     results.forEach((item, index) => {
@@ -2207,15 +2244,15 @@ async function initAdmin(options = {}) {
     const themeBtn = document.getElementById('theme-toggle');
     if (themeBtn && !themeBtn.dataset.bound) {
         themeBtn.addEventListener('click', () => {
-            ThemeManager.toggle();
-            themeBtn.textContent = ThemeManager.currentTheme === 'dark' ? '🌙' : '☀️';
+            const nextTheme = ThemeManager.toggle();
+            ThemeManager.updateToggleButton(nextTheme);
             themeBtn.style.transform = 'rotate(360deg)';
             setTimeout(() => themeBtn.style.transform = '', 300);
         });
         themeBtn.dataset.bound = '1';
     }
     if (themeBtn) {
-        themeBtn.textContent = ThemeManager.currentTheme === 'dark' ? '🌙' : '☀️';
+        ThemeManager.updateToggleButton(ThemeManager.getTheme());
     }
 
     // 관리자 인증 확인
