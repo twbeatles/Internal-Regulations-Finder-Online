@@ -2,6 +2,7 @@
 """
 사내 규정 검색기 - GUI 버전 PyInstaller Spec (경량화)
 빌드: pyinstaller server_gui.spec
+정합성 점검(2026-03-01): config 전체 포함 대신 settings.example.json만 포함
 
 버전: 2.1 (2026-01-04)
 - 북마크, PDF 내보내기, 버전 관리, 고급 검색 기능 추가
@@ -26,10 +27,10 @@ datas = [
     (os.path.join(project_dir, 'static'), 'static'),
 ]
 
-# config 폴더 (존재 시 포함)
-config_dir = os.path.join(project_dir, 'config')
-if os.path.exists(config_dir):
-    datas.append((config_dir, 'config'))
+# config 샘플 파일만 포함 (민감정보/런타임 데이터 제외)
+settings_example = os.path.join(project_dir, 'config', 'settings.example.json')
+if os.path.exists(settings_example):
+    datas.append((settings_example, 'config'))
 
 # ============================================================================
 # Hidden Imports (필수 항목만)

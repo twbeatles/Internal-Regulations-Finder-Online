@@ -176,7 +176,7 @@ RegSearchError                   # 기본 예외
 │           ├── torch_backend.py  # PyTorch/HuggingFace 백엔드
 │           └── onnx_backend.py   # ONNX Runtime 백엔드
 ├── static/
-│   ├── app.js              # 프론트엔드 SPA (3800+ lines, v1.7)
+│   ├── app.js              # 프론트엔드 SPA (3313 lines 기준, v1.7)
 │   ├── style.css           # CSS 스타일 (다크/라이트 테마)
 │   └── sw.js               # PWA 서비스 워커
 ├── templates/
@@ -379,7 +379,7 @@ http://localhost:8080/admin  # 관리자
 ## 📦 빌드
 
 ```bash
-# AI 포함 GUI 버전 (400-600MB)
+# AI 포함 GUI 버전 (500-800MB)
 pyinstaller regulation_search_gui.spec --clean
 
 # 경량 버전 - BM25만 (60-100MB)
@@ -519,3 +519,8 @@ class AppConfig:
 - `/api/models`는 `reindex` 기본값이 `true`이며, 실제 재인덱스 트리거 결과를 응답한다.
 - `/api/sync/stop`은 TODO가 아니라 실제 취소 이벤트를 통해 동기화 중단 요청을 처리한다.
 - Service Worker는 `GET allowlist` API만 캐시하고 인증/관리/비GET 요청은 캐시하지 않는다.
+
+### 정합성 보충 메모 (2026-03-01)
+- `static/app.js` 라인수 표기는 점검 시점 기준 `3313`으로 갱신.
+- 주요 spec 5종(`regulation_search_gui.spec`, `regulation_search_ultra_lite_gui.spec`, `regulation_search_onefile.spec`, `regulation_search_ultra_lite.spec`, `server_gui.spec`)은 `config` 폴더 전체 대신 `config/settings.example.json`만 포함.
+- `python -m py_compile *.spec` 기준 spec 문법은 모두 정상.

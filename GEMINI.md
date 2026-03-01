@@ -45,7 +45,7 @@ Internal-Regulations-Finder-Online-main/
 │           ├── torch_backend.py  # PyTorch/HuggingFace 백엔드
 │           └── onnx_backend.py   # ONNX Runtime 백엔드
 ├── static/                 # 프론트엔드 정적 파일
-│   ├── app.js              # SPA 스타일 클라이언트 (v1.7, 3800+ lines)
+│   ├── app.js              # SPA 스타일 클라이언트 (v1.7, 3313 lines 기준)
 │   ├── style.css           # CSS 스타일 (다크/라이트 테마)
 │   └── sw.js               # PWA 서비스 워커
 ├── templates/              # HTML 템플릿
@@ -333,7 +333,7 @@ python download_models.py
 |--------|----------------|
 | Search Response | ~80ms (↓ 47%) |
 | Cache Hit Rate | ~90% (↑ 12%) |
-| Memory Usage | ~600MB (with AI) |
+| Memory Usage | ~500-800MB (with AI) |
 | Max Concurrent | 10 searches |
 | Rate Limit | 300 req/min/IP |
 | Response Compression | ~75% reduction (Gzip) |
@@ -430,3 +430,8 @@ Default benchmark scenario: warmup 30, measure 200, concurrency 1/5/10.
 - `/api/models` defaults `reindex=true` and reports whether reindex was actually triggered.
 - `/api/sync/stop` is implemented using cancellation events (no longer TODO).
 - Service Worker caches only GET allowlisted APIs and never caches auth/admin or mutating API calls.
+
+### Consistency Addendum (2026-03-01)
+- `static/app.js` line-count reference updated to `3313` (audit-time snapshot).
+- Five main packaging specs now include only `config/settings.example.json` (not the whole `config` directory): `regulation_search_gui.spec`, `regulation_search_ultra_lite_gui.spec`, `regulation_search_onefile.spec`, `regulation_search_ultra_lite.spec`, `server_gui.spec`.
+- `python -m py_compile *.spec` confirms all spec files are syntactically valid.

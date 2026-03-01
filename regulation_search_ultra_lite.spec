@@ -2,6 +2,7 @@
 """
 사내 규정 검색기 v2.3 - 초경량 빌드 Spec (Ultra Lite)
 빌드: pyinstaller regulation_search_ultra_lite.spec
+정합성 점검(2026-03-01): config 전체 포함 대신 settings.example.json만 포함
 
 목표 크기: 60-80MB
 - AI/ML 완전 제외 (BM25 텍스트 검색만)
@@ -28,10 +29,10 @@ datas = [
     (os.path.join(project_dir, 'static'), 'static'),
 ]
 
-# config 폴더가 있으면 포함
-config_dir = os.path.join(project_dir, 'config')
-if os.path.exists(config_dir):
-    datas.append((config_dir, 'config'))
+# config 샘플 파일만 포함 (민감정보/런타임 데이터 제외)
+settings_example = os.path.join(project_dir, 'config', 'settings.example.json')
+if os.path.exists(settings_example):
+    datas.append((settings_example, 'config'))
 
 # ============================================================================
 # Hidden Imports - 최소 필수만

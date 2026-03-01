@@ -2,6 +2,7 @@
 """
 사내 규정 검색기 v2.6 - 초경량 GUI 빌드 Spec
 빌드: pyinstaller regulation_search_ultra_lite_gui.spec
+정합성 점검(2026-03-01): config 전체 포함 대신 settings.example.json만 포함
 
 특징:
 - GUI 모드 (콘솔 창 없음)
@@ -55,10 +56,10 @@ datas = [
 # PyQt6 데이터 추가
 datas += pyqt_datas
 
-# config 폴더가 있으면 포함
-config_dir = os.path.join(project_dir, 'config')
-if os.path.exists(config_dir):
-    datas.append((config_dir, 'config'))
+# config 샘플 파일만 포함 (민감정보/런타임 데이터 제외)
+settings_example = os.path.join(project_dir, 'config', 'settings.example.json')
+if os.path.exists(settings_example):
+    datas.append((settings_example, 'config'))
 
 # ============================================================================
 # Hidden Imports - 최소 필수만

@@ -5,7 +5,7 @@
 | Spec 파일 | 모드 | AI 기능 | 예상 크기 | 특징 |
 |-----------|------|---------|-----------|------|
 | `regulation_search_gui.spec` | GUI | ✅ | 500-800MB | AI 벡터 검색 + BM25 |
-| `regulation_search_ultra_lite_gui.spec` | GUI | ❌ | 600MB | BM25만 (torch 제외) |
+| `regulation_search_ultra_lite_gui.spec` | GUI | ❌ | 60-100MB | BM25만 (torch 제외) |
 
 > 💡 **v2.6.1**: 성능 최적화(압축, 캐싱) 및 오프라인 모드 지원
 
@@ -110,7 +110,13 @@ No module named 'torch'
 - `excluded_datas` 규칙에 `icons` 또는 `icon-*.png`를 직접 제거하는 패턴이 없어 추가 수정 없이 신규 아이콘 포함 가능.
 - 결론:
   - 기능 변경 관점에서는 별도 spec 구조 변경이 불필요.
-  - 단, 실제 빌드 과정에서 `regulation_search_ultra_lite_gui.spec` 시작 docstring이 `\"\"\"`로 오기입되어 있어 `"""`로 1줄 수정 필요(문법 오류 해결).
+  - `regulation_search_ultra_lite_gui.spec` 시작 docstring 문법은 현재 정상(`"""`)이며 추가 수정이 필요하지 않음.
+
+## ✅ 정합성 점검 메모 (2026-03-01)
+
+- 대상 spec(`regulation_search_gui.spec`, `regulation_search_ultra_lite_gui.spec`, `regulation_search_onefile.spec`, `regulation_search_ultra_lite.spec`, `server_gui.spec`)은 `config` 폴더 전체 대신 `config/settings.example.json`만 포함하도록 통일함.
+- `python -m py_compile *.spec` 기준 모든 spec 문법 정상 확인.
+- 런타임 API/기능 변경 없이 빌드 산출물의 민감 설정 포함 위험만 축소함.
 
 ### 권장 검증
 1. 빌드 후 `dist/.../static/icons/`에 `icon-192.png`, `icon-512.png` 존재 확인
