@@ -2,6 +2,7 @@
 import os
 import hashlib
 import json
+import importlib
 import threading
 from pathlib import Path
 from datetime import datetime
@@ -10,6 +11,14 @@ from app.utils import logger, get_app_directory, FileUtils
 from app.config import AppConfig
 from app.services.db import db
 from app.services.document import DocumentComparator
+
+
+def _optional_module(module_name: str):
+    try:
+        return importlib.import_module(module_name)
+    except ImportError:
+        return None
+
 
 class RevisionTracker:
     """규정 개정 이력 관리 (SQLite 기반)"""
@@ -141,12 +150,12 @@ class FolderWatcher:
     def watchdog_available(self):
         """watchdog 가용성 확인"""
         if self._watchdog_available is None:
-            try:
-                from watchdog.observers import Observer
-                from watchdog.events import FileSystemEventHandler
-                self._watchdog_available = True
-            except ImportError:
-                self._watchdog_available = False
+            # Use importlib-based probing to avoid static missing-import diagnostics.
+            observers = _optional_module("watchdog.observers")
+            events = _optional_module("watchdog.events")
+            self._watchdog_available = bool(
+                observers and getattr(observers, "Observer", None) and events and getattr(events, "FileSystemEventHandler", None)
+            )
         return self._watchdog_available
     
     def start_watching(self, folder: str) -> bool:
@@ -159,33 +168,38 @@ class FolderWatcher:
             self.stop_watching()
         
         try:
-            from watchdog.observers import Observer
-            from watchdog.events import FileSystemEventHandler
+            observers = _optional_module("watchdog.observers")
+            events = _optional_module("watchdog.events")
+            Observer = getattr(observers, "Observer", None)
+            FileSystemEventHandler = getattr(events, "FileSystemEventHandler", None)
+            if Observer is None or FileSystemEventHandler is None:
+                logger.warning("watchdog 라이브러리 미설치 (pip install watchdog)")
+                return False
             
             class RegulationEventHandler(FileSystemEventHandler):
-                def __init__(inner_self, callback):
-                    inner_self._callback = callback
+                def __init__(self, callback):
+                    self._callback = callback
                 
-                def on_created(inner_self, event):
+                def on_created(self, event):
                     if not event.is_directory:
                         ext = os.path.splitext(event.src_path)[1].lower()
                         if ext in AppConfig.SUPPORTED_EXTENSIONS:
                             logger.info(f"📁 새 파일 감지: {event.src_path}")
-                            if inner_self._callback:
-                                inner_self._callback('created', event.src_path)
+                            if self._callback:
+                                self._callback('created', event.src_path)
                 
-                def on_modified(inner_self, event):
+                def on_modified(self, event):
                     if not event.is_directory:
                         ext = os.path.splitext(event.src_path)[1].lower()
                         if ext in AppConfig.SUPPORTED_EXTENSIONS:
                             logger.info(f"📝 파일 수정 감지: {event.src_path}")
-                            if inner_self._callback:
-                                inner_self._callback('modified', event.src_path)
+                            if self._callback:
+                                self._callback('modified', event.src_path)
                                 
-                def on_deleted(inner_self, event):
+                def on_deleted(self, event):
                     if not event.is_directory:
-                         if inner_self._callback:
-                                inner_self._callback('deleted', event.src_path)
+                        if self._callback:
+                            self._callback('deleted', event.src_path)
 
             self.event_handler = RegulationEventHandler(self.callback)
             self.observer = Observer()

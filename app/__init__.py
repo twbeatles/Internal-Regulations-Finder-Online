@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import secrets
+from typing import Any, Optional, Type, cast
 from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
 from app.config import AppConfig
@@ -8,21 +9,26 @@ from app.utils import logger
 from app.services.db import db
 
 # NumPy 호환 JSON Provider
+CustomJSONProviderType: Optional[Type[Any]] = None
 try:
     from flask.json.provider import DefaultJSONProvider
-    class CustomJSONProvider(DefaultJSONProvider):
-        def default(self, obj):
-            try:
-                import numpy as np
-                if isinstance(obj, (np.integer, np.floating, np.bool_)):
-                    return obj.item()
-                if isinstance(obj, np.ndarray):
-                    return obj.tolist()
-            except ImportError:
-                pass
-            return super().default(obj)
+
+    def _numpy_json_default(o):
+        try:
+            import numpy as np
+            if isinstance(o, (np.integer, np.floating, np.bool_)):
+                return o.item()
+            if isinstance(o, np.ndarray):
+                return o.tolist()
+        except ImportError:
+            pass
+        return DefaultJSONProvider.default(o)
+
+    class _CustomJSONProvider(DefaultJSONProvider):
+        default = staticmethod(_numpy_json_default)
+    CustomJSONProviderType = _CustomJSONProvider
 except ImportError:
-    CustomJSONProvider = None
+    CustomJSONProviderType = None
 
 def create_app():
     # 템플릿과 정적 파일 경로는 프로젝트 루트 기준
@@ -58,8 +64,8 @@ def create_app():
     app.config['SESSION_COOKIE_SECURE'] = bool(getattr(AppConfig, 'SESSION_COOKIE_SECURE', False))
     
     # JSON Provider 설정
-    if CustomJSONProvider:
-        app.json = CustomJSONProvider(app)
+    if CustomJSONProviderType is not None:
+        app.json = cast(Any, CustomJSONProviderType)(app)
     
     # ========================================================================
     # 응답 압축 설정 (v2.6.1 성능 최적화)

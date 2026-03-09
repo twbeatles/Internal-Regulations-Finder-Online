@@ -14,7 +14,7 @@ import ctypes
 import json
 import hashlib
 import logging
-from typing import Optional
+from typing import Any, Optional
 from datetime import datetime
 
 from PyQt6.QtWidgets import (
@@ -31,11 +31,11 @@ from PyQt6.QtGui import QIcon, QAction, QFont, QColor, QPalette, QCloseEvent, QT
 # 지연 로딩 패턴 - 무거운 모듈은 스플래시 후에 로드
 # ============================================================================
 # 전역 변수 (나중에 로드됨)
-app = None  # Flask app
-qa_system = None
-logger = None
-AppConfig = None
-UPLOAD_DIR = None
+app: Any = None  # Flask app
+qa_system: Any = None
+logger: Any = None
+AppConfig: Any = None
+UPLOAD_DIR: Optional[str] = None
 
 def _load_heavy_modules():
     """무거운 모듈 로드 (백그라운드에서 실행)"""
@@ -1044,13 +1044,18 @@ class ServerWindow(QMainWindow):
         self.tray_icon = QSystemTrayIcon(self)
         
         # 기본 아이콘 설정 (앱 아이콘 또는 시스템 기본)
-        app_icon = QApplication.instance().windowIcon()
+        qt_instance = QApplication.instance()
+        app_icon = qt_instance.windowIcon() if isinstance(qt_instance, QApplication) else QIcon()
         if not app_icon.isNull():
             self.tray_icon.setIcon(app_icon)
         else:
             # 기본 스타일 아이콘 사용
             from PyQt6.QtWidgets import QStyle
-            default_icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+            style = QApplication.style()
+            default_icon = (
+                style.standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+                if style is not None else QIcon()
+            )
             self.tray_icon.setIcon(default_icon)
         
         # 트레이 메뉴
@@ -1326,7 +1331,8 @@ class ServerWindow(QMainWindow):
         
         # 스크롤 맨 아래로
         scrollbar = self.log_text.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        if scrollbar is not None:
+            scrollbar.setValue(scrollbar.maximum())
     
     def _save_log(self):
         """로그 파일로 저장"""
@@ -1417,7 +1423,10 @@ class ServerWindow(QMainWindow):
             qa_system.cleanup()
             QApplication.quit()
     
-    def closeEvent(self, event: QCloseEvent):
+    def closeEvent(self, a0: Optional[QCloseEvent]):
+        if a0 is None:
+            return
+        event = a0
         if self.minimize_check.isChecked():
             event.ignore()
             self.hide()
@@ -1587,7 +1596,7 @@ def main():
             # 메인 윈도우 생성 및 표시
             window = ServerWindow(start_minimized=start_minimized)
             # window를 전역으로 유지 (가비지 컬렉션 방지)
-            qt_app._main_window = window
+            setattr(qt_app, "_main_window", window)
         else:
             QMessageBox.critical(None, "오류", "모듈 로드에 실패했습니다.")
             qt_app.quit()

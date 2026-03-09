@@ -18,7 +18,7 @@
 ## 🏗️ Project Structure
 
 ```
-Internal-Regulations-Finder-Online-main/
+Internal-Regulations-Finder-Online/
 ├── run.py                  # 콘솔 서버 엔트리포인트
 ├── server_gui.py           # GUI 서버 (PyQt6, 시스템 트레이)
 ├── download_models.py      # 오프라인용 모델 다운로드
@@ -45,7 +45,7 @@ Internal-Regulations-Finder-Online-main/
 │           ├── torch_backend.py  # PyTorch/HuggingFace 백엔드
 │           └── onnx_backend.py   # ONNX Runtime 백엔드
 ├── static/                 # 프론트엔드 정적 파일
-│   ├── app.js              # SPA 스타일 클라이언트 (v1.7, 3313 lines 기준)
+│   ├── app.js              # SPA 스타일 클라이언트 (v1.7, 3320 lines 기준)
 │   ├── style.css           # CSS 스타일 (다크/라이트 테마)
 │   └── sw.js               # PWA 서비스 워커
 ├── templates/              # HTML 템플릿
@@ -432,6 +432,11 @@ Default benchmark scenario: warmup 30, measure 200, concurrency 1/5/10.
 - Service Worker caches only GET allowlisted APIs and never caches auth/admin or mutating API calls.
 
 ### Consistency Addendum (2026-03-01)
-- `static/app.js` line-count reference updated to `3313` (audit-time snapshot).
+- `static/app.js` line-count reference updated to `3320` (audit-time snapshot).
 - Five main packaging specs now include only `config/settings.example.json` (not the whole `config` directory): `regulation_search_gui.spec`, `regulation_search_ultra_lite_gui.spec`, `regulation_search_onefile.spec`, `regulation_search_ultra_lite.spec`, `server_gui.spec`.
 - `python -m py_compile *.spec` confirms all spec files are syntactically valid.
+
+### Consistency Addendum (2026-03-09)
+- Synchronized optional-import packaging paths in `server.spec`, `internal_regulations.spec`, `regulation_search.spec`, and `regulation_search_gui.spec`.
+- Added missing dynamic modules where needed: `watchdog.observers`, `watchdog.events`, `langchain_text_splitters`, `langchain_core.documents`, `langchain_community.embeddings`, `langchain_community.vectorstores`.
+- Added `onnxruntime` and `app.services.embeddings_backends` collection path for run.py-based full packaging specs.

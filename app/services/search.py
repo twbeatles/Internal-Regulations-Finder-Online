@@ -2,6 +2,7 @@
 import os
 import time
 import json
+import importlib
 import threading
 import logging
 import traceback
@@ -21,11 +22,20 @@ from concurrent.futures import ThreadPoolExecutor
 # ============================================================================
 
 # 이 변수들은 실제 사용 시점에 _lazy_import_*() 함수로 로드됨
-CharacterTextSplitter = None
-Document = None
-HuggingFaceEmbeddings = None
-FAISS = None
+CharacterTextSplitter: Optional[Any] = None
+Document: Optional[Any] = None
+HuggingFaceEmbeddings: Optional[Any] = None
+FAISS: Optional[Any] = None
 _lazy_imports_loaded = False
+
+
+def _import_optional_attr(module_name: str, attr_name: str) -> Optional[Any]:
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError:
+        return None
+    return getattr(module, attr_name, None)
+
 
 def _lazy_import_langchain():
     """LangChain 관련 라이브러리 지연 로드"""
@@ -35,51 +45,25 @@ def _lazy_import_langchain():
         return
     
     # LangChain 호환성 임포트 (최신 버전 우선, 구버전 폴백)
-    try:
-        from langchain_text_splitters import CharacterTextSplitter as _CharacterTextSplitter
-        CharacterTextSplitter = _CharacterTextSplitter
-    except ImportError:
-        try:
-            from langchain.text_splitter import CharacterTextSplitter as _CharacterTextSplitter
-            CharacterTextSplitter = _CharacterTextSplitter
-        except ImportError:
-            pass
+    CharacterTextSplitter = _import_optional_attr(
+        "langchain_text_splitters", "CharacterTextSplitter"
+    ) or _import_optional_attr("langchain.text_splitter", "CharacterTextSplitter")
 
-    try:
-        from langchain_core.documents import Document as _Document
-        Document = _Document
-    except ImportError:
-        try:
-            from langchain.docstore.document import Document as _Document
-            Document = _Document
-        except ImportError:
-            pass
+    Document = _import_optional_attr(
+        "langchain_core.documents", "Document"
+    ) or _import_optional_attr("langchain.docstore.document", "Document")
 
     # HuggingFaceEmbeddings - langchain-huggingface 패키지 우선 사용
-    try:
-        from langchain_huggingface import HuggingFaceEmbeddings as _HuggingFaceEmbeddings
-        HuggingFaceEmbeddings = _HuggingFaceEmbeddings
-    except ImportError:
-        try:
-            from langchain_community.embeddings import HuggingFaceEmbeddings as _HuggingFaceEmbeddings
-            HuggingFaceEmbeddings = _HuggingFaceEmbeddings
-        except ImportError:
-            try:
-                from langchain.embeddings import HuggingFaceEmbeddings as _HuggingFaceEmbeddings
-                HuggingFaceEmbeddings = _HuggingFaceEmbeddings
-            except ImportError:
-                pass
+    HuggingFaceEmbeddings = _import_optional_attr(
+        "langchain_huggingface", "HuggingFaceEmbeddings"
+    ) or _import_optional_attr(
+        "langchain_community.embeddings", "HuggingFaceEmbeddings"
+    ) or _import_optional_attr("langchain.embeddings", "HuggingFaceEmbeddings")
 
     # FAISS 벡터스토어
-    try:
-        from langchain_community.vectorstores import FAISS as _FAISS
-        FAISS = _FAISS
-    except ImportError:
-        try:
-            from langchain.vectorstores import FAISS as _FAISS
-            FAISS = _FAISS
-        except ImportError:
-            pass
+    FAISS = _import_optional_attr(
+        "langchain_community.vectorstores", "FAISS"
+    ) or _import_optional_attr("langchain.vectorstores", "FAISS")
     
     _lazy_imports_loaded = True
 
@@ -286,7 +270,7 @@ class SearchCache:
         result: Any
         hit_count: int = 0
 
-    def __init__(self, max_size: int = 1000, ttl_seconds: int = 600, adaptive_ttl: bool = None):
+    def __init__(self, max_size: int = 1000, ttl_seconds: int = 600, adaptive_ttl: Optional[bool] = None):
         from collections import OrderedDict
         self.cache: OrderedDict = OrderedDict()
         self.max_size = max_size
@@ -650,12 +634,19 @@ class RegulationQASystem:
         logger.info(message)
         return TaskResult(False, message)
     
-    def load_model(self, model_name: str, offline_mode: bool = None, local_model_path: str = None) -> TaskResult:
+    def load_model(
+        self,
+        model_name: str,
+        offline_mode: Optional[bool] = None,
+        local_model_path: Optional[str] = None
+    ) -> TaskResult:
         if self._is_loading:
             return TaskResult(False, "이미 모델을 로딩 중입니다")
         
-        is_offline = offline_mode if offline_mode is not None else AppConfig.OFFLINE_MODE
-        model_path_override = local_model_path if local_model_path is not None else AppConfig.LOCAL_MODEL_PATH
+        is_offline = bool(offline_mode if offline_mode is not None else AppConfig.OFFLINE_MODE)
+        model_path_override = str(
+            local_model_path if local_model_path is not None else (AppConfig.LOCAL_MODEL_PATH or "")
+        )
         model_id = AppConfig.AVAILABLE_MODELS.get(model_name, AppConfig.AVAILABLE_MODELS[AppConfig.DEFAULT_MODEL])
         embed_backend = getattr(AppConfig, 'EMBED_BACKEND', 'torch')
         embed_normalize = getattr(AppConfig, 'EMBED_NORMALIZE', True)
@@ -687,7 +678,7 @@ class RegulationQASystem:
                 backend=embed_backend,
                 normalize=embed_normalize,
                 offline_mode=is_offline,
-                local_model_path=model_path_override if model_path_override else None
+                local_model_path=model_path_override or None
             )
             
             self.model_id = model_id
@@ -855,9 +846,10 @@ class RegulationQASystem:
         for fp in files:
             meta = FileUtils.get_metadata(fp)
             self.file_infos[fp] = FileInfo(
-                fp, os.path.basename(fp),
-                os.path.splitext(fp)[1].lower(),
-                meta['size'] if meta else 0
+                path=fp,
+                name=os.path.basename(fp),
+                extension=os.path.splitext(fp)[1].lower(),
+                size=int(meta['size']) if meta else 0
             )
             
         if progress_cb:
@@ -957,7 +949,7 @@ class RegulationQASystem:
         failed, new_docs, new_cache_info = [], [], {}
         
         # Parallel Extraction
-        def extract_file(fp: str) -> Tuple[str, str, Optional[str], Optional[Dict]]:
+        def extract_file(fp: str) -> Tuple[str, str, Optional[str], Optional[str], Optional[Dict[str, Any]]]:
             fname = os.path.basename(fp)
             try:
                 content, error = self.extractor.extract(fp)
@@ -1259,8 +1251,8 @@ class RegulationQASystem:
         k: int = 5,
         hybrid: bool = True,
         sort_by: str = 'relevance',
-        filter_file: str = None,
-        filter_file_id: str = None
+        filter_file: Optional[str] = None,
+        filter_file_id: Optional[str] = None
     ) -> TaskResult:
         """검색 수행 (성능 모니터링 포함)"""
         start_time = time.perf_counter()  # time 모듈은 이미 모듈 상단에서 import됨
@@ -1284,14 +1276,16 @@ class RegulationQASystem:
             parallel_search = getattr(AppConfig, 'PARALLEL_SEARCH', True)
             
             # 하이브리드 검색 시 Vector와 BM25를 병렬로 실행 (성능 최적화 v2.6.1)
-            if hybrid and self.vector_store and self.bm25 and parallel_search:
+            vector_store = self.vector_store
+            bm25_index = self.bm25
+            if hybrid and vector_store and bm25_index and parallel_search:
                 
                 fetch_k = k * 2
                 
                 def vector_search():
                     """Vector 검색 수행"""
                     try:
-                        return self.vector_store.similarity_search_with_score(query, k=fetch_k)
+                        return vector_store.similarity_search_with_score(query, k=fetch_k)
                     except Exception as e:
                         logger.debug(f"Vector 검색 오류: {e}")
                         return []
@@ -1299,7 +1293,7 @@ class RegulationQASystem:
                 def bm25_search():
                     """BM25 검색 수행"""
                     try:
-                        return self.bm25.search(query, top_k=fetch_k)
+                        return bm25_index.search(query, top_k=fetch_k)
                     except Exception as e:
                         logger.debug(f"BM25 검색 오류: {e}")
                         return []

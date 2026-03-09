@@ -7,6 +7,7 @@ HuggingFaceEmbeddings(normalize_embeddings=True)와 동일한 출력을 생성
 """
 
 import os
+import importlib
 import threading
 from typing import List, Optional, Any
 
@@ -109,7 +110,9 @@ class OnnxEmbeddings:
                 return
             
             try:
-                import onnxruntime as ort
+                ort = importlib.import_module("onnxruntime")
+                if ort is None:
+                    raise ImportError("onnxruntime")
                 
                 # 세션 옵션 설정
                 sess_options = ort.SessionOptions()
@@ -124,15 +127,16 @@ class OnnxEmbeddings:
                     sess_options.inter_op_num_threads = inter_threads
                 
                 # 세션 생성 (CPU만 사용)
-                self._session = ort.InferenceSession(
+                session = ort.InferenceSession(
                     self._onnx_path,
                     sess_options,
                     providers=['CPUExecutionProvider']
                 )
+                self._session = session
                 
                 # 입출력 텐서 이름 자동 탐지
-                self._input_names = [inp.name for inp in self._session.get_inputs()]
-                self._output_names = [out.name for out in self._session.get_outputs()]
+                self._input_names = [inp.name for inp in session.get_inputs()]
+                self._output_names = [out.name for out in session.get_outputs()]
                 
                 # last_hidden_state 확인
                 self._has_last_hidden_state = 'last_hidden_state' in self._output_names
@@ -197,9 +201,13 @@ class OnnxEmbeddings:
         """
         self._ensure_tokenizer()
         self._ensure_session()
+        tokenizer = self._tokenizer
+        session = self._session
+        if tokenizer is None or session is None:
+            raise ModelLoadError(self.model_path, "토크나이저 또는 ONNX 세션이 초기화되지 않았습니다")
         
         # 토큰화
-        inputs = self._tokenizer(
+        inputs = tokenizer(
             texts,
             padding=True,
             truncation=True,
@@ -217,7 +225,7 @@ class OnnxEmbeddings:
                 onnx_inputs[name] = inputs['token_type_ids'].astype(np.int64)
         
         # ONNX 추론
-        outputs = self._session.run(None, onnx_inputs)
+        outputs = session.run(None, onnx_inputs)
         
         # 출력 텐서 선택
         if self._has_last_hidden_state:

@@ -51,8 +51,8 @@ class AppConfig:
     LOCAL_MODEL_PATH = ""  # 사전 다운로드된 모델 폴더 경로 (빈 문자열이면 기본 경로 사용)
     
     # 임베딩 백엔드 설정
-    EMBED_BACKEND = "onnx_fp32"  # "torch" | "onnx_fp32" | "onnx_int8"
-    EMBED_NORMALIZE = True   # L2 정규화 여부
+    EMBED_BACKEND: str = "onnx_fp32"  # "torch" | "onnx_fp32" | "onnx_int8"
+    EMBED_NORMALIZE: bool = True   # L2 정규화 여부
 
     
     # AI 모델 설정

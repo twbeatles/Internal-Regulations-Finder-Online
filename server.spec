@@ -2,6 +2,7 @@
 """
 사내 규정 검색기 - 웹 서버 버전 PyInstaller Spec (콘솔 버전)
 빌드: pyinstaller server.spec
+정합성 점검(2026-03-09): optional import hiddenimports 경로 동기화
 """
 
 import os
@@ -33,15 +34,19 @@ hiddenimports = [
     # Waitress (프로덕션 서버)
     'waitress',
     
-    # LangChain 관련
+    # LangChain 관련 (신규/레거시 경로 동시 지원)
     'langchain',
     'langchain.text_splitter',
     'langchain.docstore',
     'langchain.docstore.document',
     'langchain_community',
+    'langchain_community.embeddings',
     'langchain_community.vectorstores',
     'langchain_community.vectorstores.faiss',
     'langchain_huggingface',
+    'langchain_text_splitters',
+    'langchain_core',
+    'langchain_core.documents',
     
     # HuggingFace
     'transformers',
@@ -60,8 +65,13 @@ hiddenimports = [
     # 문서 처리
     'docx',
     'pypdf',
+    'openpyxl',
+    'olefile',
     
     # 시스템 모니터링 (선택적)
+    'watchdog',
+    'watchdog.observers',
+    'watchdog.events',
     'psutil',
     
     # 기타

@@ -6,15 +6,24 @@ Torch 기반 임베딩 백엔드
 """
 
 import os
-from typing import Optional
+import importlib
+from typing import Any, Optional
 
 from app.utils import logger
 from app.config import AppConfig
 from app.exceptions import ModelLoadError, ModelOfflineError
 
 # Lazy import 변수
-HuggingFaceEmbeddings = None
+HuggingFaceEmbeddings: Optional[Any] = None
 _torch_imports_loaded = False
+
+
+def _import_optional_attr(module_name: str, attr_name: str) -> Optional[Any]:
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError:
+        return None
+    return getattr(module, attr_name, None)
 
 
 def _lazy_import_torch_deps():
@@ -25,19 +34,11 @@ def _lazy_import_torch_deps():
         return
     
     # HuggingFaceEmbeddings - langchain-huggingface 패키지 우선 사용
-    try:
-        from langchain_huggingface import HuggingFaceEmbeddings as _HuggingFaceEmbeddings
-        HuggingFaceEmbeddings = _HuggingFaceEmbeddings
-    except ImportError:
-        try:
-            from langchain_community.embeddings import HuggingFaceEmbeddings as _HuggingFaceEmbeddings
-            HuggingFaceEmbeddings = _HuggingFaceEmbeddings
-        except ImportError:
-            try:
-                from langchain.embeddings import HuggingFaceEmbeddings as _HuggingFaceEmbeddings
-                HuggingFaceEmbeddings = _HuggingFaceEmbeddings
-            except ImportError:
-                pass
+    HuggingFaceEmbeddings = _import_optional_attr(
+        "langchain_huggingface", "HuggingFaceEmbeddings"
+    ) or _import_optional_attr(
+        "langchain_community.embeddings", "HuggingFaceEmbeddings"
+    ) or _import_optional_attr("langchain.embeddings", "HuggingFaceEmbeddings")
     
     _torch_imports_loaded = True
 

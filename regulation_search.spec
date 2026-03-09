@@ -67,6 +67,7 @@ hiddenimports = [
     'sentence_transformers',
     'transformers',
     'huggingface_hub',
+    'onnxruntime',
     
     # LangChain (호환성)
     'langchain',
@@ -83,6 +84,9 @@ hiddenimports = [
     
     # 시스템
     'psutil',
+    'watchdog',
+    'watchdog.observers',
+    'watchdog.events',
     'hashlib',
     'json',
     're',
@@ -99,6 +103,7 @@ hiddenimports = [
 hiddenimports += collect_submodules('app')
 hiddenimports += collect_submodules('app.routes')
 hiddenimports += collect_submodules('app.services')
+hiddenimports += collect_submodules('app.services.embeddings_backends')
 
 # ============================================================================
 # 제외 목록 (경량화 핵심)

@@ -17,6 +17,7 @@ class DBManager:
     _local = threading.local()
     _connection_count = 0  # 활성 연결 수 추적
     _MAX_CONNECTIONS = 50  # 최대 연결 수 경고 임계값
+    db_path: str
     
     def __new__(cls):
         with cls._lock:

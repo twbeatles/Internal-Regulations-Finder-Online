@@ -2,6 +2,7 @@
 """
 사내 규정 검색기 v2.0 - PyInstaller Spec
 빌드: pyinstaller internal_regulations.spec
+정합성 점검(2026-03-09): optional import hiddenimports 경로 동기화
 """
 
 import os
@@ -26,17 +27,20 @@ hiddenimports = [
     'waitress', 'waitress.server',
     
     # Core Dependencies
-    'watchdog', 'openpyxl', 'olefile', 'pytesseract', 'pdf2image', 'PIL', 'sqlite3',
+    'watchdog', 'watchdog.observers', 'watchdog.events', 'sqlite3',
+    'docx', 'pypdf', 'openpyxl', 'olefile', 'pytesseract', 'pdf2image', 'PIL',
     'numpy', 'tqdm', 'requests', 'psutil', 'lxml',
     
     # AI & LangChain
     'langchain', 'langchain_community', 'langchain_huggingface',
-    'langchain_text_splitters', 'langchain_core',
-    'faiss', 'torch', 'sentence_transformers', 'transformers',
+    'langchain_text_splitters', 'langchain_core', 'langchain_core.documents',
+    'langchain_community.embeddings', 'langchain_community.vectorstores',
+    'faiss', 'torch', 'sentence_transformers', 'transformers', 'onnxruntime',
 ]
 
 # 동적 모듈 수집
 hiddenimports += collect_submodules('app')
+hiddenimports += collect_submodules('app.services.embeddings_backends')
 hiddenimports += collect_submodules('langchain')
 hiddenimports += collect_submodules('langchain_community')
 hiddenimports += collect_submodules('langchain_huggingface')

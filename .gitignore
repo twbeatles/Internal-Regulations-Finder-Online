@@ -12,7 +12,12 @@ env/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.pyright/
+.pytype/
+pyright-report*.json
+pyright*.json
 .coverage
+.coverage.*
 htmlcov/
 
 # Build artifacts

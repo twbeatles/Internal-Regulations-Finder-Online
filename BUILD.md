@@ -36,7 +36,7 @@ python download_models.py
 ## 빌드 명령어
 
 ```powershell
-cd "d:\google antigravity\Internal-Regulations-Finder-Online-main"
+cd "d:\twbeatles-repos\Internal-Regulations-Finder-Online"
 
 # AI 포함 버전 (벡터 검색 + BM25)
 # [권장] 대부분의 환경에서 사용
@@ -122,3 +122,15 @@ No module named 'torch'
 1. 빌드 후 `dist/.../static/icons/`에 `icon-192.png`, `icon-512.png` 존재 확인
 2. 실행 후 PWA install prompt 및 서비스워커 install 로그 확인
 3. 관리자 화면에서 ZIP 업로드/파일 다운로드/리비전 기능 스모크 테스트
+
+## ✅ 정합성 점검 메모 (2026-03-09)
+
+- optional import 사용 경로와 빌드 스펙 동기화:
+  - `server.spec`
+  - `internal_regulations.spec`
+  - `regulation_search.spec`
+  - `regulation_search_gui.spec`
+- 보강 항목:
+  - `watchdog.observers`, `watchdog.events`
+  - `langchain_text_splitters`, `langchain_core.documents`, `langchain_community.embeddings`, `langchain_community.vectorstores`
+  - run.py 기반 full spec에서 `onnxruntime` 및 `app.services.embeddings_backends` 수집 경로 명시

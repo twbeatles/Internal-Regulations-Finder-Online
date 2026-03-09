@@ -3,6 +3,7 @@
 사내 규정 검색기 v2.6 - GUI 빌드 Spec (안정화 버전)
 빌드: pyinstaller regulation_search_gui.spec --clean
 정합성 점검(2026-03-01): config 전체 포함 대신 settings.example.json만 포함
+정합성 점검(2026-03-09): optional import hiddenimports 경로 동기화
 
 특징:
 - GUI 모드 (콘솔 창 없음)
@@ -178,6 +179,9 @@ hiddenimports = [
     
     # === 시스템 ===
     'psutil',
+    'watchdog',
+    'watchdog.observers',
+    'watchdog.events',
     'hashlib',
     'json',
     're',

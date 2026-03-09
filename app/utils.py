@@ -162,20 +162,21 @@ class FileInfo:
 
 class CustomJSONEncoder(json.JSONEncoder):
     """NumPy 타입 및 집합(Set)을 처리하는 커스텀 JSON 인코더"""
-    def default(self, obj):
-        if isinstance(obj, np.integer):
-            return int(obj)
-        if isinstance(obj, np.floating):
-            return float(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, set):
-            return list(obj)
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        if isinstance(obj, Enum):
-            return obj.value
-        return super(CustomJSONEncoder, self).default(obj)
+
+    def default(self, o: Any):
+        if isinstance(o, np.integer):
+            return int(o)
+        if isinstance(o, np.floating):
+            return float(o)
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        if isinstance(o, set):
+            return list(o)
+        if isinstance(o, datetime):
+            return o.isoformat()
+        if isinstance(o, Enum):
+            return o.value
+        return super().default(o)
 
 
 class MemoryMonitor:
@@ -282,12 +283,12 @@ class FileUtils:
     _FILENAME_WS_RE = re.compile(r"\s+")
 
     @staticmethod
-    def safe_read(path: str, encoding: str = 'utf-8') -> Tuple[Optional[str], Optional[str]]:
+    def safe_read(path: str, encoding: str = 'utf-8') -> Tuple[str, Optional[str]]:
         try:
             with open(path, 'r', encoding=encoding, errors='ignore') as f:
                 return f.read(), None
         except Exception as e:
-            return None, str(e)
+            return "", str(e)
     
     @staticmethod
     def get_metadata(path: str) -> Optional[Dict]:
@@ -300,11 +301,12 @@ class FileUtils:
     
     @staticmethod
     def format_size(size: int) -> str:
+        size_value = float(size)
         for unit in ['B', 'KB', 'MB', 'GB']:
-            if size < 1024:
-                return f"{size:.1f}{unit}"
-            size /= 1024
-        return f"{size:.1f}TB"
+            if size_value < 1024:
+                return f"{size_value:.1f}{unit}"
+            size_value /= 1024
+        return f"{size_value:.1f}TB"
     
     @staticmethod
     def allowed_file(filename: str) -> bool:
@@ -382,7 +384,7 @@ def api_success(message: str = "성공", data: Any = None, **kwargs) -> Dict:
     return response
 
 
-def api_error(message: str, error_code: str = None, status_code: int = 400, **kwargs) -> Tuple[Dict, int]:
+def api_error(message: str, error_code: Optional[str] = None, status_code: int = 400, **kwargs) -> Tuple[Dict, int]:
     """에러 응답 생성
     
     Args:
