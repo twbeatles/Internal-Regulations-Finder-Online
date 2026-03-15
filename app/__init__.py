@@ -1,36 +1,55 @@
 # -*- coding: utf-8 -*-
+import importlib
 import os
 import secrets
-from typing import Any, Optional, Type, cast
+from typing import Any
 from flask import Flask, jsonify, render_template, request
-from flask_cors import CORS
+from flask.json.provider import DefaultJSONProvider
 from app.config import AppConfig
 from app.utils import logger
 from app.services.db import db
 
 # NumPy 호환 JSON Provider
-CustomJSONProviderType: Optional[Type[Any]] = None
-try:
-    from flask.json.provider import DefaultJSONProvider
-
-    def _numpy_json_default(o):
+class CustomJSONProvider(DefaultJSONProvider):
+    @staticmethod
+    def _default(obj: Any) -> Any:
         try:
             import numpy as np
-            if isinstance(o, (np.integer, np.floating, np.bool_)):
-                return o.item()
-            if isinstance(o, np.ndarray):
-                return o.tolist()
+            if isinstance(obj, (np.integer, np.floating, np.bool_)):
+                return obj.item()
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
         except ImportError:
             pass
-        return DefaultJSONProvider.default(o)
+        return DefaultJSONProvider.default(obj)
 
-    class _CustomJSONProvider(DefaultJSONProvider):
-        default = staticmethod(_numpy_json_default)
-    CustomJSONProviderType = _CustomJSONProvider
-except ImportError:
-    CustomJSONProviderType = None
+    def dumps(self, obj: Any, **kwargs: Any) -> str:
+        kwargs.setdefault("default", self._default)
+        return super().dumps(obj, **kwargs)
 
-def create_app():
+
+def _configure_cors(app: Flask, allowed_origins: list[str]) -> None:
+    try:
+        cors = getattr(importlib.import_module("flask_cors"), "CORS")
+    except ImportError:
+        if allowed_origins:
+            logger.warning("flask-cors not installed; using built-in allowlist CORS fallback")
+
+            @app.after_request
+            def _fallback_cors(response):
+                origin = request.headers.get("Origin")
+                if origin and origin in allowed_origins:
+                    response.headers["Access-Control-Allow-Origin"] = origin
+                    response.headers["Access-Control-Allow-Credentials"] = "true"
+                    response.headers["Vary"] = "Origin"
+                return response
+
+        return
+
+    cors(app, supports_credentials=True, origins=allowed_origins)
+
+
+def create_app() -> Flask:
     # 템플릿과 정적 파일 경로는 프로젝트 루트 기준
     app = Flask(__name__, 
                 template_folder='../templates', 
@@ -64,8 +83,7 @@ def create_app():
     app.config['SESSION_COOKIE_SECURE'] = bool(getattr(AppConfig, 'SESSION_COOKIE_SECURE', False))
     
     # JSON Provider 설정
-    if CustomJSONProviderType is not None:
-        app.json = cast(Any, CustomJSONProviderType)(app)
+    app.json = CustomJSONProvider(app)
     
     # ========================================================================
     # 응답 압축 설정 (v2.6.1 성능 최적화)
@@ -94,11 +112,11 @@ def create_app():
     allowed_origins = [str(origin).strip() for origin in allowed_origins if str(origin).strip()]
 
     if allowed_origins:
-        CORS(app, supports_credentials=True, origins=allowed_origins)
+        _configure_cors(app, allowed_origins)
         logger.info(f"CORS allowlist 적용: {len(allowed_origins)}개 origin")
     else:
         # Empty allowlist intentionally blocks cross-origin access.
-        CORS(app, supports_credentials=True, origins=[])
+        _configure_cors(app, [])
         logger.warning("CORS allowlist가 비어 있어 cross-origin 요청이 차단됩니다")
 
     @app.after_request

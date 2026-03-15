@@ -12,7 +12,7 @@ class DBManager:
         - WAL 모드 및 성능 최적화
         - 연결 수 추적
     """
-    _instance = None
+    _instance: "DBManager | None" = None
     _lock = threading.Lock()
     _local = threading.local()
     _connection_count = 0  # 활성 연결 수 추적

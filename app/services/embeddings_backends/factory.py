@@ -41,12 +41,10 @@ def create_embeddings(
         ModelOfflineError: 오프라인 모드에서 로컬 모델 없음
     """
     # 설정값 결정
-    backend_name = str(backend if backend is not None else getattr(AppConfig, 'EMBED_BACKEND', 'torch'))
-    normalize_embeddings = bool(
-        normalize if normalize is not None else getattr(AppConfig, 'EMBED_NORMALIZE', True)
-    )
-    is_offline = bool(offline_mode if offline_mode is not None else AppConfig.OFFLINE_MODE)
-    model_path_override = str(local_model_path if local_model_path is not None else (AppConfig.LOCAL_MODEL_PATH or ""))
+    resolved_backend = backend if backend is not None else str(getattr(AppConfig, 'EMBED_BACKEND', 'torch'))
+    resolved_normalize = normalize if normalize is not None else bool(getattr(AppConfig, 'EMBED_NORMALIZE', True))
+    is_offline = offline_mode if offline_mode is not None else bool(AppConfig.OFFLINE_MODE)
+    model_path_override = local_model_path if local_model_path is not None else str(AppConfig.LOCAL_MODEL_PATH)
     
     # 프로젝트 models 폴더 경로
     project_models_dir = os.path.join(get_app_directory(), 'models')
@@ -82,17 +80,15 @@ def create_embeddings(
     else:
         load_path = model_id_or_path
     
-    logger.info(
-        f"임베딩 생성 시작: backend={backend_name}, model={model_name}, normalize={normalize_embeddings}"
-    )
+    logger.info(f"임베딩 생성 시작: backend={resolved_backend}, model={model_name}, normalize={resolved_normalize}")
     
     # 백엔드 선택
-    if backend_name.startswith('onnx'):
+    if resolved_backend.startswith('onnx'):
         return _create_onnx_with_fallback(
             model_name=model_name,
             model_path=load_path,
-            backend=backend_name,
-            normalize=normalize_embeddings,
+            backend=resolved_backend,
+            normalize=resolved_normalize,
             is_offline=is_offline,
             cache_folder=project_models_dir
         )
@@ -101,7 +97,7 @@ def create_embeddings(
         return _create_torch_embeddings(
             model_name=model_name,
             load_path=load_path,
-            normalize=normalize_embeddings,
+            normalize=resolved_normalize,
             is_offline=is_offline,
             cache_folder=project_models_dir
         )
@@ -150,21 +146,20 @@ def _create_onnx_with_fallback(
     # ONNX 파일명 결정
     if backend == 'onnx_int8':
         onnx_file = 'model.int8.onnx'
-        fallback_onnx: Optional[str] = 'model.onnx'
+        fallback_onnx = 'model.onnx'
     else:
         onnx_file = 'model.onnx'
-        fallback_onnx = None
+        fallback_onnx = ""
     
     onnx_path = os.path.join(model_path, onnx_file)
     
     # int8 파일이 없으면 fp32로 fallback
     if backend == 'onnx_int8' and not os.path.exists(onnx_path):
-        if fallback_onnx is not None:
-            fallback_path = os.path.join(model_path, fallback_onnx)
-            if os.path.exists(fallback_path):
-                logger.warning(f"ONNX int8 파일 없음, fp32로 fallback: {fallback_path}")
-                onnx_file = fallback_onnx
-                onnx_path = fallback_path
+        fallback_path = os.path.join(model_path, fallback_onnx)
+        if os.path.exists(fallback_path):
+            logger.warning(f"ONNX int8 파일 없음, fp32로 fallback: {fallback_path}")
+            onnx_file = fallback_onnx
+            onnx_path = fallback_path
     
     # ONNX 파일 존재 확인
     if not os.path.exists(onnx_path):

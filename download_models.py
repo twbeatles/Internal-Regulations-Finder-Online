@@ -25,6 +25,7 @@ import os
 import sys
 import argparse
 import time
+import importlib
 from typing import Dict, Optional
 
 # 사용 가능한 모델 목록 (server.py의 AppConfig.AVAILABLE_MODELS와 동일)
@@ -69,12 +70,13 @@ def download_model(model_name: str, model_id: str, output_dir: str) -> bool:
     
     try:
         # sentence-transformers 사용 (가장 안정적인 다운로드 방법)
-        from sentence_transformers import SentenceTransformer
+        sentence_transformers_module = importlib.import_module('sentence_transformers')
+        sentence_transformer_cls = getattr(sentence_transformers_module, 'SentenceTransformer')
         
         start_time = time.time()
         
         # 모델 다운로드 및 로드 (캐시 폴더 지정)
-        model = SentenceTransformer(
+        model = sentence_transformer_cls(
             model_id,
             cache_folder=output_dir
         )
@@ -103,7 +105,7 @@ def download_model(model_name: str, model_id: str, output_dir: str) -> bool:
         gc.collect()
         
         try:
-            import torch
+            torch = importlib.import_module('torch')
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except ImportError:
@@ -227,7 +229,7 @@ def main():
     # 의존성 확인
     print("\n🔍 의존성 확인 중...")
     try:
-        import torch
+        torch = importlib.import_module('torch')
         print(f"   ✅ PyTorch {torch.__version__}")
     except ImportError:
         print("   ❌ PyTorch가 설치되어 있지 않습니다.")
@@ -235,8 +237,7 @@ def main():
         return 1
     
     try:
-        from sentence_transformers import SentenceTransformer
-        import sentence_transformers
+        sentence_transformers = importlib.import_module('sentence_transformers')
         print(f"   ✅ sentence-transformers {sentence_transformers.__version__}")
     except ImportError:
         print("   ❌ sentence-transformers가 설치되어 있지 않습니다.")

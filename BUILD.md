@@ -118,6 +118,23 @@ No module named 'torch'
 - `python -m py_compile *.spec` 기준 모든 spec 문법 정상 확인.
 - 런타임 API/기능 변경 없이 빌드 산출물의 민감 설정 포함 위험만 축소함.
 
+## 2026-03-15 추가 점검 메모
+
+- 콘솔/레거시 spec(`internal_regulations.spec`, `internal_regulations_lite.spec`, `regulation_search.spec`, `regulation_search_lite.spec`, `server.spec`)도 `config/settings.example.json`을 포함하도록 정렬함.
+- 최근 코드의 동적 import를 반영해 full-AI 계열 spec에는 다음 경로를 다시 확인함:
+  - `flask.json.provider`
+  - `flask_compress`
+  - `langchain_text_splitters`
+  - `langchain_core.documents`
+  - `app.services.embeddings_backends`
+- OCR은 여전히 선택 사항이며, 기본 requirements/spec 조합만으로는 이미지 PDF OCR이 자동 포함되지 않을 수 있음. OCR이 필요하면 `pytesseract`, `pdf2image`, `Pillow`, 시스템 Tesseract를 준비한 뒤 별도 검증 권장.
+
+### PowerShell spec 검증 명령
+
+```powershell
+Get-ChildItem -Name *.spec | ForEach-Object { python -m py_compile $_ }
+```
+
 ### 권장 검증
 1. 빌드 후 `dist/.../static/icons/`에 `icon-192.png`, `icon-512.png` 존재 확인
 2. 실행 후 PWA install prompt 및 서비스워커 install 로그 확인

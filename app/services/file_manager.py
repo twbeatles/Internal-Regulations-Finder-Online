@@ -2,23 +2,15 @@
 import os
 import hashlib
 import json
-import importlib
 import threading
+import importlib
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Optional, Any
+from typing import Any, Dict, List, Optional
 from app.utils import logger, get_app_directory, FileUtils
 from app.config import AppConfig
 from app.services.db import db
 from app.services.document import DocumentComparator
-
-
-def _optional_module(module_name: str):
-    try:
-        return importlib.import_module(module_name)
-    except ImportError:
-        return None
-
 
 class RevisionTracker:
     """규정 개정 이력 관리 (SQLite 기반)"""
@@ -140,22 +132,23 @@ class FolderWatcher:
     """watchdog 기반 폴더 변경 감지"""
     
     def __init__(self, callback=None):
-        self.observer = None
+        self.observer: Any | None = None
+        self.event_handler: Any | None = None
         self.watching = False
         self.watch_path = ""
         self.callback = callback
-        self._watchdog_available = None
+        self._watchdog_available: Optional[bool] = None
     
     @property
     def watchdog_available(self):
         """watchdog 가용성 확인"""
         if self._watchdog_available is None:
-            # Use importlib-based probing to avoid static missing-import diagnostics.
-            observers = _optional_module("watchdog.observers")
-            events = _optional_module("watchdog.events")
-            self._watchdog_available = bool(
-                observers and getattr(observers, "Observer", None) and events and getattr(events, "FileSystemEventHandler", None)
-            )
+            try:
+                importlib.import_module('watchdog.observers')
+                importlib.import_module('watchdog.events')
+                self._watchdog_available = True
+            except ImportError:
+                self._watchdog_available = False
         return self._watchdog_available
     
     def start_watching(self, folder: str) -> bool:
@@ -168,15 +161,12 @@ class FolderWatcher:
             self.stop_watching()
         
         try:
-            observers = _optional_module("watchdog.observers")
-            events = _optional_module("watchdog.events")
-            Observer = getattr(observers, "Observer", None)
-            FileSystemEventHandler = getattr(events, "FileSystemEventHandler", None)
-            if Observer is None or FileSystemEventHandler is None:
-                logger.warning("watchdog 라이브러리 미설치 (pip install watchdog)")
-                return False
+            observers_module = importlib.import_module('watchdog.observers')
+            events_module = importlib.import_module('watchdog.events')
+            observer_cls = getattr(observers_module, 'Observer')
+            file_system_event_handler = getattr(events_module, 'FileSystemEventHandler')
             
-            class RegulationEventHandler(FileSystemEventHandler):
+            class RegulationEventHandler(file_system_event_handler):
                 def __init__(self, callback):
                     self._callback = callback
                 
@@ -198,13 +188,16 @@ class FolderWatcher:
                                 
                 def on_deleted(self, event):
                     if not event.is_directory:
-                        if self._callback:
-                            self._callback('deleted', event.src_path)
+                         if self._callback:
+                                self._callback('deleted', event.src_path)
 
             self.event_handler = RegulationEventHandler(self.callback)
-            self.observer = Observer()
-            self.observer.schedule(self.event_handler, folder, recursive=True)
-            self.observer.start()
+            self.observer = observer_cls()
+            observer = self.observer
+            if observer is None:
+                raise RuntimeError("watchdog observer 생성에 실패했습니다")
+            observer.schedule(self.event_handler, folder, recursive=True)
+            observer.start()
             self.watching = True
             self.watch_path = folder
             logger.info(f"폴더 모니터링 시작: {folder}")

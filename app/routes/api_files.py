@@ -5,7 +5,7 @@ import shutil
 import threading
 from collections import OrderedDict
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 from flask import Blueprint, jsonify, request, send_file
 from app.services.search import qa_system
 from app.services.document import DocumentExtractor
@@ -22,6 +22,18 @@ _preview_extractor = DocumentExtractor()
 _preview_cache_lock = threading.Lock()
 _preview_cache: OrderedDict = OrderedDict()
 _PREVIEW_CACHE_MAX_SIZE = 128
+
+
+def _normalize_optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _get_json_payload() -> dict[str, Any]:
+    payload = request.get_json(silent=True)
+    return payload if isinstance(payload, dict) else {}
 
 
 def _to_bool(value, default=False):
@@ -179,13 +191,13 @@ def _find_file_path_by_id(file_id: str) -> str:
             return fp
     raise DocumentNotFoundError(file_id)
 
-def _resolve_target(file_id: Optional[str] = None, filename: Optional[str] = None):
-    if file_id:
+def _resolve_target(file_id: str | None = None, filename: str | None = None) -> tuple[str, str, str]:
+    if file_id is not None:
         target_path = _find_file_path_by_id(file_id)
-    else:
-        if not filename:
-            raise DocumentNotFoundError("")
+    elif filename is not None:
         target_path = _find_file_path(filename)
+    else:
+        raise DocumentNotFoundError("")
     resolved_name = os.path.basename(target_path)
     resolved_id = FileUtils.make_file_id(target_path)
     return target_path, resolved_name, resolved_id
@@ -294,7 +306,7 @@ def delete_file_by_id(file_id):
     """file_id 기준 파일 삭제 및 인덱스 정리"""
     return _delete_file_impl(file_id=file_id)
 
-def _delete_file_impl(filename: Optional[str] = None, file_id: Optional[str] = None):
+def _delete_file_impl(filename: str | None = None, file_id: str | None = None):
     with file_lock:
         try:
             target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
@@ -381,15 +393,15 @@ def upload_file():
         }), HttpStatus.BAD_REQUEST
         
     file = request.files['file']
-    source_filename = file.filename or ""
-    if source_filename == '':
+    incoming_filename = _normalize_optional_str(file.filename)
+    if incoming_filename is None:
         return jsonify({
             'success': False, 
             'message': ErrorMessages.FILE_NAME_EMPTY
         }), HttpStatus.BAD_REQUEST
         
-    if not FileUtils.allowed_file(source_filename):
-        ext = os.path.splitext(source_filename)[1]
+    if not FileUtils.allowed_file(incoming_filename):
+        ext = os.path.splitext(incoming_filename)[1]
         return jsonify({
             'success': False, 
             'message': f'{ErrorMessages.FILE_TYPE_NOT_SUPPORTED}: {ext}'
@@ -398,7 +410,7 @@ def upload_file():
     upload_folder = qa_system.current_folder or os.path.join(get_app_directory(), AppConfig.UPLOAD_FOLDER)
     os.makedirs(upload_folder, exist_ok=True)
     
-    original_name = source_filename
+    original_name = incoming_filename
     filename = FileUtils.sanitize_upload_filename(original_name)
 
     # Ensure allowed extension after sanitization (defense-in-depth).
@@ -487,20 +499,18 @@ def upload_folder():
     upload_root = Path(upload_folder).resolve()
 
     max_entries, err = _parse_limit('max_entries', AppConfig.ZIP_MAX_ENTRIES, minimum=1)
-    if err:
+    if err or max_entries is None:
         return jsonify({'success': False, 'message': err}), HttpStatus.BAD_REQUEST
     max_uncompressed_bytes, err = _parse_limit(
         'max_uncompressed_bytes', AppConfig.ZIP_MAX_UNCOMPRESSED_BYTES, minimum=1
     )
-    if err:
+    if err or max_uncompressed_bytes is None:
         return jsonify({'success': False, 'message': err}), HttpStatus.BAD_REQUEST
     max_single_file_bytes, err = _parse_limit(
         'max_single_file_bytes', AppConfig.ZIP_MAX_SINGLE_FILE_BYTES, minimum=1
     )
-    if err:
+    if err or max_single_file_bytes is None:
         return jsonify({'success': False, 'message': err}), HttpStatus.BAD_REQUEST
-    if max_entries is None or max_uncompressed_bytes is None or max_single_file_bytes is None:
-        return jsonify({'success': False, 'message': 'ZIP 제한값 파싱에 실패했습니다'}), HttpStatus.BAD_REQUEST
 
     success_items = []
     failed_items = []
@@ -642,8 +652,8 @@ def upload_folder():
 # ============================================================================
 @files_bp.route('/tags', methods=['GET'])
 def get_tags():
-    file_id = request.args.get('file_id')
-    file_path = request.args.get('file')
+    file_id = _normalize_optional_str(request.args.get('file_id'))
+    file_path = _normalize_optional_str(request.args.get('file'))
     if file_id or file_path:
         try:
             target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=file_path)
@@ -662,15 +672,15 @@ def get_tags():
 @files_bp.route('/tags', methods=['POST'])
 @admin_required
 def add_tag():
-    data = request.json or {}
-    file_id = data.get('file_id')
-    file_path = data.get('file')
-    tag = data.get('tag')
+    data = _get_json_payload()
+    file_id = _normalize_optional_str(data.get('file_id'))
+    file_path = _normalize_optional_str(data.get('file'))
+    tag = _normalize_optional_str(data.get('tag'))
     
     # 입력 검증
     if not ((file_id and isinstance(file_id, str)) or (file_path and isinstance(file_path, str))):
         return jsonify({'success': False, 'message': 'file_id 또는 파일 경로가 필요합니다'}), HttpStatus.BAD_REQUEST
-    if not tag or not isinstance(tag, str) or not tag.strip():
+    if tag is None:
         return jsonify({'success': False, 'message': '태그가 필요합니다'}), HttpStatus.BAD_REQUEST
 
     try:
@@ -678,22 +688,22 @@ def add_tag():
     except Exception:
         return jsonify({'success': False, 'message': '파일을 찾을 수 없습니다'}), HttpStatus.NOT_FOUND
 
-    if qa_system.tag_manager.add_tag(resolved_id, tag.strip()):
+    if qa_system.tag_manager.add_tag(resolved_id, tag):
         return jsonify({'success': True})
     return jsonify({'success': False, 'message': '태그 추가 실패'})
 
 @files_bp.route('/tags', methods=['DELETE'])
 @admin_required
 def remove_tag():
-    data = request.json or {}
-    file_id = data.get('file_id')
-    file_path = data.get('file')
-    tag = data.get('tag')
+    data = _get_json_payload()
+    file_id = _normalize_optional_str(data.get('file_id'))
+    file_path = _normalize_optional_str(data.get('file'))
+    tag = _normalize_optional_str(data.get('tag'))
     
     # 입력 검증
     if not ((file_id and isinstance(file_id, str)) or (file_path and isinstance(file_path, str))):
         return jsonify({'success': False, 'message': 'file_id 또는 파일 경로가 필요합니다'}), HttpStatus.BAD_REQUEST
-    if not tag or not isinstance(tag, str):
+    if tag is None:
         return jsonify({'success': False, 'message': '태그가 필요합니다'}), HttpStatus.BAD_REQUEST
 
     try:
@@ -710,8 +720,8 @@ def remove_tag():
 # ============================================================================
 @files_bp.route('/revisions', methods=['GET'])
 def get_revisions():
-    file_id = request.args.get('file_id')
-    filename = request.args.get('filename')
+    file_id = _normalize_optional_str(request.args.get('file_id'))
+    filename = _normalize_optional_str(request.args.get('filename'))
     try:
         target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
     except Exception:
@@ -723,12 +733,12 @@ def get_revisions():
 @files_bp.route('/revisions', methods=['POST'])
 @admin_required
 def save_revision():
-    data = request.json or {}
-    file_id = data.get('file_id')
-    filename = data.get('filename')
+    data = _get_json_payload()
+    file_id = _normalize_optional_str(data.get('file_id'))
+    filename = _normalize_optional_str(data.get('filename'))
     content = data.get('content')
-    comment = data.get('comment', '')
-    if not content or not isinstance(content, str):
+    comment = _normalize_optional_str(data.get('comment', '')) or ''
+    if not isinstance(content, str) or not content:
         return jsonify({'success': False, 'message': '저장할 내용(content)이 필요합니다'}), HttpStatus.BAD_REQUEST
     try:
         target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
@@ -744,7 +754,7 @@ def save_revision():
 
 @files_bp.route('/compare', methods=['POST'])
 def compare_docs():
-    data = request.json
+    data = _get_json_payload()
     # v1 (content) vs v2 (content) or version IDs
     # Simply using DocumentComparator directly here
     from app.services.document import DocumentComparator
@@ -765,7 +775,7 @@ def get_file_versions_by_id(file_id):
     """file_id 기준 파일의 버전 히스토리 조회"""
     return _get_file_versions_impl(file_id=file_id)
 
-def _get_file_versions_impl(filename: Optional[str] = None, file_id: Optional[str] = None):
+def _get_file_versions_impl(filename: str | None = None, file_id: str | None = None):
     try:
         target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
         history = qa_system.revision_tracker.get_history(resolved_id, legacy_key=resolved_name)
@@ -789,7 +799,7 @@ def get_file_version_content_by_id(file_id, version):
     """file_id 기준 특정 버전 내용 조회"""
     return _get_file_version_content_impl(version, file_id=file_id)
 
-def _get_file_version_content_impl(version: str, filename: Optional[str] = None, file_id: Optional[str] = None):
+def _get_file_version_content_impl(version: str, filename: str | None = None, file_id: str | None = None):
     try:
         target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
         content = qa_system.revision_tracker.get_revision(resolved_id, version, legacy_key=resolved_name)
@@ -815,7 +825,7 @@ def compare_file_versions_by_id(file_id):
     """file_id 기준 두 버전 간 비교"""
     return _compare_file_versions_impl(file_id=file_id)
 
-def _compare_file_versions_impl(filename: Optional[str] = None, file_id: Optional[str] = None):
+def _compare_file_versions_impl(filename: str | None = None, file_id: str | None = None):
     v1 = request.args.get('v1')
     v2 = request.args.get('v2')
     
@@ -852,7 +862,7 @@ def get_file_preview_by_id(file_id):
     """file_id 기준 파일 미리보기 (텍스트 일부 반환)"""
     return _get_file_preview_impl(file_id=file_id)
 
-def _get_file_preview_impl(filename: Optional[str] = None, file_id: Optional[str] = None):
+def _get_file_preview_impl(filename: str | None = None, file_id: str | None = None):
     """공용 파일 미리보기 구현"""
     try:
         target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
@@ -909,7 +919,7 @@ def download_file_by_id(file_id):
     """파일 다운로드 (file_id route)"""
     return _download_file_impl(file_id=file_id)
 
-def _download_file_impl(filename: Optional[str] = None, file_id: Optional[str] = None):
+def _download_file_impl(filename: str | None = None, file_id: str | None = None):
     try:
         target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
         if not os.path.exists(target_path) or not os.path.isfile(target_path):
@@ -958,9 +968,9 @@ def get_file_structure():
 @admin_required
 def set_file_tags():
     """파일 태그 일괄 설정 (덮어쓰기)"""
-    data = request.json or {}
-    file_id = data.get('file_id')
-    filename = data.get('filename')
+    data = _get_json_payload()
+    file_id = _normalize_optional_str(data.get('file_id'))
+    filename = _normalize_optional_str(data.get('filename'))
     tags = data.get('tags', [])
     
     if not ((file_id and isinstance(file_id, str)) or (filename and isinstance(filename, str))):
@@ -983,9 +993,9 @@ def set_file_tags():
 @admin_required
 def auto_tag_file():
     """파일 자동 태그 추천"""
-    data = request.json or {}
-    file_id = data.get('file_id')
-    filename = data.get('filename')
+    data = _get_json_payload()
+    file_id = _normalize_optional_str(data.get('file_id'))
+    filename = _normalize_optional_str(data.get('filename'))
     
     if not ((file_id and isinstance(file_id, str)) or (filename and isinstance(filename, str))):
         return jsonify({'success': False, 'message': 'file_id 또는 파일명이 필요합니다'}), HttpStatus.BAD_REQUEST

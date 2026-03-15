@@ -11,7 +11,6 @@ import json
 import threading
 import tempfile
 import hashlib
-import importlib
 import shutil
 import logging
 import subprocess
@@ -20,6 +19,7 @@ import re
 import gc
 import math
 import time
+import importlib
 from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -31,7 +31,6 @@ import signal
 import atexit
 
 from flask import Flask, request, jsonify, render_template, send_from_directory, session
-from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
 # ============================================================================
@@ -152,20 +151,6 @@ logger = setup_logger()
 # ============================================================================
 # 유틸리티
 # ============================================================================
-def _import_optional_module(module_name: str) -> Optional[Any]:
-    try:
-        return importlib.import_module(module_name)
-    except ImportError:
-        return None
-
-
-def _import_optional_attr(module_name: str, attr_name: str) -> Optional[Any]:
-    module = _import_optional_module(module_name)
-    if module is None:
-        return None
-    return getattr(module, attr_name, None)
-
-
 class FileUtils:
     @staticmethod
     def safe_read(path: str, encoding: str = 'utf-8') -> Tuple[str, Optional[str]]:
@@ -185,7 +170,7 @@ class FileUtils:
             return None
     
     @staticmethod
-    def format_size(size: int) -> str:
+    def format_size(size: int | float) -> str:
         size_value = float(size)
         for unit in ['B', 'KB', 'MB', 'GB']:
             if size_value < 1024:
@@ -280,36 +265,58 @@ class BM25Light:
 # ============================================================================
 class DocumentExtractor:
     def __init__(self):
-        self._docx_module: Optional[Any] = None
-        self._pdf_module: Optional[Any] = None
-        self._xlsx_module: Optional[Any] = None
-        self._hwp_module: Optional[Any] = None
+        self._docx_module: Any | None = None
+        self._docx_loaded = False
+        self._pdf_module: Any | None = None
+        self._pdf_loaded = False
+        self._xlsx_module: Any | None = None
+        self._xlsx_loaded = False
+        self._hwp_module: Any | None = None
+        self._hwp_loaded = False
         self._ocr_available: Optional[bool] = None
     
     @property
     def docx(self):
-        if self._docx_module is None:
-            self._docx_module = _import_optional_attr("docx", "Document")
+        if not self._docx_loaded:
+            self._docx_loaded = True
+            try:
+                docx_module = importlib.import_module('docx')
+                self._docx_module = getattr(docx_module, 'Document', None)
+            except ImportError:
+                self._docx_module = None
         return self._docx_module
     
     @property
     def pdf(self):
-        if self._pdf_module is None:
-            self._pdf_module = _import_optional_attr("pypdf", "PdfReader")
+        if not self._pdf_loaded:
+            self._pdf_loaded = True
+            try:
+                pypdf_module = importlib.import_module('pypdf')
+                self._pdf_module = getattr(pypdf_module, 'PdfReader', None)
+            except ImportError:
+                self._pdf_module = None
         return self._pdf_module
     
     @property
     def xlsx(self):
         """Excel 모듈 로드 (v2.0)"""
-        if self._xlsx_module is None:
-            self._xlsx_module = _import_optional_module("openpyxl")
+        if not self._xlsx_loaded:
+            self._xlsx_loaded = True
+            try:
+                self._xlsx_module = importlib.import_module('openpyxl')
+            except ImportError:
+                self._xlsx_module = None
         return self._xlsx_module
     
     @property
     def hwp(self):
         """HWP 모듈 로드 (v2.0) - olefile 기반 기본 추출"""
-        if self._hwp_module is None:
-            self._hwp_module = _import_optional_module("olefile")
+        if not self._hwp_loaded:
+            self._hwp_loaded = True
+            try:
+                self._hwp_module = importlib.import_module('olefile')
+            except ImportError:
+                self._hwp_module = None
         return self._hwp_module
     
     @property
@@ -317,8 +324,8 @@ class DocumentExtractor:
         """OCR 가용성 확인 (v2.0)"""
         if self._ocr_available is None:
             try:
-                import pytesseract
-                from PIL import Image
+                pytesseract = importlib.import_module('pytesseract')
+                importlib.import_module('PIL.Image')
                 # Tesseract 설치 확인
                 pytesseract.get_tesseract_version()
                 self._ocr_available = True
@@ -348,11 +355,10 @@ class DocumentExtractor:
         return FileUtils.safe_read(path)
     
     def _extract_docx(self, path: str) -> Tuple[str, Optional[str]]:
-        docx_loader = self.docx
-        if docx_loader is None:
+        if not self.docx:
             return "", "DOCX 라이브러리 없음 (pip install python-docx)"
         try:
-            doc = docx_loader(path)
+            doc = self.docx(path)
             parts = []
             for para in doc.paragraphs:
                 if para.text.strip():
@@ -367,11 +373,10 @@ class DocumentExtractor:
             return "", f"DOCX 오류: {e}"
     
     def _extract_pdf(self, path: str) -> Tuple[str, Optional[str]]:
-        pdf_reader_cls = self.pdf
-        if pdf_reader_cls is None:
+        if not self.pdf:
             return "", "PDF 라이브러리 없음 (pip install pypdf)"
         try:
-            reader = pdf_reader_cls(path)
+            reader = self.pdf(path)
             if reader.is_encrypted:
                 try:
                     reader.decrypt('')
@@ -397,12 +402,11 @@ class DocumentExtractor:
     
     def _extract_pdf_ocr(self, path: str) -> Tuple[str, Optional[str]]:
         """OCR을 사용한 이미지 PDF 텍스트 추출 (v2.0)"""
-        pytesseract = _import_optional_module("pytesseract")
-        pdf2image = _import_optional_module("pdf2image")
-        convert_from_path = getattr(pdf2image, "convert_from_path", None) if pdf2image else None
-        if pytesseract is None or convert_from_path is None:
-            return "", "OCR 라이브러리 없음 (pip install pytesseract pdf2image)"
         try:
+            pytesseract = importlib.import_module('pytesseract')
+            pdf2image = importlib.import_module('pdf2image')
+            convert_from_path = getattr(pdf2image, 'convert_from_path')
+            
             # PDF를 이미지로 변환
             images = convert_from_path(path, dpi=150)
             texts = []
@@ -425,11 +429,10 @@ class DocumentExtractor:
     
     def _extract_xlsx(self, path: str) -> Tuple[str, Optional[str]]:
         """Excel 파일 텍스트 추출 (v2.0)"""
-        xlsx_module = self.xlsx
-        if xlsx_module is None:
+        if not self.xlsx:
             return "", "Excel 라이브러리 없음 (pip install openpyxl)"
         try:
-            wb = xlsx_module.load_workbook(path, read_only=True, data_only=True)
+            wb = self.xlsx.load_workbook(path, read_only=True, data_only=True)
             texts = []
             
             for sheet_name in wb.sheetnames:
@@ -454,11 +457,10 @@ class DocumentExtractor:
     
     def _extract_hwp(self, path: str) -> Tuple[str, Optional[str]]:
         """HWP 파일 텍스트 추출 (v2.0) - olefile 기반 기본 추출"""
-        hwp_module = self.hwp
-        if hwp_module is None:
+        if not self.hwp:
             return "", "HWP 라이브러리 없음 (pip install olefile)"
         try:
-            ole = hwp_module.OleFileIO(path)
+            ole = self.hwp.OleFileIO(path)
             
             # HWP 파일 구조에서 텍스트 스트림 찾기
             texts = []
@@ -959,21 +961,22 @@ class FolderWatcher:
     """watchdog 기반 폴더 변경 감지"""
     
     def __init__(self, callback=None):
-        self.observer = None
+        self.observer: Any | None = None
         self.watching = False
         self.watch_path = ""
         self.callback = callback
-        self._watchdog_available = None
+        self._watchdog_available: Optional[bool] = None
     
     @property
     def watchdog_available(self):
         """watchdog 가용성 확인"""
         if self._watchdog_available is None:
-            observers = _import_optional_module("watchdog.observers")
-            events = _import_optional_module("watchdog.events")
-            self._watchdog_available = bool(
-                observers and getattr(observers, "Observer", None) and events and getattr(events, "FileSystemEventHandler", None)
-            )
+            try:
+                importlib.import_module('watchdog.observers')
+                importlib.import_module('watchdog.events')
+                self._watchdog_available = True
+            except ImportError:
+                self._watchdog_available = False
         return self._watchdog_available
     
     def start_watching(self, folder: str) -> bool:
@@ -986,15 +989,12 @@ class FolderWatcher:
             self.stop_watching()
         
         try:
-            observers = _import_optional_module("watchdog.observers")
-            events = _import_optional_module("watchdog.events")
-            Observer = getattr(observers, "Observer", None)
-            FileSystemEventHandler = getattr(events, "FileSystemEventHandler", None)
-            if Observer is None or FileSystemEventHandler is None:
-                logger.warning("watchdog 라이브러리 미설치 (pip install watchdog)")
-                return False
+            observers_module = importlib.import_module('watchdog.observers')
+            events_module = importlib.import_module('watchdog.events')
+            observer_cls = getattr(observers_module, 'Observer')
+            file_system_event_handler = getattr(events_module, 'FileSystemEventHandler')
             
-            class RegulationEventHandler(FileSystemEventHandler):
+            class RegulationEventHandler(file_system_event_handler):
                 def __init__(self, callback):
                     self._callback = callback
                 
@@ -1020,10 +1020,13 @@ class FolderWatcher:
                         if self._callback:
                             self._callback('deleted', event.src_path)
             
-            self.observer = Observer()
+            self.observer = observer_cls()
             event_handler = RegulationEventHandler(self.callback)
-            self.observer.schedule(event_handler, folder, recursive=True)
-            self.observer.start()
+            observer = self.observer
+            if observer is None:
+                raise RuntimeError("watchdog observer 생성에 실패했습니다")
+            observer.schedule(event_handler, folder, recursive=True)
+            observer.start()
             self.watching = True
             self.watch_path = folder
             
@@ -1327,15 +1330,15 @@ class TextHighlighter:
 # ============================================================================
 class RegulationQASystem:
     def __init__(self):
-        self.vector_store = None
-        self.embedding_model = None
-        self.model_id = None
+        self.vector_store: Any = None
+        self.embedding_model: Any = None
+        self.model_id: str | None = None
         self.model_name = ""
         self.extractor = DocumentExtractor()
         self.cache_path = os.path.join(tempfile.gettempdir(), "reg_qa_server_v10")
         self.bm25 = None
         self.documents: List[str] = []
-        self.doc_meta: List[Dict] = []
+        self.doc_meta: List[Dict[str, Any]] = []
         self.file_infos: Dict[str, FileInfo] = {}
         self.current_folder = ""
         self._lock = threading.RLock()
@@ -1371,12 +1374,7 @@ class RegulationQASystem:
         """마지막 로드 오류 메시지"""
         return self._load_error
     
-    def load_model(
-        self,
-        model_name: str,
-        offline_mode: Optional[bool] = None,
-        local_model_path: Optional[str] = None
-    ) -> TaskResult:
+    def load_model(self, model_name: str, offline_mode: bool | None = None, local_model_path: str | None = None) -> TaskResult:
         """AI 임베딩 모델 로드
         
         Args:
@@ -1390,10 +1388,8 @@ class RegulationQASystem:
             return TaskResult(False, "이미 모델을 로딩 중입니다")
         
         # 오프라인 모드 설정 결정
-        is_offline = bool(offline_mode if offline_mode is not None else AppConfig.OFFLINE_MODE)
-        model_path_override = str(
-            local_model_path if local_model_path is not None else (AppConfig.LOCAL_MODEL_PATH or "")
-        )
+        is_offline = offline_mode if offline_mode is not None else bool(AppConfig.OFFLINE_MODE)
+        model_path_override = local_model_path if local_model_path is not None else str(AppConfig.LOCAL_MODEL_PATH)
         
         model_id = AppConfig.AVAILABLE_MODELS.get(model_name, AppConfig.AVAILABLE_MODELS[AppConfig.DEFAULT_MODEL])
         self._load_error = ""  # 오류 초기화
@@ -1405,7 +1401,7 @@ class RegulationQASystem:
             
             # PyTorch 로드 시도
             try:
-                import torch
+                torch = importlib.import_module('torch')
                 logger.info(f"PyTorch 버전: {torch.__version__}")
             except ImportError as e:
                 error_msg = f"PyTorch 로드 실패: {e}"
@@ -1415,7 +1411,8 @@ class RegulationQASystem:
             
             # LangChain HuggingFace 로드 시도
             try:
-                from langchain_huggingface import HuggingFaceEmbeddings
+                langchain_huggingface = importlib.import_module('langchain_huggingface')
+                HuggingFaceEmbeddings = getattr(langchain_huggingface, 'HuggingFaceEmbeddings')
                 logger.info("LangChain HuggingFace 로드 완료")
             except ImportError as e:
                 error_msg = f"LangChain HuggingFace 로드 실패: {e}"
@@ -1526,20 +1523,18 @@ class RegulationQASystem:
     
     def _process_internal(self, folder: str, files: List[str], progress_cb) -> TaskResult:
         # LangChain 최신 버전 호환 import
-        CharacterTextSplitter = _import_optional_attr(
-            "langchain_text_splitters", "CharacterTextSplitter"
-        ) or _import_optional_attr("langchain.text_splitter", "CharacterTextSplitter")
-        FAISS = _import_optional_attr(
-            "langchain_community.vectorstores", "FAISS"
-        ) or _import_optional_attr("langchain.vectorstores", "FAISS")
-        Document = _import_optional_attr(
-            "langchain_core.documents", "Document"
-        ) or _import_optional_attr("langchain.docstore.document", "Document")
-        if CharacterTextSplitter is None or FAISS is None or Document is None:
-            return TaskResult(False, "LangChain 의존성이 누락되어 문서 처리를 진행할 수 없습니다")
-        embedding_model = self.embedding_model
-        if embedding_model is None:
-            return TaskResult(False, "모델이 로드되지 않았습니다")
+        try:
+            character_splitter_module = importlib.import_module('langchain_text_splitters')
+        except ImportError:
+            character_splitter_module = importlib.import_module('langchain.text_splitter')
+        CharacterTextSplitter = getattr(character_splitter_module, 'CharacterTextSplitter')
+
+        FAISS = getattr(importlib.import_module('langchain_community.vectorstores'), 'FAISS')
+
+        try:
+            Document = getattr(importlib.import_module('langchain_core.documents'), 'Document')
+        except ImportError:
+            Document = getattr(importlib.import_module('langchain.docstore.document'), 'Document')
         
         self.current_folder = folder
         cache_dir = self._get_cache_dir(folder)
@@ -1550,10 +1545,9 @@ class RegulationQASystem:
         for fp in files:
             meta = FileUtils.get_metadata(fp)
             self.file_infos[fp] = FileInfo(
-                path=fp,
-                name=os.path.basename(fp),
-                extension=os.path.splitext(fp)[1].lower(),
-                size=int(meta['size']) if meta else 0
+                fp, os.path.basename(fp),
+                os.path.splitext(fp)[1].lower(),
+                meta['size'] if meta else 0
             )
         
         if progress_cb:
@@ -1582,7 +1576,7 @@ class RegulationQASystem:
                 if progress_cb:
                     progress_cb(10, "캐시 로드...")
                 self.vector_store = FAISS.load_local(
-                    cache_dir, embedding_model,
+                    cache_dir, self.embedding_model,
                     allow_dangerous_deserialization=True
                 )
                 docs_path = os.path.join(cache_dir, "docs.json")
@@ -1614,7 +1608,7 @@ class RegulationQASystem:
         failed, new_docs, new_cache_info = [], [], {}
         
         # 병렬 문서 추출 함수
-        def extract_file(fp: str) -> Tuple[str, str, Optional[str], Optional[str], Optional[Dict[str, Any]]]:
+        def extract_file(fp: str) -> Tuple[str, str, str | None, str | None, Dict[str, Any] | None]:
             """파일에서 텍스트 추출 (병렬 처리용)"""
             fname = os.path.basename(fp)
             try:
@@ -1704,7 +1698,7 @@ class RegulationQASystem:
                     for i in range(0, len(new_docs), batch_size):
                         self.vector_store.add_documents(new_docs[i:i + batch_size])
                 else:
-                    self.vector_store = FAISS.from_documents(new_docs, embedding_model)
+                    self.vector_store = FAISS.from_documents(new_docs, self.embedding_model)
         except Exception as e:
             return TaskResult(False, f"인덱스 생성 실패: {e}")
         
@@ -1749,7 +1743,7 @@ class RegulationQASystem:
     def _save_cache(self, cache_dir: str, old_info: Dict, new_info: Dict):
         try:
             os.makedirs(cache_dir, exist_ok=True)
-            if self.vector_store and hasattr(self.vector_store, "save_local"):
+            if self.vector_store is not None:
                 self.vector_store.save_local(cache_dir)
             with open(os.path.join(cache_dir, "cache_info.json"), 'w', encoding='utf-8') as f:
                 json.dump({**old_info, **new_info}, f, ensure_ascii=False)
@@ -1759,7 +1753,7 @@ class RegulationQASystem:
             logger.warning(f"캐시 저장 실패: {e}")
     
     def search(self, query: str, k: int = 3, hybrid: bool = True, 
-                filter_file: Optional[str] = None, sort_by: str = 'relevance') -> TaskResult:
+                filter_file: str | None = None, sort_by: str = 'relevance') -> TaskResult:
         """하이브리드 검색 수행
         
         Args:
@@ -1898,7 +1892,7 @@ class RegulationQASystem:
 # ============================================================================
 # NumPy 호환 JSON Encoder
 class CustomJSONEncoder(json.JSONEncoder):
-    def default(self, o: Any):
+    def default(self, o: Any) -> Any:
         try:
             import numpy as np
             if isinstance(o, (np.integer, np.floating, np.bool_)):
@@ -1910,29 +1904,41 @@ class CustomJSONEncoder(json.JSONEncoder):
         return super().default(o)
 
 app = Flask(__name__)
-setattr(app, "json_encoder", CustomJSONEncoder)  # Flask < 2.2 호환
 app.config['MAX_CONTENT_LENGTH'] = AppConfig.MAX_CONTENT_LENGTH
 app.config['JSON_AS_ASCII'] = False
 app.secret_key = os.urandom(24)
-CORS(app, supports_credentials=True)
+try:
+    getattr(importlib.import_module("flask_cors"), "CORS")(app, supports_credentials=True)
+except ImportError:
+    logger.warning("flask-cors 없음 - 내장 CORS fallback 사용")
+
+    @app.after_request
+    def _fallback_cors(response):
+        origin = request.headers.get("Origin")
+        if origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Vary"] = "Origin"
+        return response
 
 # Flask > 2.2 호환을 위한 Provider 설정 (선택적)
 try:
     from flask.json.provider import DefaultJSONProvider
-
-    def _numpy_json_default(o):
-        try:
-            import numpy as np
-            if isinstance(o, (np.integer, np.floating, np.bool_)):
-                return o.item()
-            if isinstance(o, np.ndarray):
-                return o.tolist()
-        except ImportError:
-            pass
-        return DefaultJSONProvider.default(o)
-
     class CustomJSONProvider(DefaultJSONProvider):
-        default = staticmethod(_numpy_json_default)
+        @staticmethod
+        def _default(obj: Any) -> Any:
+            try:
+                import numpy as np
+                if isinstance(obj, (np.integer, np.floating, np.bool_)):
+                    return obj.item()
+                if isinstance(obj, np.ndarray):
+                    return obj.tolist()
+            except ImportError:
+                pass
+            return DefaultJSONProvider.default(obj)
+        def dumps(self, obj: Any, **kwargs: Any) -> str:
+            kwargs.setdefault("default", self._default)
+            return super().dumps(obj, **kwargs)
     app.json = CustomJSONProvider(app)
 except ImportError:
     pass  # 구버전 Flask는 json_encoder만 사용
@@ -2159,13 +2165,13 @@ def api_upload():
     
     with file_operation_lock:
         for file in files:
-            source_filename = file.filename or ""
-            if file and source_filename and FileUtils.allowed_file(source_filename):
+            incoming_filename = file.filename or ""
+            if file and FileUtils.allowed_file(incoming_filename):
                 try:
-                    filename = secure_filename(source_filename)
+                    filename = secure_filename(incoming_filename)
                     # 한글 파일명 보존
-                    if filename != source_filename:
-                        filename = source_filename.replace('/', '_').replace('\\', '_').replace('..', '')
+                    if filename != incoming_filename:
+                        filename = incoming_filename.replace('/', '_').replace('\\', '_').replace('..', '')
                     
                     # 파일명 중복 처리
                     base_filepath = os.path.join(UPLOAD_DIR, filename)
@@ -2789,9 +2795,10 @@ def api_related_regulations():
     
     # 벡터 검색으로 유사 문서 찾기
     try:
-        if qa_system.vector_store is None:
+        vector_store = qa_system.vector_store
+        if not vector_store:
             return jsonify({'success': False, 'message': '벡터 인덱스가 준비되지 않았습니다'}), 503
-        similar = qa_system.vector_store.similarity_search_with_score(content[:500], k=k*2)
+        similar = vector_store.similarity_search_with_score(content[:500], k=k*2)
         
         results = []
         seen_sources = {source}  # 원본 파일 제외
@@ -3057,8 +3064,8 @@ def api_upload_folder():
         return jsonify({'success': False, 'message': 'ZIP 파일이 필요합니다'}), 400
     
     file = request.files['file']
-    zip_filename = file.filename or ""
-    if not zip_filename.endswith('.zip'):
+    incoming_filename = file.filename or ""
+    if not incoming_filename.endswith('.zip'):
         return jsonify({'success': False, 'message': 'ZIP 파일만 지원됩니다'}), 400
     
     import zipfile
@@ -3216,7 +3223,7 @@ if __name__ == '__main__':
     
     # 프로덕션 서버 (waitress 권장, 없으면 Flask 기본)
     try:
-        from waitress import serve
+        serve = getattr(importlib.import_module("waitress"), "serve")
         logger.info("🚀 Waitress 프로덕션 서버로 실행")
         serve(app, host=AppConfig.SERVER_HOST, port=AppConfig.SERVER_PORT, threads=8)
     except ImportError:

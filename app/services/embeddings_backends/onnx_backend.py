@@ -7,8 +7,8 @@ HuggingFaceEmbeddings(normalize_embeddings=True)와 동일한 출력을 생성
 """
 
 import os
-import importlib
 import threading
+import importlib
 from typing import List, Optional, Any
 
 import numpy as np
@@ -83,14 +83,15 @@ class OnnxEmbeddings:
                 return
             
             try:
-                from transformers import AutoTokenizer
+                transformers_module = importlib.import_module('transformers')
+                auto_tokenizer = getattr(transformers_module, 'AutoTokenizer')
                 
                 # 오프라인 모드 환경변수 설정
                 if self.offline_mode:
                     os.environ['HF_HUB_OFFLINE'] = '1'
                     os.environ['TRANSFORMERS_OFFLINE'] = '1'
                 
-                self._tokenizer = AutoTokenizer.from_pretrained(
+                self._tokenizer = auto_tokenizer.from_pretrained(
                     self.model_path,
                     local_files_only=self.offline_mode
                 )
@@ -110,9 +111,7 @@ class OnnxEmbeddings:
                 return
             
             try:
-                ort = importlib.import_module("onnxruntime")
-                if ort is None:
-                    raise ImportError("onnxruntime")
+                ort = importlib.import_module('onnxruntime')
                 
                 # 세션 옵션 설정
                 sess_options = ort.SessionOptions()
@@ -127,12 +126,14 @@ class OnnxEmbeddings:
                     sess_options.inter_op_num_threads = inter_threads
                 
                 # 세션 생성 (CPU만 사용)
-                session = ort.InferenceSession(
+                self._session = ort.InferenceSession(
                     self._onnx_path,
                     sess_options,
                     providers=['CPUExecutionProvider']
                 )
-                self._session = session
+                session = self._session
+                if session is None:
+                    raise ModelLoadError(self.model_path, "ONNX session 생성에 실패했습니다")
                 
                 # 입출력 텐서 이름 자동 탐지
                 self._input_names = [inp.name for inp in session.get_inputs()]
@@ -204,7 +205,7 @@ class OnnxEmbeddings:
         tokenizer = self._tokenizer
         session = self._session
         if tokenizer is None or session is None:
-            raise ModelLoadError(self.model_path, "토크나이저 또는 ONNX 세션이 초기화되지 않았습니다")
+            raise ModelLoadError(self.model_path, "ONNX tokenizer/session 초기화에 실패했습니다")
         
         # 토큰화
         inputs = tokenizer(

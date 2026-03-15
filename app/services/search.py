@@ -2,7 +2,6 @@
 import os
 import time
 import json
-import importlib
 import threading
 import logging
 import traceback
@@ -11,6 +10,7 @@ import re
 import gc
 import shutil
 import hashlib  # _get_cache_dir에서 사용
+import importlib
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional, Any
 from collections import Counter
@@ -22,20 +22,19 @@ from concurrent.futures import ThreadPoolExecutor
 # ============================================================================
 
 # 이 변수들은 실제 사용 시점에 _lazy_import_*() 함수로 로드됨
-CharacterTextSplitter: Optional[Any] = None
-Document: Optional[Any] = None
-HuggingFaceEmbeddings: Optional[Any] = None
-FAISS: Optional[Any] = None
+CharacterTextSplitter: Any | None = None
+Document: Any | None = None
+HuggingFaceEmbeddings: Any | None = None
+FAISS: Any | None = None
 _lazy_imports_loaded = False
 
 
-def _import_optional_attr(module_name: str, attr_name: str) -> Optional[Any]:
+def _import_attr(module_name: str, attr_name: str) -> Any | None:
     try:
         module = importlib.import_module(module_name)
     except ImportError:
         return None
     return getattr(module, attr_name, None)
-
 
 def _lazy_import_langchain():
     """LangChain 관련 라이브러리 지연 로드"""
@@ -44,26 +43,23 @@ def _lazy_import_langchain():
     if _lazy_imports_loaded:
         return
     
-    # LangChain 호환성 임포트 (최신 버전 우선, 구버전 폴백)
-    CharacterTextSplitter = _import_optional_attr(
-        "langchain_text_splitters", "CharacterTextSplitter"
-    ) or _import_optional_attr("langchain.text_splitter", "CharacterTextSplitter")
+    CharacterTextSplitter = _import_attr('langchain_text_splitters', 'CharacterTextSplitter')
+    if CharacterTextSplitter is None:
+        CharacterTextSplitter = _import_attr('langchain.text_splitter', 'CharacterTextSplitter')
 
-    Document = _import_optional_attr(
-        "langchain_core.documents", "Document"
-    ) or _import_optional_attr("langchain.docstore.document", "Document")
+    Document = _import_attr('langchain_core.documents', 'Document')
+    if Document is None:
+        Document = _import_attr('langchain.docstore.document', 'Document')
 
-    # HuggingFaceEmbeddings - langchain-huggingface 패키지 우선 사용
-    HuggingFaceEmbeddings = _import_optional_attr(
-        "langchain_huggingface", "HuggingFaceEmbeddings"
-    ) or _import_optional_attr(
-        "langchain_community.embeddings", "HuggingFaceEmbeddings"
-    ) or _import_optional_attr("langchain.embeddings", "HuggingFaceEmbeddings")
+    HuggingFaceEmbeddings = _import_attr('langchain_huggingface', 'HuggingFaceEmbeddings')
+    if HuggingFaceEmbeddings is None:
+        HuggingFaceEmbeddings = _import_attr('langchain_community.embeddings', 'HuggingFaceEmbeddings')
+    if HuggingFaceEmbeddings is None:
+        HuggingFaceEmbeddings = _import_attr('langchain.embeddings', 'HuggingFaceEmbeddings')
 
-    # FAISS 벡터스토어
-    FAISS = _import_optional_attr(
-        "langchain_community.vectorstores", "FAISS"
-    ) or _import_optional_attr("langchain.vectorstores", "FAISS")
+    FAISS = _import_attr('langchain_community.vectorstores', 'FAISS')
+    if FAISS is None:
+        FAISS = _import_attr('langchain.vectorstores', 'FAISS')
     
     _lazy_imports_loaded = True
 
@@ -270,7 +266,7 @@ class SearchCache:
         result: Any
         hit_count: int = 0
 
-    def __init__(self, max_size: int = 1000, ttl_seconds: int = 600, adaptive_ttl: Optional[bool] = None):
+    def __init__(self, max_size: int = 1000, ttl_seconds: int = 600, adaptive_ttl: bool | None = None):
         from collections import OrderedDict
         self.cache: OrderedDict = OrderedDict()
         self.max_size = max_size
@@ -546,9 +542,9 @@ class SearchHistory:
 # ============================================================================
 class RegulationQASystem:
     def __init__(self):
-        self.vector_store = None
-        self.embedding_model = None
-        self.model_id = None
+        self.vector_store: Any = None
+        self.embedding_model: Any = None
+        self.model_id: str | None = None
         self.model_name = ""
         self.embed_backend = ""  # 현재 사용 중인 백엔드
         self.embed_normalize = True  # 현재 정규화 설정
@@ -560,9 +556,9 @@ class RegulationQASystem:
              # Try temp dir if app dir not writable or structure different
              self.cache_path = os.path.join(os.environ.get('TEMP', '/tmp'), "reg_qa_server_v10")
              
-        self.bm25 = None
+        self.bm25: BM25Light | None = None
         self.documents: List[str] = []
-        self.doc_meta: List[Dict] = []
+        self.doc_meta: List[Dict[str, Any]] = []
         self.file_infos: Dict[str, FileInfo] = {}
         self.current_folder = ""
         self._lock = threading.RLock()
@@ -637,19 +633,17 @@ class RegulationQASystem:
     def load_model(
         self,
         model_name: str,
-        offline_mode: Optional[bool] = None,
-        local_model_path: Optional[str] = None
+        offline_mode: bool | None = None,
+        local_model_path: str | None = None
     ) -> TaskResult:
         if self._is_loading:
             return TaskResult(False, "이미 모델을 로딩 중입니다")
         
-        is_offline = bool(offline_mode if offline_mode is not None else AppConfig.OFFLINE_MODE)
-        model_path_override = str(
-            local_model_path if local_model_path is not None else (AppConfig.LOCAL_MODEL_PATH or "")
-        )
+        is_offline = offline_mode if offline_mode is not None else bool(AppConfig.OFFLINE_MODE)
+        model_path_override = local_model_path if local_model_path is not None else str(AppConfig.LOCAL_MODEL_PATH)
         model_id = AppConfig.AVAILABLE_MODELS.get(model_name, AppConfig.AVAILABLE_MODELS[AppConfig.DEFAULT_MODEL])
-        embed_backend = getattr(AppConfig, 'EMBED_BACKEND', 'torch')
-        embed_normalize = getattr(AppConfig, 'EMBED_NORMALIZE', True)
+        embed_backend = str(getattr(AppConfig, 'EMBED_BACKEND', 'torch'))
+        embed_normalize = bool(getattr(AppConfig, 'EMBED_NORMALIZE', True))
         self._load_error = ""
         self.offline_mode = bool(is_offline)
         self.local_model_path = model_path_override or ""
@@ -678,7 +672,7 @@ class RegulationQASystem:
                 backend=embed_backend,
                 normalize=embed_normalize,
                 offline_mode=is_offline,
-                local_model_path=model_path_override or None
+                local_model_path=model_path_override if model_path_override else None
             )
             
             self.model_id = model_id
@@ -849,7 +843,7 @@ class RegulationQASystem:
                 path=fp,
                 name=os.path.basename(fp),
                 extension=os.path.splitext(fp)[1].lower(),
-                size=int(meta['size']) if meta else 0
+                size=int(meta['size']) if meta and 'size' in meta else 0
             )
             
         if progress_cb:
@@ -949,7 +943,7 @@ class RegulationQASystem:
         failed, new_docs, new_cache_info = [], [], {}
         
         # Parallel Extraction
-        def extract_file(fp: str) -> Tuple[str, str, Optional[str], Optional[str], Optional[Dict[str, Any]]]:
+        def extract_file(fp: str) -> Tuple[str, str, str | None, str | None, Dict[str, Any] | None]:
             fname = os.path.basename(fp)
             try:
                 content, error = self.extractor.extract(fp)
@@ -1251,8 +1245,8 @@ class RegulationQASystem:
         k: int = 5,
         hybrid: bool = True,
         sort_by: str = 'relevance',
-        filter_file: Optional[str] = None,
-        filter_file_id: Optional[str] = None
+        filter_file: str | None = None,
+        filter_file_id: str | None = None
     ) -> TaskResult:
         """검색 수행 (성능 모니터링 포함)"""
         start_time = time.perf_counter()  # time 모듈은 이미 모듈 상단에서 import됨
@@ -1276,9 +1270,9 @@ class RegulationQASystem:
             parallel_search = getattr(AppConfig, 'PARALLEL_SEARCH', True)
             
             # 하이브리드 검색 시 Vector와 BM25를 병렬로 실행 (성능 최적화 v2.6.1)
-            vector_store = self.vector_store
-            bm25_index = self.bm25
-            if hybrid and vector_store and bm25_index and parallel_search:
+            if hybrid and self.vector_store and self.bm25 and parallel_search:
+                vector_store = self.vector_store
+                bm25 = self.bm25
                 
                 fetch_k = k * 2
                 
@@ -1293,7 +1287,7 @@ class RegulationQASystem:
                 def bm25_search():
                     """BM25 검색 수행"""
                     try:
-                        return bm25_index.search(query, top_k=fetch_k)
+                        return bm25.search(query, top_k=fetch_k)
                     except Exception as e:
                         logger.debug(f"BM25 검색 오류: {e}")
                         return []

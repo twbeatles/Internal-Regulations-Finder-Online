@@ -40,47 +40,60 @@ _RE_KEYWORD_EXTRACT = re.compile(r'[가-힣]{2,}|[a-zA-Z]{3,}')
 # ============================================================================
 # 문서 추출기 (v2.0 확장 - Excel, HWP, OCR 지원)
 # ============================================================================
-def _import_optional_module(module_name: str) -> Optional[Any]:
-    try:
-        return importlib.import_module(module_name)
-    except ImportError:
-        return None
-
-
 class DocumentExtractor:
     def __init__(self):
-        self._docx_module: Optional[Any] = None
-        self._pdf_module: Optional[Any] = None
-        self._xlsx_module: Optional[Any] = None
-        self._hwp_module: Optional[Any] = None
+        self._docx_module: Any | None = None
+        self._docx_loaded = False
+        self._pdf_module: Any | None = None
+        self._pdf_loaded = False
+        self._xlsx_module: Any | None = None
+        self._xlsx_loaded = False
+        self._hwp_module: Any | None = None
+        self._hwp_loaded = False
         self._ocr_available: Optional[bool] = None
     
     @property
-    def docx(self):
-        if self._docx_module is None:
-            module = _import_optional_module("docx")
-            self._docx_module = getattr(module, "Document", None) if module else None
+    def docx(self) -> Any | None:
+        if not self._docx_loaded:
+            self._docx_loaded = True
+            try:
+                docx_module = importlib.import_module('docx')
+                self._docx_module = getattr(docx_module, 'Document', None)
+            except ImportError:
+                self._docx_module = None
         return self._docx_module
     
     @property
-    def pdf(self):
-        if self._pdf_module is None:
-            module = _import_optional_module("pypdf")
-            self._pdf_module = getattr(module, "PdfReader", None) if module else None
+    def pdf(self) -> Any | None:
+        if not self._pdf_loaded:
+            self._pdf_loaded = True
+            try:
+                pypdf_module = importlib.import_module('pypdf')
+                self._pdf_module = getattr(pypdf_module, 'PdfReader', None)
+            except ImportError:
+                self._pdf_module = None
         return self._pdf_module
     
     @property
-    def xlsx(self):
+    def xlsx(self) -> Any | None:
         """Excel 모듈 로드 (v2.0)"""
-        if self._xlsx_module is None:
-            self._xlsx_module = _import_optional_module("openpyxl")
+        if not self._xlsx_loaded:
+            self._xlsx_loaded = True
+            try:
+                self._xlsx_module = importlib.import_module('openpyxl')
+            except ImportError:
+                self._xlsx_module = None
         return self._xlsx_module
     
     @property
-    def hwp(self):
+    def hwp(self) -> Any | None:
         """HWP 모듈 로드 (v2.0) - olefile 기반 기본 추출"""
-        if self._hwp_module is None:
-            self._hwp_module = _import_optional_module("olefile")
+        if not self._hwp_loaded:
+            self._hwp_loaded = True
+            try:
+                self._hwp_module = importlib.import_module('olefile')
+            except ImportError:
+                self._hwp_module = None
         return self._hwp_module
     
     @property
@@ -88,8 +101,8 @@ class DocumentExtractor:
         """OCR 가용성 확인 (v2.0)"""
         if self._ocr_available is None:
             try:
-                import pytesseract
-                from PIL import Image
+                pytesseract = importlib.import_module('pytesseract')
+                importlib.import_module('PIL.Image')
                 # Tesseract 설치 확인
                 pytesseract.get_tesseract_version()
                 self._ocr_available = True
@@ -148,11 +161,10 @@ class DocumentExtractor:
         return FileUtils.safe_read(path)
     
     def _extract_docx(self, path: str) -> Tuple[str, Optional[str]]:
-        docx_loader = self.docx
-        if docx_loader is None:
+        if not self.docx:
             return "", "DOCX 라이브러리 없음 (pip install python-docx)"
         try:
-            doc = docx_loader(path)
+            doc = self.docx(path)
             parts = []
             for para in doc.paragraphs:
                 if para.text.strip():
@@ -167,11 +179,10 @@ class DocumentExtractor:
             return "", f"DOCX 오류: {e}"
     
     def _extract_pdf(self, path: str) -> Tuple[str, Optional[str]]:
-        pdf_reader_cls = self.pdf
-        if pdf_reader_cls is None:
+        if not self.pdf:
             return "", "PDF 라이브러리 없음 (pip install pypdf)"
         try:
-            reader = pdf_reader_cls(path)
+            reader = self.pdf(path)
             if reader.is_encrypted:
                 try:
                     reader.decrypt('')
@@ -197,12 +208,11 @@ class DocumentExtractor:
     
     def _extract_pdf_ocr(self, path: str) -> Tuple[str, Optional[str]]:
         """OCR을 사용한 이미지 PDF 텍스트 추출 (v2.0)"""
-        pytesseract = _import_optional_module("pytesseract")
-        pdf2image = _import_optional_module("pdf2image")
-        convert_from_path = getattr(pdf2image, "convert_from_path", None) if pdf2image else None
-        if pytesseract is None or convert_from_path is None:
-            return "", "OCR 라이브러리 없음 (pip install pytesseract pdf2image)"
         try:
+            pytesseract = importlib.import_module('pytesseract')
+            pdf2image = importlib.import_module('pdf2image')
+            convert_from_path = getattr(pdf2image, 'convert_from_path')
+            
             # PDF를 이미지로 변환
             images = convert_from_path(path, dpi=150)
             texts = []
@@ -225,11 +235,10 @@ class DocumentExtractor:
     
     def _extract_xlsx(self, path: str) -> Tuple[str, Optional[str]]:
         """Excel 파일 텍스트 추출 (v2.0)"""
-        xlsx_module = self.xlsx
-        if xlsx_module is None:
+        if not self.xlsx:
             return "", "Excel 라이브러리 없음 (pip install openpyxl)"
         try:
-            wb = xlsx_module.load_workbook(path, read_only=True, data_only=True)
+            wb = self.xlsx.load_workbook(path, read_only=True, data_only=True)
             texts = []
             
             for sheet_name in wb.sheetnames:
@@ -257,13 +266,12 @@ class DocumentExtractor:
         
         리소스 관리: try-finally로 OLE 파일 핸들 확실히 닫기
         """
-        hwp_module = self.hwp
-        if hwp_module is None:
+        if not self.hwp:
             return "", "HWP 라이브러리 없음 (pip install olefile)"
         
         ole = None
         try:
-            ole = hwp_module.OleFileIO(path)
+            ole = self.hwp.OleFileIO(path)
             texts = []
             
             # PrvText 스트림에서 텍스트 추출 시도 (미리보기 텍스트)

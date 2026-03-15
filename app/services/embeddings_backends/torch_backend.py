@@ -14,16 +14,8 @@ from app.config import AppConfig
 from app.exceptions import ModelLoadError, ModelOfflineError
 
 # Lazy import 변수
-HuggingFaceEmbeddings: Optional[Any] = None
+HuggingFaceEmbeddings: Any | None = None
 _torch_imports_loaded = False
-
-
-def _import_optional_attr(module_name: str, attr_name: str) -> Optional[Any]:
-    try:
-        module = importlib.import_module(module_name)
-    except ImportError:
-        return None
-    return getattr(module, attr_name, None)
 
 
 def _lazy_import_torch_deps():
@@ -33,12 +25,18 @@ def _lazy_import_torch_deps():
     if _torch_imports_loaded:
         return
     
-    # HuggingFaceEmbeddings - langchain-huggingface 패키지 우선 사용
-    HuggingFaceEmbeddings = _import_optional_attr(
-        "langchain_huggingface", "HuggingFaceEmbeddings"
-    ) or _import_optional_attr(
-        "langchain_community.embeddings", "HuggingFaceEmbeddings"
-    ) or _import_optional_attr("langchain.embeddings", "HuggingFaceEmbeddings")
+    for module_name in (
+        'langchain_huggingface',
+        'langchain_community.embeddings',
+        'langchain.embeddings',
+    ):
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            continue
+        HuggingFaceEmbeddings = getattr(module, 'HuggingFaceEmbeddings', None)
+        if HuggingFaceEmbeddings is not None:
+            break
     
     _torch_imports_loaded = True
 
@@ -76,7 +74,7 @@ def create_torch_embeddings(
         
         # PyTorch import
         try:
-            import torch
+            torch = importlib.import_module('torch')
         except ImportError as e:
             raise ModelLoadError(model_path_or_id, f"PyTorch 로드 실패: {e}")
         

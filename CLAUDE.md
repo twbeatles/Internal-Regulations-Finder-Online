@@ -176,7 +176,7 @@ RegSearchError                   # 기본 예외
 │           ├── torch_backend.py  # PyTorch/HuggingFace 백엔드
 │           └── onnx_backend.py   # ONNX Runtime 백엔드
 ├── static/
-│   ├── app.js              # 프론트엔드 SPA (3320 lines 기준, v1.7)
+│   ├── app.js              # 프론트엔드 SPA (3313 lines 기준, v1.7)
 │   ├── style.css           # CSS 스타일 (다크/라이트 테마)
 │   └── sw.js               # PWA 서비스 워커
 ├── templates/
@@ -521,11 +521,25 @@ class AppConfig:
 - Service Worker는 `GET allowlist` API만 캐시하고 인증/관리/비GET 요청은 캐시하지 않는다.
 
 ### 정합성 보충 메모 (2026-03-01)
-- `static/app.js` 라인수 표기는 점검 시점 기준 `3320`으로 갱신.
+- `static/app.js` 라인수 표기는 점검 시점 기준 `3313`으로 갱신.
 - 주요 spec 5종(`regulation_search_gui.spec`, `regulation_search_ultra_lite_gui.spec`, `regulation_search_onefile.spec`, `regulation_search_ultra_lite.spec`, `server_gui.spec`)은 `config` 폴더 전체 대신 `config/settings.example.json`만 포함.
 - `python -m py_compile *.spec` 기준 spec 문법은 모두 정상.
 
-### 정합성 보충 메모 (2026-03-09)
-- `server.spec`, `internal_regulations.spec`, `regulation_search.spec`, `regulation_search_gui.spec`의 hiddenimports를 optional import 경로와 동기화.
-- `watchdog.observers/events`, LangChain 하위 모듈(`langchain_text_splitters`, `langchain_core.documents`, `langchain_community.embeddings/vectorstores`) 누락 가능 경로를 보강.
-- run.py 기반 full spec에서 `onnxruntime` 및 `app.services.embeddings_backends` 수집 경로를 명시.
+### Maintenance Addendum (2026-03-15)
+- Optional dependency behavior is now part of the expected context:
+  - `flask-cors` may be absent in some environments; the app can fall back to an allowlist-based CORS response path.
+  - `waitress` is still required for production, but development can fall back to Flask when missing.
+  - OCR dependencies remain optional and should not be assumed in lite/offline builds.
+- New repo-level quality guards:
+  - `scripts/check_utf8.py`
+  - `pyrightconfig.json`
+  - `tests/test_optional_dependencies.py`
+  - `tests/test_file_routes_by_id.py`
+- Packaging consistency expanded beyond the five main GUI/Lite specs:
+  - `internal_regulations.spec`
+  - `internal_regulations_lite.spec`
+  - `regulation_search.spec`
+  - `regulation_search_lite.spec`
+  - `server.spec`
+- On Windows PowerShell, prefer:
+  - `Get-ChildItem -Name *.spec | ForEach-Object { python -m py_compile $_ }`

@@ -162,8 +162,7 @@ class FileInfo:
 
 class CustomJSONEncoder(json.JSONEncoder):
     """NumPy 타입 및 집합(Set)을 처리하는 커스텀 JSON 인코더"""
-
-    def default(self, o: Any):
+    def default(self, o: Any) -> Any:
         if isinstance(o, np.integer):
             return int(o)
         if isinstance(o, np.floating):
@@ -176,7 +175,7 @@ class CustomJSONEncoder(json.JSONEncoder):
             return o.isoformat()
         if isinstance(o, Enum):
             return o.value
-        return super().default(o)
+        return super(CustomJSONEncoder, self).default(o)
 
 
 class MemoryMonitor:
@@ -300,7 +299,7 @@ class FileUtils:
             return None
     
     @staticmethod
-    def format_size(size: int) -> str:
+    def format_size(size: int | float) -> str:
         size_value = float(size)
         for unit in ['B', 'KB', 'MB', 'GB']:
             if size_value < 1024:
@@ -384,7 +383,7 @@ def api_success(message: str = "성공", data: Any = None, **kwargs) -> Dict:
     return response
 
 
-def api_error(message: str, error_code: Optional[str] = None, status_code: int = 400, **kwargs) -> Tuple[Dict, int]:
+def api_error(message: str, error_code: Optional[str] = None, status_code: int = 400, **kwargs: Any) -> Tuple[Dict[str, Any], int]:
     """에러 응답 생성
     
     Args:

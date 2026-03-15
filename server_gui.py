@@ -5,6 +5,7 @@
 로그 기능 강화 + 관리자 비밀번호 설정
 """
 
+import importlib
 import sys
 import os
 import threading
@@ -35,7 +36,8 @@ app: Any = None  # Flask app
 qa_system: Any = None
 logger: Any = None
 AppConfig: Any = None
-UPLOAD_DIR: Optional[str] = None
+UPLOAD_DIR: str | None = None
+_main_window: "ServerWindow | None" = None
 
 def _load_heavy_modules():
     """무거운 모듈 로드 (백그라운드에서 실행)"""
@@ -563,7 +565,7 @@ class ServerThread(threading.Thread):
             
             # Waitress로 실행
             try:
-                from waitress import serve
+                serve = getattr(importlib.import_module("waitress"), "serve")
                 logger.info(f"✅ 서버 시작: http://localhost:{self.port}")
                 serve(
                     app,
@@ -1044,18 +1046,15 @@ class ServerWindow(QMainWindow):
         self.tray_icon = QSystemTrayIcon(self)
         
         # 기본 아이콘 설정 (앱 아이콘 또는 시스템 기본)
-        qt_instance = QApplication.instance()
-        app_icon = qt_instance.windowIcon() if isinstance(qt_instance, QApplication) else QIcon()
+        qt_app = QApplication.instance()
+        app_icon = qt_app.windowIcon() if isinstance(qt_app, QApplication) else QIcon()
         if not app_icon.isNull():
             self.tray_icon.setIcon(app_icon)
         else:
             # 기본 스타일 아이콘 사용
             from PyQt6.QtWidgets import QStyle
-            style = QApplication.style()
-            default_icon = (
-                style.standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
-                if style is not None else QIcon()
-            )
+            app_style = QApplication.style()
+            default_icon = app_style.standardIcon(QStyle.StandardPixmap.SP_ComputerIcon) if app_style is not None else QIcon()
             self.tray_icon.setIcon(default_icon)
         
         # 트레이 메뉴
@@ -1423,7 +1422,7 @@ class ServerWindow(QMainWindow):
             qa_system.cleanup()
             QApplication.quit()
     
-    def closeEvent(self, a0: Optional[QCloseEvent]):
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         if a0 is None:
             return
         event = a0
@@ -1591,12 +1590,13 @@ def main():
         splash.set_status(msg)
     
     def on_finished(success):
+        global _main_window
         splash.close()
         if success:
             # 메인 윈도우 생성 및 표시
             window = ServerWindow(start_minimized=start_minimized)
             # window를 전역으로 유지 (가비지 컬렉션 방지)
-            setattr(qt_app, "_main_window", window)
+            _main_window = window
         else:
             QMessageBox.critical(None, "오류", "모듈 로드에 실패했습니다.")
             qt_app.quit()

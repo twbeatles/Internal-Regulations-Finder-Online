@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import importlib
 import os
 import signal
 import sys
@@ -59,7 +60,7 @@ def initialize_server():
                 
                 folder = settings.get('folder', '')
                 offline_mode = settings.get('offline_mode', False)
-                local_model_path = settings.get('local_model_path', '')
+                local_model_path = str(settings.get('local_model_path', '') or '')
                 
                 logger.info(f"📋 설정 로드 완료 - 오프라인 모드: {offline_mode}")
             except Exception as e:
@@ -74,7 +75,7 @@ def initialize_server():
         result = qa_system.load_model(
             AppConfig.DEFAULT_MODEL,
             offline_mode=offline_mode,
-            local_model_path=local_model_path if local_model_path else None
+            local_model_path=local_model_path or None
         )
         
         if result.success:
@@ -114,7 +115,7 @@ if __name__ == '__main__':
     init_thread.start()
     
     try:
-        from waitress import serve
+        serve = getattr(importlib.import_module("waitress"), "serve")
         logger.info(f"🚀 Waitress 서버 시작 (Port: {AppConfig.SERVER_PORT}, Threads: {AppConfig.SERVER_THREADS})")
         serve(app, host=AppConfig.SERVER_HOST, port=AppConfig.SERVER_PORT, threads=AppConfig.SERVER_THREADS)
     except ImportError:

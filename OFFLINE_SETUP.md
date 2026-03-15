@@ -221,3 +221,17 @@ pyinstaller regulation_search_lite.spec
 ### 파일 식별자
 - 동명이인 파일 충돌 방지를 위해 내부적으로 `file_id`가 도입되었습니다.
 - 검색/태그/리비전/다운로드는 점진적으로 `file_id` 중심으로 동작합니다.
+
+---
+
+## 2026-03-15 운영 메모
+
+- Lite/BM25-only 배포는 AI 모델이 없어도 초기 구동과 파일 업로드/텍스트 검색이 가능하도록 유지됩니다.
+- OCR 지원은 계속 선택적입니다. 오프라인 배포본에서 이미지 PDF OCR까지 필요하면 `pytesseract`, `pdf2image`, `Pillow`, Tesseract 실행 파일을 별도로 준비해야 합니다.
+- 콘솔/레거시 spec(`internal_regulations*.spec`, `regulation_search*.spec`, `server.spec`)도 `config/settings.example.json`을 동봉하는 방향으로 정합화했습니다.
+
+### PowerShell에서 spec 점검
+
+```powershell
+Get-ChildItem -Name *.spec | ForEach-Object { python -m py_compile $_ }
+```

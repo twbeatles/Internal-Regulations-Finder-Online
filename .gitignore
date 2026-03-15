@@ -11,6 +11,7 @@ env/
 # Test/Tool caches
 .pytest_cache/
 .mypy_cache/
+.pyright/
 .ruff_cache/
 .pyright/
 .pytype/
@@ -24,6 +25,7 @@ htmlcov/
 build/
 dist/
 build_log*.txt
+latest_build.txt
 *.log
 
 # OS / IDE
