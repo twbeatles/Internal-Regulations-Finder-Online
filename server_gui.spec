@@ -4,6 +4,9 @@ Internal Regulations Finder - GUI server build
 
 Build:
     pyinstaller server_gui.spec
+
+Consistency notes:
+    2026-03-16 - explicit parser hiddenimports added for HWP/HWPX extraction path
 """
 
 import os
@@ -97,6 +100,7 @@ except Exception:
 
 try:
     hiddenimports += collect_submodules("app.services.embeddings_backends")
+    hiddenimports += collect_submodules("app.services.parsers")
     hiddenimports += collect_submodules("docx")
     hiddenimports += collect_submodules("pypdf")
 except Exception:

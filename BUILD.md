@@ -7,7 +7,7 @@
 | `regulation_search_gui.spec` | GUI | ✅ | 500-800MB | AI 벡터 검색 + BM25 |
 | `regulation_search_ultra_lite_gui.spec` | GUI | ❌ | 60-100MB | BM25만 (torch 제외) |
 
-> 💡 **v2.6.1**: 성능 최적화(압축, 캐싱) 및 오프라인 모드 지원
+> 💡 **v2.8.2 반영**: `.hwpx` ZIP+XML 추출 경로와 `.hwp`/`.hwpx` 진단 정보가 앱 기반 빌드 흐름에도 연결됩니다.
 
 ---
 
@@ -30,6 +30,11 @@ python download_static.py
 # 2. AI 모델 다운로드 -> models 폴더 생성 (AI 버전 빌드 시)
 python download_models.py
 ```
+
+문서 추출 관련 참고:
+- `.hwpx`는 추가 패키지 없이 앱 내 ZIP/XML 파서로 처리됩니다.
+- `.hwp`는 `olefile`이 필요하며 `requirements.txt`, `requirements_lite.txt`에 포함되어 있습니다.
+- 인덱싱은 추출된 `text`만 사용하고, `metadata`/`tables`/`diagnostics`는 부가정보로 유지됩니다.
 
 ---
 
@@ -78,6 +83,10 @@ No module named 'torch'
 
 ### 실행 시 콘솔 창 표시
 **해결**: `console=False` 확인 (두 spec 모두 GUI 모드)
+
+### HWP/HWPX 패키징 확인
+1. `.hwpx` 업로드 후 미리보기에 본문과 `diagnostics.engine_used=hwpx-xml`이 보이는지 확인
+2. `.hwp` 업로드 후 `olefile` 누락 환경에서는 파일 단위 오류만 발생하고 서버는 계속 동작하는지 확인
 
 ---
 
@@ -128,6 +137,20 @@ No module named 'torch'
   - `langchain_core.documents`
   - `app.services.embeddings_backends`
 - OCR은 여전히 선택 사항이며, 기본 requirements/spec 조합만으로는 이미지 PDF OCR이 자동 포함되지 않을 수 있음. OCR이 필요하면 `pytesseract`, `pdf2image`, `Pillow`, 시스템 Tesseract를 준비한 뒤 별도 검증 권장.
+
+## 2026-03-16 추가 점검 메모
+
+- 수동 `hiddenimports`를 쓰는 앱 기반 spec에 HWP/HWPX 파서 서브모듈 경로를 명시적으로 보강함:
+  - `regulation_search_onefile.spec`
+  - `regulation_search_ultra_lite.spec`
+  - `regulation_search_ultra_lite_gui.spec`
+  - `regulation_search_lite.spec`
+  - `server_gui.spec`
+- 위 조정으로 `app.services.parsers.*`가 정적 분석 누락 없이 포함되도록 보수적으로 정렬함.
+- 권장 스모크 테스트:
+  - `.hwpx` 업로드/미리보기
+  - `.hwp` 업로드
+  - ZIP 업로드 내 `.hwpx` 포함 케이스
 
 ### PowerShell spec 검증 명령
 

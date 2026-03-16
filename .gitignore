@@ -13,7 +13,6 @@ env/
 .mypy_cache/
 .pyright/
 .ruff_cache/
-.pyright/
 .pytype/
 pyright-report*.json
 pyright*.json

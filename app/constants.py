@@ -127,9 +127,10 @@ class FileExtensions:
     XLSX = '.xlsx'
     XLS = '.xls'
     HWP = '.hwp'
+    HWPX = '.hwpx'
     ZIP = '.zip'
     
-    SUPPORTED = {TEXT, DOCX, PDF, XLSX, XLS, HWP}
+    SUPPORTED = {TEXT, DOCX, PDF, XLSX, XLS, HWP, HWPX}
     ARCHIVE = {ZIP}
 
 

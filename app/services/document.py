@@ -13,6 +13,13 @@ import threading
 from app.utils import logger, FileUtils
 from app.config import AppConfig
 from app.constants import ErrorMessages, Patterns, Limits
+from app.services.parsers.hwp_adapter import HwpAdapter
+from app.services.parsers.hwpx_adapter import HwpxAdapter
+from app.services.parsers.hwp_models import (
+    ExtractedDocument,
+    build_basic_metadata,
+    build_diagnostics,
+)
 
 # 커스텀 예외
 from app.exceptions import (
@@ -109,53 +116,136 @@ class DocumentExtractor:
             except Exception:
                 self._ocr_available = False
         return self._ocr_available
-    
-    def extract(self, path: str) -> Tuple[str, Optional[str]]:
-        """문서에서 텍스트 추출
-        
-        Args:
-            path: 추출할 파일 경로
-            
-        Returns:
-            Tuple[str, Optional[str]]: (추출된 텍스트, 에러 메시지 또는 None)
-            
-        Note:
-            에러 발생 시에도 예외를 발생시키지 않고 (빈 문자열, 에러 메시지) 반환.
-            이는 일괄 처리 시 하나의 실패가 전체를 중단시키지 않도록 하기 위함.
-        """
+
+    def _build_result(
+        self,
+        path: str,
+        source_format: str,
+        engine_used: str,
+        text: str,
+        error: str | None,
+        *,
+        tables: Optional[List[Any]] = None,
+        warnings: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        fallback_used: bool = False,
+    ) -> ExtractedDocument:
+        base_metadata = build_basic_metadata(path, source_format)
+        if metadata:
+            base_metadata.update(metadata)
+        warning_items = [str(item) for item in (warnings or []) if str(item).strip()]
+        if error and error not in warning_items:
+            warning_items.append(error)
+        return ExtractedDocument(
+            text=text or "",
+            metadata=base_metadata,
+            tables=list(tables or []),
+            diagnostics=build_diagnostics(
+                engine_used,
+                text=text or "",
+                fallback_used=fallback_used,
+                warnings=warning_items,
+            ),
+            error=error,
+        )
+
+    def extract_with_details(self, path: str) -> ExtractedDocument:
+        """문서에서 텍스트와 부가정보를 함께 추출"""
         if not path:
-            return "", ErrorMessages.FILE_NOT_FOUND
-        
+            return self._build_result(
+                path,
+                "unknown",
+                "unavailable",
+                "",
+                ErrorMessages.FILE_NOT_FOUND,
+            )
+
         if not os.path.exists(path):
             logger.debug(f"파일 없음: {path}")
-            return "", f"{ErrorMessages.FILE_NOT_FOUND}: {path}"
-        
+            return self._build_result(
+                path,
+                os.path.splitext(path)[1].lower().lstrip('.') or "unknown",
+                "unavailable",
+                "",
+                f"{ErrorMessages.FILE_NOT_FOUND}: {path}",
+            )
+
         if not os.path.isfile(path):
-            return "", f"파일이 아님: {path}"
-        
+            return self._build_result(
+                path,
+                os.path.splitext(path)[1].lower().lstrip('.') or "unknown",
+                "unavailable",
+                "",
+                f"파일이 아님: {path}",
+            )
+
         ext = os.path.splitext(path)[1].lower()
-        
-        # 지원 형식 확인
+        source_format = ext.lstrip('.') or "unknown"
+
         if ext not in AppConfig.SUPPORTED_EXTENSIONS:
-            return "", f"{ErrorMessages.FILE_TYPE_NOT_SUPPORTED}: {ext}"
-        
-        # 파일 형식별 추출
+            return self._build_result(
+                path,
+                source_format,
+                "unsupported",
+                "",
+                f"{ErrorMessages.FILE_TYPE_NOT_SUPPORTED}: {ext}",
+            )
+
         try:
             if ext == '.txt':
-                return self._extract_txt(path)
-            elif ext == '.docx':
-                return self._extract_docx(path)
-            elif ext == '.pdf':
-                return self._extract_pdf(path)
-            elif ext in ['.xlsx', '.xls']:
-                return self._extract_xlsx(path)
-            elif ext == '.hwp':
-                return self._extract_hwp(path)
-            else:
-                return "", f"{ErrorMessages.FILE_TYPE_NOT_SUPPORTED}: {ext}"
+                return self._extract_txt_document(path)
+            if ext == '.docx':
+                return self._extract_docx_document(path)
+            if ext == '.pdf':
+                return self._extract_pdf_document(path)
+            if ext in ['.xlsx', '.xls']:
+                return self._extract_xlsx_document(path)
+            if ext == '.hwp':
+                return self._extract_hwp_document(path)
+            if ext == '.hwpx':
+                return self._extract_hwpx_document(path)
+            return self._build_result(
+                path,
+                source_format,
+                "unsupported",
+                "",
+                f"{ErrorMessages.FILE_TYPE_NOT_SUPPORTED}: {ext}",
+            )
         except Exception as e:
             logger.error(f"문서 추출 중 예상치 못한 오류: {path} - {e}")
-            return "", f"추출 오류: {str(e)}"
+            return self._build_result(
+                path,
+                source_format,
+                "unexpected-error",
+                "",
+                f"추출 오류: {str(e)}",
+            )
+
+    def extract(self, path: str) -> Tuple[str, Optional[str]]:
+        """기존 호출부 호환용 텍스트 추출 API"""
+        return self.extract_with_details(path).to_legacy_tuple()
+
+    def _extract_txt_document(self, path: str) -> ExtractedDocument:
+        text, error = self._extract_txt(path)
+        return self._build_result(path, "txt", "txt", text, error)
+
+    def _extract_docx_document(self, path: str) -> ExtractedDocument:
+        text, error = self._extract_docx(path)
+        return self._build_result(path, "docx", "docx", text, error)
+
+    def _extract_pdf_document(self, path: str) -> ExtractedDocument:
+        text, error = self._extract_pdf(path)
+        return self._build_result(path, "pdf", "pdf", text, error)
+
+    def _extract_xlsx_document(self, path: str) -> ExtractedDocument:
+        text, error = self._extract_xlsx(path)
+        return self._build_result(path, "xlsx", "xlsx", text, error)
+
+    def _extract_hwp_document(self, path: str) -> ExtractedDocument:
+        return HwpAdapter(self.hwp).extract(path)
+
+    def _extract_hwpx_document(self, path: str) -> ExtractedDocument:
+        return HwpxAdapter().extract(path)
     
     def _extract_txt(self, path: str) -> Tuple[str, Optional[str]]:
         return FileUtils.safe_read(path)
@@ -262,63 +352,7 @@ class DocumentExtractor:
             return "", f"Excel 오류: {e}"
     
     def _extract_hwp(self, path: str) -> Tuple[str, Optional[str]]:
-        """HWP 파일 텍스트 추출 (v2.0) - olefile 기반 기본 추출
-        
-        리소스 관리: try-finally로 OLE 파일 핸들 확실히 닫기
-        """
-        if not self.hwp:
-            return "", "HWP 라이브러리 없음 (pip install olefile)"
-        
-        ole = None
-        try:
-            ole = self.hwp.OleFileIO(path)
-            texts = []
-            
-            # PrvText 스트림에서 텍스트 추출 시도 (미리보기 텍스트)
-            if ole.exists('PrvText'):
-                try:
-                    prv_text = ole.openstream('PrvText').read()
-                    decoded = prv_text.decode('utf-16le', errors='ignore')
-                    decoded = decoded.replace('\x00', '')
-                    if decoded.strip():
-                        texts.append(decoded.strip())
-                except Exception as e:
-                    logger.debug(f"HWP PrvText 추출 실패: {e}")
-            
-            # BodyText 섹션에서 텍스트 추출 시도
-            for entry in ole.listdir():
-                entry_path = '/'.join(entry)
-                if 'BodyText' in entry_path or 'Section' in entry_path:
-                    try:
-                        stream = ole.openstream(entry)
-                        data = stream.read()
-                        for encoding in ['utf-16le', 'cp949', 'utf-8']:
-                            try:
-                                decoded = data.decode(encoding, errors='ignore')
-                                decoded = decoded.replace('\x00', '')
-                                if decoded.strip() and len(decoded.strip()) > 10:
-                                    texts.append(decoded.strip())
-                                break
-                            except Exception:
-                                continue
-                    except Exception as e:
-                        logger.debug(f"HWP BodyText 섹션 읽기 실패: {entry_path} - {e}")
-                        continue
-            
-            if texts:
-                unique_texts = list(dict.fromkeys(texts))
-                return '\n\n'.join(unique_texts), None
-            return "", "HWP 텍스트 추출 실패 (빈 파일 또는 지원되지 않는 형식)"
-        except Exception as e:
-            logger.warning(f"HWP 파일 처리 오류: {path} - {e}")
-            return "", f"HWP 오류: {e}"
-        finally:
-            # 리소스 정리: 항상 OLE 파일 닫기
-            if ole is not None:
-                try:
-                    ole.close()
-                except Exception as e:
-                    logger.debug(f"HWP OLE 파일 닫기 실패: {e}")
+        return self._extract_hwp_document(path).to_legacy_tuple()
 
 # ============================================================================
 # 조문/조항 파서 (v2.0)

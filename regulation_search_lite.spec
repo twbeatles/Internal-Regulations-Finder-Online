@@ -4,6 +4,9 @@ Internal Regulations Finder - lite console build
 
 Build:
     pyinstaller regulation_search_lite.spec
+
+Consistency notes:
+    2026-03-16 - explicit parser hiddenimports added for HWP/HWPX extraction path
 """
 
 import os
@@ -58,6 +61,10 @@ hiddenimports = [
     "app.services.search",
     "app.services.document",
     "app.services.db",
+    "app.services.parsers",
+    "app.services.parsers.hwp_adapter",
+    "app.services.parsers.hwpx_adapter",
+    "app.services.parsers.hwp_models",
 ]
 
 excludes = [

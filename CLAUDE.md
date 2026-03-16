@@ -4,7 +4,7 @@
 
 ## 📋 프로젝트 개요
 
-**프로젝트명**: 사내 규정 검색기 v2.6  
+**프로젝트명**: 사내 규정 검색기 v2.8.2  
 **목적**: AI 기반 하이브리드 검색 시스템 (Vector + BM25)으로 사내 규정 문서를 검색  
 **기술 스택**: Flask + PyTorch + LangChain + FAISS + SQLite  
 **실행 방식**: 웹 서버 (콘솔 또는 GUI/시스템 트레이)
@@ -74,7 +74,7 @@ BM25_WEIGHT = 0.3    # 키워드 기반 검색 (BM25Light)
 
 | 클래스 | 역할 | 주요 메서드 |
 |--------|------|-------------|
-| `DocumentExtractor` | 다양한 포맷 텍스트 추출 | `extract()`, `_extract_docx()`, `_extract_hwp()` |
+| `DocumentExtractor` | 다양한 포맷 텍스트 추출 | `extract()`, `extract_with_details()`, `_extract_hwp_document()`, `_extract_hwpx_document()` |
 | `ArticleParser` | 규정 문서의 조문 구조 파싱 | `parse_articles()`, `search_article()` |
 | `DocumentSplitter` | 청킹 처리 | `split()`, `split_by_articles()` |
 | `DocumentComparator` | 문서 버전 비교 (diff) | `compare()` |
@@ -82,7 +82,7 @@ BM25_WEIGHT = 0.3    # 키워드 기반 검색 (BM25Light)
 
 **지원 파일 형식**:
 ```python
-SUPPORTED_EXTENSIONS = {'.txt', '.docx', '.pdf', '.xlsx', '.xls', '.hwp'}
+SUPPORTED_EXTENSIONS = {'.txt', '.docx', '.pdf', '.xlsx', '.xls', '.hwp', '.hwpx'}
 ```
 
 ### 3. 파일 관리 (`app/services/file_manager.py`)
@@ -167,6 +167,7 @@ RegSearchError                   # 기본 예외
 │   └── services/
 │       ├── search.py       # RegulationQASystem, BM25Light, SearchCache
 │       ├── document.py     # DocumentExtractor, ArticleParser, DocumentSplitter
+│       ├── parsers/        # HWP/HWPX 어댑터 + 공통 추출 결과 모델
 │       ├── db.py           # DBManager 싱글톤
 │       ├── file_manager.py # RevisionTracker, FolderWatcher
 │       ├── metadata.py     # TagManager
@@ -176,7 +177,7 @@ RegSearchError                   # 기본 예외
 │           ├── torch_backend.py  # PyTorch/HuggingFace 백엔드
 │           └── onnx_backend.py   # ONNX Runtime 백엔드
 ├── static/
-│   ├── app.js              # 프론트엔드 SPA (3313 lines 기준, v1.7)
+│   ├── app.js              # 프론트엔드 SPA (3320 lines 기준, v1.7)
 │   ├── style.css           # CSS 스타일 (다크/라이트 테마)
 │   └── sw.js               # PWA 서비스 워커
 ├── templates/
@@ -521,7 +522,7 @@ class AppConfig:
 - Service Worker는 `GET allowlist` API만 캐시하고 인증/관리/비GET 요청은 캐시하지 않는다.
 
 ### 정합성 보충 메모 (2026-03-01)
-- `static/app.js` 라인수 표기는 점검 시점 기준 `3313`으로 갱신.
+- `static/app.js` 라인수 표기는 점검 시점 기준 `3320`으로 갱신.
 - 주요 spec 5종(`regulation_search_gui.spec`, `regulation_search_ultra_lite_gui.spec`, `regulation_search_onefile.spec`, `regulation_search_ultra_lite.spec`, `server_gui.spec`)은 `config` 폴더 전체 대신 `config/settings.example.json`만 포함.
 - `python -m py_compile *.spec` 기준 spec 문법은 모두 정상.
 
@@ -543,3 +544,10 @@ class AppConfig:
   - `server.spec`
 - On Windows PowerShell, prefer:
   - `Get-ChildItem -Name *.spec | ForEach-Object { python -m py_compile $_ }`
+
+### Maintenance Addendum (2026-03-16)
+- 문서 추출은 `.hwp`와 `.hwpx`를 별도 어댑터로 라우팅한다.
+- `DocumentExtractor.extract_with_details()`는 `text`, `metadata`, `tables`, `diagnostics`, `error`를 반환한다.
+- `.hwpx`는 ZIP/XML 기반으로 추가 패키지 없이 처리된다.
+- `.hwp`는 `olefile`이 필요하며, 누락 시 서버 전체가 아니라 파일 단위로만 안전하게 실패한다.
+- 검색 인덱싱은 계속 `text`만 사용하고, 파서 부가정보는 미리보기/업로드 후속 흐름에 유지된다.

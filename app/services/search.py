@@ -560,6 +560,7 @@ class RegulationQASystem:
         self.documents: List[str] = []
         self.doc_meta: List[Dict[str, Any]] = []
         self.file_infos: Dict[str, FileInfo] = {}
+        self.file_details: Dict[str, Dict[str, Any]] = {}
         self.current_folder = ""
         self._lock = threading.RLock()
         self._search_cache = SearchCache(AppConfig.SEARCH_CACHE_SIZE)
@@ -705,6 +706,46 @@ class RegulationQASystem:
         h1 = hashlib.md5(model_key.encode()).hexdigest()[:6]
         h2 = hashlib.md5(folder.encode()).hexdigest()[:6]
         return os.path.join(self.cache_path, f"{h2}_{h1}")
+
+    def _remember_file_details(self, file_path: str, extracted) -> Dict[str, Any]:
+        details = {
+            'metadata': dict(getattr(extracted, 'metadata', {}) or {}),
+            'tables': list(getattr(extracted, 'table_dicts', lambda: [])() or []),
+            'diagnostics': dict(getattr(extracted, 'diagnostics', {}) or {}),
+        }
+        self.file_details[file_path] = details
+        return details
+
+    def _build_chunk_meta(
+        self,
+        *,
+        doc_id: int,
+        filename: str,
+        file_path: str,
+        file_id: str,
+        chunk_id: int,
+        total_chunks: int,
+        details: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        meta: Dict[str, Any] = {
+            'doc_id': doc_id,
+            'source': filename,
+            'path': file_path,
+            'file_id': file_id,
+            'chunk_id': chunk_id,
+            'total_chunks': total_chunks,
+        }
+        if details:
+            metadata = details.get('metadata')
+            diagnostics = details.get('diagnostics')
+            tables = details.get('tables')
+            if metadata:
+                meta['document_metadata'] = metadata
+            if diagnostics:
+                meta['diagnostics'] = diagnostics
+            if tables:
+                meta['table_count'] = len(tables)
+        return meta
     
     def process_single_file(self, file_path: str) -> TaskResult:
         """단일 파일 업로드 후 즉시 인덱싱
@@ -722,7 +763,9 @@ class RegulationQASystem:
             logger.info(f"단일 파일 처리 시작: {file_path}")
             
             # 파일 추출
-            text, error = self.extractor.extract(file_path)
+            extracted = self.extractor.extract_with_details(file_path)
+            text = extracted.text
+            error = extracted.error
             if error:
                 return TaskResult(False, f"파일 추출 오류: {error}")
             if not text or not text.strip():
@@ -741,6 +784,7 @@ class RegulationQASystem:
             filename = os.path.basename(file_path)
             file_id = FileUtils.make_file_id(file_path)
             file_size = os.path.getsize(file_path)
+            details = self._remember_file_details(file_path, extracted)
             
             # file_infos에 추가
             self.file_infos[file_path] = FileInfo(
@@ -756,14 +800,15 @@ class RegulationQASystem:
                 doc_id = len(self.documents)
                 self.documents.append(chunk)
                 self.doc_meta.append(
-                    {
-                        'doc_id': doc_id,
-                        'source': filename,
-                        'path': file_path,
-                        'file_id': file_id,
-                        'chunk_id': i,
-                        'total_chunks': len(chunks),
-                    }
+                    self._build_chunk_meta(
+                        doc_id=doc_id,
+                        filename=filename,
+                        file_path=file_path,
+                        file_id=file_id,
+                        chunk_id=i,
+                        total_chunks=len(chunks),
+                        details=details,
+                    )
                 )
             
             # 벡터스토어 업데이트 (있으면 추가, 없으면 생성)
@@ -776,12 +821,15 @@ class RegulationQASystem:
                             Document(
                                 page_content=chunk,
                                 metadata={
-                                    'doc_id': base_doc_id + i,
-                                    'source': filename,
-                                    'path': file_path,
-                                    'file_id': file_id,
-                                    'chunk_id': i,
-                                    'total_chunks': len(chunks),
+                                    **self._build_chunk_meta(
+                                        doc_id=base_doc_id + i,
+                                        filename=filename,
+                                        file_path=file_path,
+                                        file_id=file_id,
+                                        chunk_id=i,
+                                        total_chunks=len(chunks),
+                                        details=details,
+                                    ),
                                 },
                             )
                         )
@@ -804,7 +852,10 @@ class RegulationQASystem:
             return TaskResult(True, f"파일 처리 완료: {filename} ({len(chunks)} 청크)", {
                 'filename': filename,
                 'chunks': len(chunks),
-                'size': file_size
+                'size': file_size,
+                'metadata': details.get('metadata', {}),
+                'diagnostics': details.get('diagnostics', {}),
+                'table_count': len(details.get('tables', [])),
             })
             
         except Exception as e:
@@ -878,6 +929,7 @@ class RegulationQASystem:
                 to_process.append(fp)
             
         self.documents, self.doc_meta = [], []
+        self.file_details = {}
         if self._cancel_event.is_set():
             return self._cancelled_result(progress_cb)
         
@@ -943,14 +995,14 @@ class RegulationQASystem:
         failed, new_docs, new_cache_info = [], [], {}
         
         # Parallel Extraction
-        def extract_file(fp: str) -> Tuple[str, str, str | None, str | None, Dict[str, Any] | None]:
+        def extract_file(fp: str) -> Tuple[str, str, Any, Dict[str, Any] | None]:
             fname = os.path.basename(fp)
             try:
-                content, error = self.extractor.extract(fp)
+                extracted = self.extractor.extract_with_details(fp)
                 meta = FileUtils.get_metadata(fp)
-                return fp, fname, content, error, meta
+                return fp, fname, extracted, meta
             except Exception as e:
-                return fp, fname, None, str(e), None
+                return fp, fname, e, None
         
         extracted_results = []
         if progress_cb: progress_cb(15, f"문서 추출 중... (병렬 처리)")
@@ -972,7 +1024,7 @@ class RegulationQASystem:
                     result = future.result(timeout=60)
                     extracted_results.append(result)
                 except Exception as e:
-                    extracted_results.append((fp, fname, None, f"추출 실패/타임아웃: {e}", None))
+                    extracted_results.append((fp, fname, RuntimeError(f"추출 실패/타임아웃: {e}"), None))
                 completed += 1
                 if progress_cb and (completed % 5 == 0 or completed == len(to_process)):
                     progress = 15 + int((completed / len(to_process)) * 30)
@@ -980,11 +1032,18 @@ class RegulationQASystem:
         
         if progress_cb: progress_cb(50, "텍스트 청킹 중...")
         
-        for fp, fname, content, error, meta in extracted_results:
+        for fp, fname, extracted, meta in extracted_results:
             if self._cancel_event.is_set():
                 return self._cancelled_result(progress_cb)
             self.file_infos[fp].status = FileStatus.PROCESSING
             file_id = FileUtils.make_file_id(fp)
+            if isinstance(extracted, Exception):
+                failed.append(f"{fname} ({extracted})")
+                self.file_infos[fp].status = FileStatus.FAILED
+                self.file_infos[fp].error = str(extracted)
+                continue
+            content = extracted.text
+            error = extracted.error
             if error:
                 failed.append(f"{fname} ({error})")
                 self.file_infos[fp].status = FileStatus.FAILED
@@ -997,6 +1056,7 @@ class RegulationQASystem:
                 continue
                 
             try:
+                details = self._remember_file_details(fp, extracted)
                 chunks = splitter.split(content)
                 chunk_count = 0
                 for chunk in chunks:
@@ -1010,23 +1070,29 @@ class RegulationQASystem:
                         new_docs.append(
                             Document(
                                 page_content=chunk_text,
-                                metadata={
-                                    "doc_id": doc_id,
-                                    "source": fname,
-                                    "path": fp,
-                                    "file_id": file_id,
-                                    "chunk_id": chunk_count,
-                                },
+                                metadata=self._build_chunk_meta(
+                                    doc_id=doc_id,
+                                    filename=fname,
+                                    file_path=fp,
+                                    file_id=file_id,
+                                    chunk_id=chunk_count,
+                                    total_chunks=len(chunks),
+                                    details=details,
+                                ),
                             )
                         )
                     self.documents.append(chunk_text)
-                    self.doc_meta.append({
-                        "doc_id": doc_id,
-                        "source": fname,
-                        "path": fp,
-                        "file_id": file_id,
-                        "chunk_id": chunk_count
-                    })
+                    self.doc_meta.append(
+                        self._build_chunk_meta(
+                            doc_id=doc_id,
+                            filename=fname,
+                            file_path=fp,
+                            file_id=file_id,
+                            chunk_id=chunk_count,
+                            total_chunks=len(chunks),
+                            details=details,
+                        )
+                    )
                     chunk_count += 1
                 self.file_infos[fp].status = FileStatus.SUCCESS
                 self.file_infos[fp].chunks = chunk_count
@@ -1464,6 +1530,7 @@ class RegulationQASystem:
         self.documents.clear()
         self.doc_meta.clear()
         self.file_infos.clear()
+        self.file_details.clear()
         
         # BM25 인덱스 정리
         if self.bm25:

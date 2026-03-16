@@ -136,7 +136,16 @@ def _preview_cache_set(cache_key: str, payload: dict):
             _preview_cache.popitem(last=False)
         _preview_cache[cache_key] = payload
 
-def _build_preview_payload(filename: str, target_path: str, content: str, length: int) -> dict:
+def _build_preview_payload(
+    filename: str,
+    target_path: str,
+    content: str,
+    length: int,
+    *,
+    metadata: dict | None = None,
+    tables: list | None = None,
+    diagnostics: dict | None = None,
+) -> dict:
     text = content or ''
     preview = text[:length]
     truncated = len(text) > length
@@ -153,6 +162,10 @@ def _build_preview_payload(filename: str, target_path: str, content: str, length
         'is_truncated': truncated,  # 프론트엔드 하위호환
         'status': getattr(getattr(info, 'status', None), 'value', '완료'),
         'chunks': getattr(info, 'chunks', 0),
+        'metadata': metadata or {},
+        'tables': tables or [],
+        'table_count': len(tables or []),
+        'diagnostics': diagnostics or {},
     }
 
 def _find_file_path(filename: str) -> str:
@@ -254,6 +267,8 @@ def delete_all_files():
         
         # 인덱스 및 캐시 초기화
         qa_system.file_infos.clear()
+        if hasattr(qa_system, 'file_details'):
+            qa_system.file_details.clear()
         qa_system.documents = []
         qa_system.doc_meta = []
         qa_system.vector_store = None
@@ -333,6 +348,8 @@ def _delete_file_impl(filename: str | None = None, file_id: str | None = None):
             if target_path in qa_system.file_infos:
                 del qa_system.file_infos[target_path]
                 deleted_from_index = True
+            if hasattr(qa_system, 'file_details') and target_path in qa_system.file_details:
+                qa_system.file_details.pop(target_path, None)
             
             # 3) documents 및 doc_meta에서 해당 파일 관련 항목 제거
             if qa_system.documents and qa_system.doc_meta:
@@ -894,12 +911,43 @@ def _get_file_preview_impl(filename: str | None = None, file_id: str | None = No
             except Exception as e:
                 return jsonify({'success': False, 'message': f'텍스트 미리보기 실패: {e}'}), 400
 
-            payload = _build_preview_payload(resolved_name, target_path, content, length)
+            cached_details = getattr(qa_system, 'file_details', {}).get(target_path, {})
+            metadata = dict(cached_details.get('metadata', {}))
+            if not metadata:
+                metadata = {
+                    'title': os.path.splitext(resolved_name)[0],
+                    'file_name': resolved_name,
+                    'source_path': target_path,
+                    'source_format': 'txt',
+                }
+            diagnostics = dict(cached_details.get('diagnostics', {})) or {
+                'engine_used': 'txt',
+                'fallback_used': False,
+                'quality_score': 1.0 if content.strip() else 0.0,
+                'warnings': [],
+            }
+            payload = _build_preview_payload(
+                resolved_name,
+                target_path,
+                content,
+                length,
+                metadata=metadata,
+                tables=list(cached_details.get('tables', [])),
+                diagnostics=diagnostics,
+            )
         else:
-            content, error = _preview_extractor.extract(target_path)
-            if error:
-                return jsonify({'success': False, 'message': error}), 400
-            payload = _build_preview_payload(resolved_name, target_path, content, length)
+            extracted = _preview_extractor.extract_with_details(target_path)
+            if extracted.error:
+                return jsonify({'success': False, 'message': extracted.error}), 400
+            payload = _build_preview_payload(
+                resolved_name,
+                target_path,
+                extracted.text,
+                length,
+                metadata=extracted.metadata,
+                tables=extracted.table_dicts(),
+                diagnostics=extracted.diagnostics,
+            )
 
         _preview_cache_set(cache_key, payload)
         return jsonify(payload)

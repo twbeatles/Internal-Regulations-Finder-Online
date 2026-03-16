@@ -44,6 +44,12 @@ python download_static.py
 python run.py
 ```
 
+### 문서 포맷 참고
+
+- `.hwpx`는 추가 패키지 없이 ZIP+XML 경로로 추출됩니다.
+- `.hwp`는 `olefile` 의존성이 필요합니다. 기본 requirements에는 포함되어 있으며, 커스텀 설치 환경에서는 누락 여부를 확인해야 합니다.
+- `.hwp` 또는 `.hwpx` 파싱 실패는 파일 단위로 처리되며, 서버 전체는 계속 동작합니다.
+
 ---
 
 ## ⚙️ 상세 설정
@@ -126,6 +132,17 @@ ls ./models/ko-sbert/
    set TRANSFORMERS_OFFLINE=1
    python run.py
    ```
+
+### 오류: "HWP 추출 실패" / "HWPX ZIP 오류"
+
+**원인:**
+- `.hwp`: `olefile` 누락 또는 손상된 문서
+- `.hwpx`: ZIP 컨테이너 손상 또는 내부 `Contents/section*.xml` 누락
+
+**해결:**
+1. `pip show olefile`로 `.hwp` 의존성 설치 여부 확인
+2. `.hwpx`는 압축 해제 가능한 정상 ZIP인지 확인
+3. 문제 파일만 제외해도 나머지 업로드/검색 서비스는 계속 동작
 
 ---
 
@@ -229,6 +246,11 @@ pyinstaller regulation_search_lite.spec
 - Lite/BM25-only 배포는 AI 모델이 없어도 초기 구동과 파일 업로드/텍스트 검색이 가능하도록 유지됩니다.
 - OCR 지원은 계속 선택적입니다. 오프라인 배포본에서 이미지 PDF OCR까지 필요하면 `pytesseract`, `pdf2image`, `Pillow`, Tesseract 실행 파일을 별도로 준비해야 합니다.
 - 콘솔/레거시 spec(`internal_regulations*.spec`, `regulation_search*.spec`, `server.spec`)도 `config/settings.example.json`을 동봉하는 방향으로 정합화했습니다.
+
+## 2026-03-16 문서 추출 메모
+
+- 폐쇄망 배포에서도 `.hwpx`는 추가 네트워크 없이 바로 처리됩니다.
+- `.hwp`는 `olefile`만 준비되면 동작하며, 의존성 누락 시 안전한 fallback 오류 응답을 반환합니다.
 
 ### PowerShell에서 spec 점검
 

@@ -3,6 +3,7 @@
 사내 규정 검색기 v2.5 - 단일 파일 초경량 빌드 Spec
 빌드: pyinstaller regulation_search_onefile.spec --clean
 정합성 점검(2026-03-01): config 전체 포함 대신 settings.example.json만 포함
+정합성 점검(2026-03-16): HWP/HWPX 파서 서브모듈 hiddenimports 보강
 
 특징:
 - 단일 실행 파일 (onefile 모드)
@@ -67,6 +68,7 @@ if os.path.exists(settings_example):
 hiddenimports = [
     # Flask 코어
     'flask',
+    'flask_compress',
     'flask.json',
     'flask.json.provider',
     'flask_cors',
@@ -145,6 +147,10 @@ hiddenimports = [
     'app.services.db',
     'app.services.file_manager',
     'app.services.metadata',
+    'app.services.parsers',
+    'app.services.parsers.hwp_adapter',
+    'app.services.parsers.hwpx_adapter',
+    'app.services.parsers.hwp_models',
 ]
 
 # PyQt6 서브모듈 추가

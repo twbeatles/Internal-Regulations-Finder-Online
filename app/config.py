@@ -65,7 +65,7 @@ class AppConfig:
     
     # 파일 설정
     UPLOAD_FOLDER: ClassVar[str] = "uploads"
-    SUPPORTED_EXTENSIONS: ClassVar[set[str]] = {'.txt', '.docx', '.pdf', '.xlsx', '.xls', '.hwp'}
+    SUPPORTED_EXTENSIONS: ClassVar[set[str]] = {'.txt', '.docx', '.pdf', '.xlsx', '.xls', '.hwp', '.hwpx'}
     
     # 검색 설정
     MAX_SEARCH_RESULTS: ClassVar[int] = 10

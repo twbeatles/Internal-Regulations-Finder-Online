@@ -2557,11 +2557,11 @@ async function uploadFiles(files) {
     // 파일 필터링
     const validFiles = Array.from(files).filter(f => {
         const ext = f.name.split('.').pop().toLowerCase();
-        return ['txt', 'docx', 'pdf', 'xlsx', 'xls', 'hwp'].includes(ext);
+        return ['txt', 'docx', 'pdf', 'xlsx', 'xls', 'hwp', 'hwpx'].includes(ext);
     });
 
     if (validFiles.length === 0) {
-        Toast.warning('지원되지 않는 형식', '.txt, .docx, .pdf, .xlsx, .xls, .hwp 파일만 지원됩니다');
+        Toast.warning('지원되지 않는 형식', '.txt, .docx, .pdf, .xlsx, .xls, .hwp, .hwpx 파일만 지원됩니다');
         return;
     }
 

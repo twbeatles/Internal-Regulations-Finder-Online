@@ -6,7 +6,7 @@
 
 | 항목 | 내용 |
 |------|------|
-| **프로젝트** | 사내 규정 검색기 v2.6.1 |
+| **프로젝트** | 사내 규정 검색기 v2.8.2 |
 | **목적** | AI 기반 하이브리드 검색 (Vector + BM25) |
 | **언어** | Python 3.10+ (3.14 호환) |
 | **프레임워크** | Flask + PyTorch + LangChain + FAISS |
@@ -36,6 +36,7 @@ Internal-Regulations-Finder-Online-main/
 │   └── services/           # 비즈니스 로직 서비스
 │       ├── search.py       # 하이브리드 검색 엔진 (RegulationQASystem)
 │       ├── document.py     # 문서 추출/파싱/분할/비교
+│       ├── parsers/        # HWP/HWPX 전용 어댑터 + 결과 모델
 │       ├── db.py           # SQLite 싱글톤 DB 관리
 │       ├── file_manager.py # RevisionTracker, FolderWatcher
 │       ├── metadata.py     # TagManager
@@ -45,7 +46,7 @@ Internal-Regulations-Finder-Online-main/
 │           ├── torch_backend.py  # PyTorch/HuggingFace 백엔드
 │           └── onnx_backend.py   # ONNX Runtime 백엔드
 ├── static/                 # 프론트엔드 정적 파일
-│   ├── app.js              # SPA 스타일 클라이언트 (v1.7, 3313 lines 기준)
+│   ├── app.js              # SPA 스타일 클라이언트 (v1.7, 3320 lines 기준)
 │   ├── style.css           # CSS 스타일 (다크/라이트 테마)
 │   └── sw.js               # PWA 서비스 워커
 ├── templates/              # HTML 템플릿
@@ -94,7 +95,7 @@ qa_system.process_single_file(file_path)  # 단일 파일 즉시 인덱싱
 
 | 클래스 | 역할 |
 |--------|------|
-| `DocumentExtractor` | 텍스트 추출 (TXT, DOCX, PDF, XLSX, HWP) |
+| `DocumentExtractor` | 텍스트 추출 (TXT, DOCX, PDF, XLSX, XLS, HWP, HWPX) |
 | `ArticleParser` | 조문 구조 파싱 (제X조, 제X장, 제X절) |
 | `DocumentSplitter` | 청킹 (chunk_size=800, overlap=80) |
 | `DocumentComparator` | 문서 버전 비교 (diff) |
@@ -102,7 +103,7 @@ qa_system.process_single_file(file_path)  # 단일 파일 즉시 인덱싱
 
 **지원 파일 형식**:
 ```python
-SUPPORTED_EXTENSIONS = {'.txt', '.docx', '.pdf', '.xlsx', '.xls', '.hwp'}
+SUPPORTED_EXTENSIONS = {'.txt', '.docx', '.pdf', '.xlsx', '.xls', '.hwp', '.hwpx'}
 ```
 
 ### 3. Database (`app/services/db.py`)
@@ -366,7 +367,8 @@ Default benchmark scenario: warmup 30, measure 200, concurrency 1/5/10.
 | 모델 로드 실패 | `OFFLINE_MODE=True` + `LOCAL_MODEL_PATH` 설정 |
 | 검색 느림 | 캐시 크기 증가 (`SEARCH_CACHE_SIZE`) |
 | 메모리 부족 | 경량 버전 사용 (`requirements_lite.txt`) |
-| HWP 추출 실패 | `olefile` 패키지 설치 확인 |
+| HWP 추출 실패 | `olefile` 패키지 설치 확인, 누락 시 파일 단위 오류로 안전하게 실패 |
+| HWPX 추출 실패 | 손상된 ZIP/XML 여부 확인, 다른 문서 처리에는 영향 없음 |
 | OCR 필요 | Tesseract 설치 + `pytesseract` 패키지 |
 | Rate Limit | `RATE_LIMIT_PER_MINUTE` 증가 |
 | 동시 검색 제한 | `MAX_CONCURRENT_SEARCHES` 조정 |
@@ -417,7 +419,7 @@ Default benchmark scenario: warmup 30, measure 200, concurrency 1/5/10.
 ### Functional Fixes
 - ZIP folder upload implemented: `POST /api/upload/folder` (zip-slip guarded).
 - Download route restored (by-id + legacy filename route).
-- Frontend upload extension filter aligned with backend (`txt/docx/pdf/xlsx/xls/hwp`).
+- Frontend upload extension filter aligned with backend (`txt/docx/pdf/xlsx/xls/hwp/hwpx`).
 - PWA icon paths aligned via `static/icons/icon-192.png`, `static/icons/icon-512.png`.
 
 ### v2.8 Additions (2026-02-25)
@@ -432,7 +434,7 @@ Default benchmark scenario: warmup 30, measure 200, concurrency 1/5/10.
 - Service Worker caches only GET allowlisted APIs and never caches auth/admin or mutating API calls.
 
 ### Consistency Addendum (2026-03-01)
-- `static/app.js` line-count reference updated to `3313` (audit-time snapshot).
+- `static/app.js` line-count reference updated to `3320` (audit-time snapshot).
 - Five main packaging specs now include only `config/settings.example.json` (not the whole `config` directory): `regulation_search_gui.spec`, `regulation_search_ultra_lite_gui.spec`, `regulation_search_onefile.spec`, `regulation_search_ultra_lite.spec`, `server_gui.spec`.
 - `python -m py_compile *.spec` confirms all spec files are syntactically valid.
 
@@ -454,3 +456,14 @@ Default benchmark scenario: warmup 30, measure 200, concurrency 1/5/10.
   - `server.spec`
 - On Windows PowerShell, use:
   - `Get-ChildItem -Name *.spec | ForEach-Object { python -m py_compile $_ }`
+
+### Maintenance Addendum (2026-03-16)
+- `.hwp` and `.hwpx` now route through separate parser adapters under `app/services/parsers/`.
+- `DocumentExtractor.extract_with_details()` returns normalized parser output:
+  - `text`
+  - `metadata`
+  - `tables`
+  - `diagnostics`
+  - `error`
+- `.hwpx` uses built-in ZIP/XML parsing.
+- `.hwp` keeps `olefile` as an optional runtime dependency with graceful file-level fallback.
