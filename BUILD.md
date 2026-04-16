@@ -50,6 +50,10 @@ pyinstaller regulation_search_gui.spec --clean
 # Lite 버전 (BM25만, AI 제외)
 # [저사양] AI 기능이 필요 없는 경우
 pyinstaller regulation_search_ultra_lite_gui.spec --clean
+
+# 레거시 콘솔 빌드가 필요하면
+pyinstaller internal_regulations.spec --clean
+pyinstaller internal_regulations_lite.spec --clean
 ```
 
 ---
@@ -162,6 +166,20 @@ Get-ChildItem -Name *.spec | ForEach-Object { python -m py_compile $_ }
 1. 빌드 후 `dist/.../static/icons/`에 `icon-192.png`, `icon-512.png` 존재 확인
 2. 실행 후 PWA install prompt 및 서비스워커 install 로그 확인
 3. 관리자 화면에서 ZIP 업로드/파일 다운로드/리비전 기능 스모크 테스트
+
+## 2026-04-16 spec 점검 메모
+
+- 전체 `.spec` 문법 재점검:
+  - `Get-ChildItem -Name *.spec | ForEach-Object { python -m py_compile $_ }`
+  - 결과: 전체 정상
+- `internal_regulations_lite.spec` 확인 결과:
+  - `templates`, `static`, `config/settings.example.json` 포함 정책 유지
+  - `collect_submodules("app")`로 현재 검색/파일/리비전 경로 변경분을 추가 수정 없이 수집 가능
+  - 이번 검색 캐시/인덱스/리비전/ReaderMode 수정으로 인한 추가 `hiddenimports` 보강은 불필요
+- 권장 회귀 검증:
+  - `python -m pytest -q`
+  - 파일 삭제 후 검색 스모크 테스트
+  - 동명 파일 2개 포함 폴더 동기화 후 검색/미리보기 테스트
 
 ## ✅ 정합성 점검 메모 (2026-03-09)
 

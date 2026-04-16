@@ -43,6 +43,23 @@ class TestSearchCache:
         assert filename is not None
         assert relevance[0]["result"] == "relevance"
         assert filename[0]["result"] == "filename"
+
+    def test_filter_cache_key_isolated(self, cache):
+        """파일 필터가 다른 경우 캐시가 분리되는지 테스트"""
+        cache.set("policy", 5, True, [{"result": "all"}])
+        cache.set("policy", 5, True, [{"result": "id-a"}], filter_file_id="id-a")
+        cache.set("policy", 5, True, [{"result": "a.txt"}], filter_file="a.txt")
+
+        all_results = cache.get("policy", 5, True)
+        by_id = cache.get("policy", 5, True, filter_file_id="id-a")
+        by_name = cache.get("policy", 5, True, filter_file="a.txt")
+
+        assert all_results is not None
+        assert by_id is not None
+        assert by_name is not None
+        assert all_results[0]["result"] == "all"
+        assert by_id[0]["result"] == "id-a"
+        assert by_name[0]["result"] == "a.txt"
     
     def test_cache_miss(self, cache):
         """캐시 미스 테스트"""
@@ -392,7 +409,7 @@ class TestLiteMode:
 
         qa = RegulationQASystem()
         try:
-            qa.documents = ["휴가 규정 안내", "보안 규정 안내"]
+            qa.documents = ["vacation policy guide", "security policy guide"]
             qa.doc_meta = [
                 {"doc_id": 0, "source": "a.txt", "path": "C:/a.txt", "file_id": "id-a"},
                 {"doc_id": 1, "source": "b.txt", "path": "C:/b.txt", "file_id": "id-b"},
@@ -400,10 +417,35 @@ class TestLiteMode:
             qa.bm25 = BM25Light()
             qa.bm25.fit(qa.documents)
 
-            res = qa.search("규정", hybrid=True, filter_file_id="id-a")
+            all_res = qa.search("vacation", hybrid=True)
+            res = qa.search("vacation", hybrid=True, filter_file_id="id-a")
             assert res.success is True
             assert len(res.data) >= 1
             assert all(item.get("file_id") == "id-a" for item in res.data)
+            assert all_res.success is True
+            assert len(all_res.data) >= 1
+        finally:
+            qa.cleanup()
+
+    def test_search_filter_file_name_not_polluted_by_unfiltered_cache(self):
+        from app.services.search import RegulationQASystem, BM25Light
+
+        qa = RegulationQASystem()
+        try:
+            qa.documents = ["vacation policy guide", "security policy guide"]
+            qa.doc_meta = [
+                {"doc_id": 0, "source": "a.txt", "path": "C:/a.txt", "file_id": "id-a"},
+                {"doc_id": 1, "source": "b.txt", "path": "C:/b.txt", "file_id": "id-b"},
+            ]
+            qa.bm25 = BM25Light()
+            qa.bm25.fit(qa.documents)
+
+            qa.search("policy", hybrid=True)
+            filtered = qa.search("policy", hybrid=True, filter_file="b.txt")
+
+            assert filtered.success is True
+            assert len(filtered.data) >= 1
+            assert all(item.get("source") == "b.txt" for item in filtered.data)
         finally:
             qa.cleanup()
 
@@ -434,6 +476,95 @@ class TestLiteMode:
             assert result.success is True
             assert captured["chunk_size"] == AppConfig.CHUNK_SIZE
             assert captured["chunk_overlap"] == AppConfig.CHUNK_OVERLAP
+        finally:
+            qa.cleanup()
+
+    def test_cache_entry_key_distinguishes_duplicate_basenames(self, tmp_path):
+        from app.services.search import RegulationQASystem
+
+        file1 = tmp_path / "A" / "same.txt"
+        file2 = tmp_path / "B" / "same.txt"
+        file1.parent.mkdir(parents=True, exist_ok=True)
+        file2.parent.mkdir(parents=True, exist_ok=True)
+        file1.write_text("alpha", encoding="utf-8")
+        file2.write_text("beta", encoding="utf-8")
+
+        qa = RegulationQASystem()
+        try:
+            key1 = qa._get_cache_entry_key(str(tmp_path), str(file1))
+            key2 = qa._get_cache_entry_key(str(tmp_path), str(file2))
+
+            assert key1 != key2
+            assert key1.endswith("a/same.txt")
+            assert key2.endswith("b/same.txt")
+        finally:
+            qa.cleanup()
+
+    def test_remove_file_rebuilds_vector_store(self, tmp_path, monkeypatch):
+        from app.services import search as search_module
+
+        class _DummyDocument:
+            def __init__(self, page_content, metadata):
+                self.page_content = page_content
+                self.metadata = metadata
+
+        class _DummyVectorStore:
+            def __init__(self, docs):
+                self.docs = list(docs)
+
+            def similarity_search_with_score(self, query, k=5):
+                return [(doc, float(i + 1)) for i, doc in enumerate(self.docs[:k])]
+
+            def add_documents(self, docs):
+                self.docs.extend(docs)
+
+        class _DummyFAISS:
+            @staticmethod
+            def from_documents(docs, embedding_model):
+                return _DummyVectorStore(docs)
+
+        qa = search_module.RegulationQASystem()
+        file1 = tmp_path / "a.txt"
+        file2 = tmp_path / "b.txt"
+        file1.write_text("vacation policy guide", encoding="utf-8")
+        file2.write_text("security policy guide", encoding="utf-8")
+
+        try:
+            monkeypatch.setattr(search_module, "Document", _DummyDocument, raising=False)
+            monkeypatch.setattr(search_module, "FAISS", _DummyFAISS, raising=False)
+
+            file1_id = search_module.FileUtils.make_file_id(str(file1))
+            file2_id = search_module.FileUtils.make_file_id(str(file2))
+
+            qa.embedding_model = object()
+            qa.documents = ["vacation policy guide", "security policy guide"]
+            qa.doc_meta = [
+                {"doc_id": 0, "source": "a.txt", "path": str(file1), "file_id": file1_id},
+                {"doc_id": 1, "source": "b.txt", "path": str(file2), "file_id": file2_id},
+            ]
+            qa.file_infos = {
+                str(file1): search_module.FileInfo(path=str(file1), size=file1.stat().st_size, chunks=1),
+                str(file2): search_module.FileInfo(path=str(file2), size=file2.stat().st_size, chunks=1),
+            }
+            qa._build_bm25()
+            qa._rebuild_vector_store_locked()
+
+            removed = qa.remove_file_from_index(str(file1), "a.txt", file1_id)
+            search_result = qa.search("policy", hybrid=False)
+
+            assert removed is True
+            assert search_result.success is True
+            assert len(search_result.data) == 1
+            assert search_result.data[0]["file_id"] == file2_id
+            assert search_result.data[0]["source"] == "b.txt"
+
+            removed_last = qa.remove_file_from_index(str(file2), "b.txt", file2_id)
+            final_result = qa.search("policy", hybrid=False)
+
+            assert removed_last is True
+            assert qa.vector_store is None
+            assert qa.bm25 is None
+            assert final_result.success is False
         finally:
             qa.cleanup()
 

@@ -4,7 +4,7 @@
 
 ## 📋 프로젝트 개요
 
-**프로젝트명**: 사내 규정 검색기 v2.8.2  
+**프로젝트명**: 사내 규정 검색기 v2.8.3  
 **목적**: AI 기반 하이브리드 검색 시스템 (Vector + BM25)으로 사내 규정 문서를 검색  
 **기술 스택**: Flask + PyTorch + LangChain + FAISS + SQLite  
 **실행 방식**: 웹 서버 (콘솔 또는 GUI/시스템 트레이)
@@ -177,7 +177,7 @@ RegSearchError                   # 기본 예외
 │           ├── torch_backend.py  # PyTorch/HuggingFace 백엔드
 │           └── onnx_backend.py   # ONNX Runtime 백엔드
 ├── static/
-│   ├── app.js              # 프론트엔드 SPA (3320 lines 기준, v1.7)
+│   ├── app.js              # 프론트엔드 SPA (3339 lines 기준, v1.7)
 │   ├── style.css           # CSS 스타일 (다크/라이트 테마)
 │   └── sw.js               # PWA 서비스 워커
 ├── templates/
@@ -198,7 +198,7 @@ RegSearchError                   # 기본 예외
 ### Search API (`api_search.py`)
 | 메서드 | 경로 | 설명 | 요청 |
 |--------|------|------|------|
-| POST | `/api/search` | 하이브리드 검색 | `{query, k, hybrid, sort_by, filter_file}` |
+| POST | `/api/search` | 하이브리드 검색 | `{query, k, hybrid, sort_by, filter_file, filter_file_id}` |
 | GET | `/api/search/history` | 검색 히스토리 | `?limit=10` |
 | GET | `/api/search/suggest` | 자동완성 제안 | `?q=검색어&limit=8` |
 | POST | `/api/cache/clear` | 검색 캐시 초기화 | - |
@@ -402,7 +402,7 @@ python download_models.py
 | 동시 검색 제한 | 10개 (SearchQueue) |
 | 분당 요청 제한 | 300회/IP (RateLimiter) |
 | 캐시 TTL | 600초 (적응형 연장, 최대 2배) |
-| 캐시 키 | `query + k + hybrid + sort_by` |
+| 캐시 키 | `query + k + hybrid + sort_by + filter_file + filter_file_id` |
 
 ### 프론트엔드 성능 참고
 - `static/app.js`는 관리자 초기화 경로를 단일화했으며 `window.__adminBootstrapped`로 중복 부팅을 방지함
@@ -414,7 +414,7 @@ python download_models.py
 ## 🧪 성능 측정 명령
 
 ```bash
-pytest -q
+python -m pytest -q
 python scripts/perf_smoke.py
 python scripts/perf_smoke.py --base-url http://127.0.0.1:8080 --query "휴가 규정"
 ```
@@ -471,7 +471,7 @@ class AppConfig:
 - [ ] DB 쿼리는 파라미터 바인딩 사용 (`?` 플레이스홀더)
 - [ ] 스레드 안전성 검토 (Lock/RLock/Semaphore)
 - [ ] 프론트엔드 XSS 방지 (`escapeHtml()`)
-- [ ] 파일 변경 시 캐시 무효화 (`_search_cache.invalidate_by_file()`)
+- [ ] 인덱스/캐시 변경은 공용 경로(`clear_index()`, `remove_file_from_index()`) 또는 명시 무효화 규칙을 따른다
 - [ ] API 응답은 `api_success()` / `api_error()` 헬퍼 사용
 - [ ] 로깅은 `logger` 객체 사용 (print 금지)
 - [ ] 경로 검증 (Path Traversal 방지)
@@ -522,7 +522,7 @@ class AppConfig:
 - Service Worker는 `GET allowlist` API만 캐시하고 인증/관리/비GET 요청은 캐시하지 않는다.
 
 ### 정합성 보충 메모 (2026-03-01)
-- `static/app.js` 라인수 표기는 점검 시점 기준 `3320`으로 갱신.
+- `static/app.js` 라인수 표기는 점검 시점 기준 `3339`로 갱신.
 - 주요 spec 5종(`regulation_search_gui.spec`, `regulation_search_ultra_lite_gui.spec`, `regulation_search_onefile.spec`, `regulation_search_ultra_lite.spec`, `server_gui.spec`)은 `config` 폴더 전체 대신 `config/settings.example.json`만 포함.
 - `python -m py_compile *.spec` 기준 spec 문법은 모두 정상.
 
@@ -551,3 +551,17 @@ class AppConfig:
 - `.hwpx`는 ZIP/XML 기반으로 추가 패키지 없이 처리된다.
 - `.hwp`는 `olefile`이 필요하며, 누락 시 서버 전체가 아니라 파일 단위로만 안전하게 실패한다.
 - 검색 인덱싱은 계속 `text`만 사용하고, 파서 부가정보는 미리보기/업로드 후속 흐름에 유지된다.
+
+### Maintenance Addendum (2026-04-16)
+- 검색 캐시 키는 `filter_file`, `filter_file_id`까지 포함해 필터 검색 결과가 비필터 캐시에 오염되지 않도록 한다.
+- 검색 히스토리는 성공한 검색만 기록한다.
+- 인덱스 정리 공용 helper:
+  - `RegulationQASystem.clear_index()`
+  - `RegulationQASystem.remove_file_from_index()`
+- 파일 삭제 후 BM25뿐 아니라 vector index도 현재 인메모리 상태에서 다시 맞춘다.
+- 동기화 캐시 메타데이터는 basename 대신 폴더 상대경로(`_CACHE_KEY_MODE=relative_path_v1`)를 사용한다.
+- 리비전 버전 계산은 현재 `file_id`와 legacy filename 키를 함께 본다.
+- `ReaderMode` 원문 미리보기는 가능하면 `file_id` 기반 API(`/api/files/by-id/.../preview`)를 우선 사용한다.
+- `internal_regulations_lite.spec`를 포함한 전체 `.spec`는 재점검했으며, 현재 코드 변경 기준 추가 packaging 수정은 불필요했다.
+- 현재 검증 기준:
+  - `python -m pytest -q` -> `70 passed`

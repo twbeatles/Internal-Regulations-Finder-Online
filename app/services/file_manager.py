@@ -4,6 +4,7 @@ import hashlib
 import json
 import threading
 import importlib
+import re
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -14,6 +15,7 @@ from app.services.document import DocumentComparator
 
 class RevisionTracker:
     """규정 개정 이력 관리 (SQLite 기반)"""
+    _VERSION_RE = re.compile(r"^v(\d+)$", re.IGNORECASE)
     
     def __init__(self):
         self.revisions_dir = os.path.join(get_app_directory(), 'revisions')
@@ -37,14 +39,37 @@ class RevisionTracker:
                 seen.add(key)
                 ordered.append(key)
         return ordered
+
+    def _next_version(self, file_key: str, legacy_key: Optional[str] = None) -> str:
+        keys = self._select_keys(file_key, legacy_key)
+        if not keys:
+            return "v1"
+
+        placeholders = ",".join("?" for _ in keys)
+        rows = db.fetchall(
+            f"SELECT version FROM revisions WHERE filename IN ({placeholders})",
+            tuple(keys)
+        )
+
+        max_version_num = 0
+        for row in rows:
+            match = self._VERSION_RE.match(str(row['version'] or '').strip())
+            if match:
+                max_version_num = max(max_version_num, int(match.group(1)))
+
+        return f"v{max_version_num + 1}"
     
-    def save_revision(self, file_key: str, content: str, note: str = "", display_name: str = "") -> Dict:
+    def save_revision(
+        self,
+        file_key: str,
+        content: str,
+        note: str = "",
+        display_name: str = "",
+        legacy_key: Optional[str] = None,
+    ) -> Dict:
         """새 버전 저장"""
         try:
-            # 다음 버전 번호 결정
-            row = db.fetchone("SELECT COUNT(*) as cnt FROM revisions WHERE filename=?", (file_key,))
-            next_ver_num = (row['cnt'] if row else 0) + 1
-            version = f"v{next_ver_num}"
+            version = self._next_version(file_key, legacy_key=legacy_key)
             
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             

@@ -107,3 +107,66 @@ def test_search_suggest_schema():
     body = resp.get_json()
     assert body["success"] is True
     assert "suggestions" in body
+
+
+def test_search_history_not_recorded_on_failed_search(monkeypatch):
+    from app import create_app
+    from app.services.search import qa_system, rate_limiter, search_queue
+    from app.utils import TaskResult
+
+    class _DummyHistory:
+        def __init__(self):
+            self.calls = []
+
+        def add(self, query):
+            self.calls.append(query)
+
+    history = _DummyHistory()
+    monkeypatch.setattr(qa_system, "_search_history", history, raising=False)
+    monkeypatch.setattr(qa_system, "search", lambda *args, **kwargs: TaskResult(False, "failed"), raising=False)
+    monkeypatch.setattr(rate_limiter, "is_allowed", lambda ip: True, raising=False)
+    monkeypatch.setattr(search_queue, "acquire", lambda timeout=5: True, raising=False)
+    monkeypatch.setattr(search_queue, "release", lambda: None, raising=False)
+
+    app = create_app()
+    app.config["TESTING"] = True
+    client = app.test_client()
+
+    resp = client.post("/api/search", json={"query": "policy"})
+    assert resp.status_code == 200
+    assert resp.get_json()["success"] is False
+    assert history.calls == []
+
+
+def test_search_history_recorded_on_success(monkeypatch):
+    from app import create_app
+    from app.services.search import qa_system, rate_limiter, search_queue
+    from app.utils import TaskResult
+
+    class _DummyHistory:
+        def __init__(self):
+            self.calls = []
+
+        def add(self, query):
+            self.calls.append(query)
+
+    history = _DummyHistory()
+    monkeypatch.setattr(qa_system, "_search_history", history, raising=False)
+    monkeypatch.setattr(
+        qa_system,
+        "search",
+        lambda *args, **kwargs: TaskResult(True, "ok", [{"content": "policy guide", "source": "doc.txt", "file_id": "id-1", "score": 1.0}]),
+        raising=False,
+    )
+    monkeypatch.setattr(rate_limiter, "is_allowed", lambda ip: True, raising=False)
+    monkeypatch.setattr(search_queue, "acquire", lambda timeout=5: True, raising=False)
+    monkeypatch.setattr(search_queue, "release", lambda: None, raising=False)
+
+    app = create_app()
+    app.config["TESTING"] = True
+    client = app.test_client()
+
+    resp = client.post("/api/search", json={"query": "policy"})
+    assert resp.status_code == 200
+    assert resp.get_json()["success"] is True
+    assert history.calls == ["policy"]

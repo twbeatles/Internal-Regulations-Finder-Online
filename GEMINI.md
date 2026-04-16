@@ -6,7 +6,7 @@
 
 | 항목 | 내용 |
 |------|------|
-| **프로젝트** | 사내 규정 검색기 v2.8.2 |
+| **프로젝트** | 사내 규정 검색기 v2.8.3 |
 | **목적** | AI 기반 하이브리드 검색 (Vector + BM25) |
 | **언어** | Python 3.10+ (3.14 호환) |
 | **프레임워크** | Flask + PyTorch + LangChain + FAISS |
@@ -46,7 +46,7 @@ Internal-Regulations-Finder-Online-main/
 │           ├── torch_backend.py  # PyTorch/HuggingFace 백엔드
 │           └── onnx_backend.py   # ONNX Runtime 백엔드
 ├── static/                 # 프론트엔드 정적 파일
-│   ├── app.js              # SPA 스타일 클라이언트 (v1.7, 3320 lines 기준)
+│   ├── app.js              # SPA 스타일 클라이언트 (v1.7, 3339 lines 기준)
 │   ├── style.css           # CSS 스타일 (다크/라이트 테마)
 │   └── sw.js               # PWA 서비스 워커
 ├── templates/              # HTML 템플릿
@@ -201,7 +201,7 @@ class AppConfig:
 ### Search API
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/search` | 하이브리드 검색 `{query, k, hybrid}` |
+| POST | `/api/search` | 하이브리드 검색 `{query, k, hybrid, sort_by, filter_file, filter_file_id}` |
 | GET | `/api/search/history` | 검색 히스토리 |
 | GET | `/api/search/suggest` | 자동완성 `?q=검색어` |
 | POST | `/api/cache/clear` | 캐시 초기화 |
@@ -339,7 +339,7 @@ python download_models.py
 | Rate Limit | 300 req/min/IP |
 | Response Compression | ~75% reduction (Gzip) |
 | Cache TTL | 600s (adaptive, max 2x) |
-| Cache Key | `query + k + hybrid + sort_by` |
+| Cache Key | `query + k + hybrid + sort_by + filter_file + filter_file_id` |
 
 ### Frontend Runtime Notes
 - Admin bootstrap is guarded by `window.__adminBootstrapped` (single init path).
@@ -351,7 +351,7 @@ python download_models.py
 ## 🧪 Perf Commands
 
 ```bash
-pytest -q
+python -m pytest -q
 python scripts/perf_smoke.py
 python scripts/perf_smoke.py --base-url http://127.0.0.1:8080 --query "휴가 규정"
 ```
@@ -383,7 +383,7 @@ Default benchmark scenario: warmup 30, measure 200, concurrency 1/5/10.
 - [ ] DB: 파라미터 바인딩 사용
 - [ ] 스레드: Lock/RLock/Semaphore 적절히 사용
 - [ ] 프론트엔드: `escapeHtml()` XSS 방지
-- [ ] 캐시: 파일 변경 시 무효화 로직 확인
+- [ ] 캐시/인덱스: 공용 정리 경로(`clear_index()`, `remove_file_from_index()`) 또는 명시 무효화 규칙 확인
 - [ ] API 응답: `api_success()` / `api_error()` 사용
 - [ ] 로깅: `logger` 객체 사용 (print 금지)
 - [ ] 경로: Path Traversal 방지 검증
@@ -434,7 +434,7 @@ Default benchmark scenario: warmup 30, measure 200, concurrency 1/5/10.
 - Service Worker caches only GET allowlisted APIs and never caches auth/admin or mutating API calls.
 
 ### Consistency Addendum (2026-03-01)
-- `static/app.js` line-count reference updated to `3320` (audit-time snapshot).
+- `static/app.js` line-count reference updated to `3339` (audit-time snapshot).
 - Five main packaging specs now include only `config/settings.example.json` (not the whole `config` directory): `regulation_search_gui.spec`, `regulation_search_ultra_lite_gui.spec`, `regulation_search_onefile.spec`, `regulation_search_ultra_lite.spec`, `server_gui.spec`.
 - `python -m py_compile *.spec` confirms all spec files are syntactically valid.
 
@@ -467,3 +467,16 @@ Default benchmark scenario: warmup 30, measure 200, concurrency 1/5/10.
   - `error`
 - `.hwpx` uses built-in ZIP/XML parsing.
 - `.hwp` keeps `olefile` as an optional runtime dependency with graceful file-level fallback.
+
+### Maintenance Addendum (2026-04-16)
+- Search cache keys now include `filter_file` and `filter_file_id`, so filtered search no longer reuses unfiltered cached results.
+- Search history is recorded only for successful searches.
+- File deletion rebuilds both BM25 and vector index state through shared helpers:
+  - `RegulationQASystem.clear_index()`
+  - `RegulationQASystem.remove_file_from_index()`
+- Sync cache metadata keys use folder-relative paths (`_CACHE_KEY_MODE=relative_path_v1`) instead of basenames, avoiding duplicate-name collisions.
+- Revision version numbering now spans both current `file_id` keys and legacy filename keys.
+- `ReaderMode` preview prefers `/api/files/by-id/.../preview` when a `file_id` is available.
+- All `.spec` files, including `internal_regulations_lite.spec`, were re-validated; no extra packaging change was required for the 2026-04-16 backend/frontend fixes.
+- Current branch verification:
+  - `python -m pytest -q` -> `70 passed`

@@ -58,12 +58,12 @@ def search_route():
         filter_file = data.get('filter_file')
         filter_file_id = data.get('filter_file_id')
         
-        # 검색 히스토리 저장
-        if getattr(qa_system, '_search_history', None):
-             qa_system._search_history.add(query)
-        
         # 검색 수행
         res = qa_system.search(query, k, hybrid, sort_by, filter_file, filter_file_id)
+
+        # 유효한 검색만 히스토리에 저장
+        if res.success and getattr(qa_system, '_search_history', None):
+            qa_system._search_history.add(query)
         
         # ====================================================================
         # 응답 최적화 v2.6.1: 콘텐츠 길이 제한 및 하이라이트 사전 처리

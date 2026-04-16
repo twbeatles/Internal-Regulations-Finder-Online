@@ -173,6 +173,9 @@ pyinstaller regulation_search.spec
 
 # 초경량 (BM25만, AI 제외)
 pyinstaller regulation_search_lite.spec
+
+# 레거시 콘솔 lite 빌드가 필요하면
+pyinstaller internal_regulations_lite.spec
 ```
 
 ### 배포 패키지 구성
@@ -251,6 +254,16 @@ pyinstaller regulation_search_lite.spec
 
 - 폐쇄망 배포에서도 `.hwpx`는 추가 네트워크 없이 바로 처리됩니다.
 - `.hwp`는 `olefile`만 준비되면 동작하며, 의존성 누락 시 안전한 fallback 오류 응답을 반환합니다.
+
+## 2026-04-16 운영/패키징 메모
+
+- 검색 캐시는 파일 필터(`filter_file`, `filter_file_id`)까지 포함해 분리되므로, 폐쇄망 운영에서도 필터 검색 결과가 캐시 때문에 섞이지 않습니다.
+- 파일 삭제 시 BM25/vector index를 함께 다시 맞추도록 정리되어, 관리자가 문서를 제거한 뒤 검색 결과가 더 일관되게 유지됩니다.
+- 동명이인 파일이 많은 규정 폴더를 다루는 경우에도 동기화 캐시가 폴더 상대경로 기준으로 구분됩니다.
+- 리비전 버전 번호는 legacy filename 이력과 `file_id` 이력을 함께 보고 이어집니다.
+- 전체 `.spec`를 다시 점검했고 `internal_regulations_lite.spec` 포함 현행 오프라인/콘솔 packaging 설정에 추가 수정은 필요하지 않았습니다.
+- 권장 검증 명령:
+  - `python -m pytest -q`
 
 ### PowerShell에서 spec 점검
 

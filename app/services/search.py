@@ -282,7 +282,23 @@ class SearchCache:
         self._misses = 0
         self._evictions = 0
     
-    def _make_key(self, query: str, k: int, hybrid: bool, sort_by: str = 'relevance') -> str:
+    @staticmethod
+    def _normalize_query(query: str) -> str:
+        return ' '.join(str(query or '').lower().split())
+
+    @staticmethod
+    def _normalize_component(value: str | None) -> str:
+        return str(value or '').strip().lower()
+
+    def _make_key(
+        self,
+        query: str,
+        k: int,
+        hybrid: bool,
+        sort_by: str = 'relevance',
+        filter_file: str | None = None,
+        filter_file_id: str | None = None,
+    ) -> str:
         """캐시 키 생성 (쿼리 정규화로 히트율 향상)
         
         정규화:
@@ -290,9 +306,11 @@ class SearchCache:
         - 연속 공백을 단일 공백으로
         - 앞뒤 공백 제거
         """
-        normalized = ' '.join(query.lower().split())
-        sort_key = str(sort_by or 'relevance').strip().lower()
-        return f"{normalized}|{k}|{hybrid}|{sort_key}"
+        normalized = self._normalize_query(query)
+        sort_key = self._normalize_component(sort_by or 'relevance')
+        filter_name_key = self._normalize_component(filter_file)
+        filter_id_key = self._normalize_component(filter_file_id)
+        return f"{normalized}|{k}|{hybrid}|{sort_key}|{filter_name_key}|{filter_id_key}"
 
     def _effective_ttl(self, entry: "SearchCache.CacheEntry") -> float:
         if not self.adaptive_ttl:
@@ -302,8 +320,16 @@ class SearchCache:
         factor = min(self.max_ttl_factor, 1.0 + extra_hits * 0.1)
         return float(self.ttl) * factor
     
-    def get(self, query: str, k: int, hybrid: bool, sort_by: str = 'relevance') -> Optional[Any]:
-        key = self._make_key(query, k, hybrid, sort_by)
+    def get(
+        self,
+        query: str,
+        k: int,
+        hybrid: bool,
+        sort_by: str = 'relevance',
+        filter_file: str | None = None,
+        filter_file_id: str | None = None,
+    ) -> Optional[Any]:
+        key = self._make_key(query, k, hybrid, sort_by, filter_file, filter_file_id)
         with self._lock:
             entry = self.cache.get(key)
             if entry is not None:
@@ -318,8 +344,17 @@ class SearchCache:
             self._misses += 1
         return None
     
-    def set(self, query: str, k: int, hybrid: bool, result: Any, sort_by: str = 'relevance'):
-        key = self._make_key(query, k, hybrid, sort_by)
+    def set(
+        self,
+        query: str,
+        k: int,
+        hybrid: bool,
+        result: Any,
+        sort_by: str = 'relevance',
+        filter_file: str | None = None,
+        filter_file_id: str | None = None,
+    ):
+        key = self._make_key(query, k, hybrid, sort_by, filter_file, filter_file_id)
         with self._lock:
             # 이미 존재하면 히트 카운트 유지하며 갱신
             old_hit_count = 0
@@ -541,6 +576,8 @@ class SearchHistory:
 # RegulationQASystem
 # ============================================================================
 class RegulationQASystem:
+    _CACHE_KEY_MODE = "relative_path_v1"
+
     def __init__(self):
         self.vector_store: Any = None
         self.embedding_model: Any = None
@@ -581,6 +618,110 @@ class RegulationQASystem:
         self.revision_tracker = RevisionTracker()
         self.article_parser = ArticleParser()
         self.doc_splitter = DocumentSplitter()
+
+    def _normalize_doc_meta_locked(self) -> None:
+        normalized_meta: List[Dict[str, Any]] = []
+        for doc_id, content in enumerate(self.documents):
+            meta = {}
+            if doc_id < len(self.doc_meta) and isinstance(self.doc_meta[doc_id], dict):
+                meta = dict(self.doc_meta[doc_id])
+
+            path = str(meta.get('path', '') or '')
+            source = str(meta.get('source', '') or (os.path.basename(path) if path else '?'))
+            normalized_meta.append({
+                **meta,
+                'doc_id': doc_id,
+                'source': source,
+                'path': path,
+                'file_id': meta.get('file_id') or (FileUtils.make_file_id(path) if path else ''),
+            })
+        self.doc_meta = normalized_meta
+
+    def _rebuild_vector_store_locked(self) -> None:
+        if not self.documents:
+            self.vector_store = None
+            return
+
+        if not (self.embedding_model and FAISS and Document):
+            self.vector_store = None
+            return
+
+        try:
+            self._normalize_doc_meta_locked()
+            docs = [
+                Document(page_content=self.documents[idx], metadata=dict(self.doc_meta[idx]))
+                for idx in range(len(self.documents))
+            ]
+            self.vector_store = FAISS.from_documents(docs, self.embedding_model) if docs else None
+        except Exception as e:
+            logger.warning(f"벡터 인덱스 재구축 실패: {e}")
+            self.vector_store = None
+
+    def _clear_index_locked(self, *, preserve_folder: bool = True) -> None:
+        self.file_infos.clear()
+        self.file_details.clear()
+        self.documents = []
+        self.doc_meta = []
+        self.vector_store = None
+        self.bm25 = None
+        self._keyword_cache = []
+        self._search_cache.clear()
+        if not preserve_folder:
+            self.current_folder = ""
+
+    def clear_index(self, *, preserve_folder: bool = True) -> None:
+        with self._lock:
+            self._clear_index_locked(preserve_folder=preserve_folder)
+
+    def remove_file_from_index(self, target_path: str, resolved_name: str, resolved_id: str) -> bool:
+        with self._lock:
+            deleted_from_index = False
+
+            if target_path in self.file_infos:
+                del self.file_infos[target_path]
+                deleted_from_index = True
+
+            if target_path in self.file_details:
+                self.file_details.pop(target_path, None)
+
+            if self.documents and self.doc_meta:
+                indices_to_remove = [
+                    i for i, meta in enumerate(self.doc_meta)
+                    if meta.get('path') == target_path
+                    or meta.get('file_id') == resolved_id
+                    or (
+                        not meta.get('path')
+                        and not meta.get('file_id')
+                        and meta.get('source') == resolved_name
+                    )
+                ]
+                for idx in reversed(indices_to_remove):
+                    if idx < len(self.documents):
+                        del self.documents[idx]
+                    if idx < len(self.doc_meta):
+                        del self.doc_meta[idx]
+                if indices_to_remove:
+                    deleted_from_index = True
+
+            self._keyword_cache = []
+            self._search_cache.clear()
+            self._normalize_doc_meta_locked()
+            self._build_bm25()
+            self._rebuild_vector_store_locked()
+            return deleted_from_index
+
+    def _get_cache_entry_key(self, folder: str, file_path: str) -> str:
+        folder_abs = os.path.abspath(str(folder or ""))
+        file_abs = os.path.abspath(str(file_path or ""))
+        try:
+            rel_path = os.path.relpath(file_abs, folder_abs)
+            if rel_path.startswith('..'):
+                raise ValueError("outside-folder")
+            candidate = rel_path
+        except Exception:
+            candidate = file_abs
+        normalized = os.path.normcase(os.path.normpath(candidate))
+        return normalized.replace("\\", "/")
     
     def get_keywords(self, limit: int = 50) -> List[str]:
         if not self._keyword_cache and self.documents:
@@ -784,69 +925,71 @@ class RegulationQASystem:
             filename = os.path.basename(file_path)
             file_id = FileUtils.make_file_id(file_path)
             file_size = os.path.getsize(file_path)
-            details = self._remember_file_details(file_path, extracted)
-            
-            # file_infos에 추가
-            self.file_infos[file_path] = FileInfo(
-                path=file_path,
-                size=file_size,
-                status=FileStatus.SUCCESS,
-                chunks=len(chunks),
-                mod_time=os.path.getmtime(file_path)
-            )
-            
-            # 문서 및 메타데이터 추가
-            for i, chunk in enumerate(chunks):
-                doc_id = len(self.documents)
-                self.documents.append(chunk)
-                self.doc_meta.append(
-                    self._build_chunk_meta(
-                        doc_id=doc_id,
-                        filename=filename,
-                        file_path=file_path,
-                        file_id=file_id,
-                        chunk_id=i,
-                        total_chunks=len(chunks),
-                        details=details,
-                    )
+
+            with self._lock:
+                self._keyword_cache = []
+                details = self._remember_file_details(file_path, extracted)
+                
+                # file_infos에 추가
+                self.file_infos[file_path] = FileInfo(
+                    path=file_path,
+                    size=file_size,
+                    status=FileStatus.SUCCESS,
+                    chunks=len(chunks),
+                    mod_time=os.path.getmtime(file_path)
                 )
-            
-            # 벡터스토어 업데이트 (있으면 추가, 없으면 생성)
-            if self.embedding_model and FAISS and Document:
-                try:
-                    docs = []
-                    base_doc_id = len(self.documents) - len(chunks)
-                    for i, chunk in enumerate(chunks):
-                        docs.append(
-                            Document(
-                                page_content=chunk,
-                                metadata={
-                                    **self._build_chunk_meta(
-                                        doc_id=base_doc_id + i,
-                                        filename=filename,
-                                        file_path=file_path,
-                                        file_id=file_id,
-                                        chunk_id=i,
-                                        total_chunks=len(chunks),
-                                        details=details,
-                                    ),
-                                },
-                            )
+                
+                # 문서 및 메타데이터 추가
+                for i, chunk in enumerate(chunks):
+                    doc_id = len(self.documents)
+                    self.documents.append(chunk)
+                    self.doc_meta.append(
+                        self._build_chunk_meta(
+                            doc_id=doc_id,
+                            filename=filename,
+                            file_path=file_path,
+                            file_id=file_id,
+                            chunk_id=i,
+                            total_chunks=len(chunks),
+                            details=details,
                         )
-                    
-                    if self.vector_store:
-                        # 기존 벡터스토어에 추가
-                        self.vector_store.add_documents(docs)
-                    else:
-                        # 새로 생성
-                        self.vector_store = FAISS.from_documents(docs, self.embedding_model)
-                    
-                    logger.info(f"벡터스토어 업데이트 완료: {len(chunks)} 청크")
-                except Exception as e:
-                    logger.error(f"벡터스토어 업데이트 오류: {e}")
-            
-            # BM25 재구축
-            self._build_bm25()
+                    )
+                
+                # 벡터스토어 업데이트 (있으면 추가, 없으면 생성)
+                if self.embedding_model and FAISS and Document:
+                    try:
+                        docs = []
+                        base_doc_id = len(self.documents) - len(chunks)
+                        for i, chunk in enumerate(chunks):
+                            docs.append(
+                                Document(
+                                    page_content=chunk,
+                                    metadata={
+                                        **self._build_chunk_meta(
+                                            doc_id=base_doc_id + i,
+                                            filename=filename,
+                                            file_path=file_path,
+                                            file_id=file_id,
+                                            chunk_id=i,
+                                            total_chunks=len(chunks),
+                                            details=details,
+                                        ),
+                                    },
+                                )
+                            )
+                        
+                        if self.vector_store:
+                            self.vector_store.add_documents(docs)
+                        else:
+                            self.vector_store = FAISS.from_documents(docs, self.embedding_model)
+                        
+                        logger.info(f"벡터스토어 업데이트 완료: {len(chunks)} 청크")
+                    except Exception as e:
+                        logger.error(f"벡터스토어 업데이트 오류: {e}")
+                        self._rebuild_vector_store_locked()
+                
+                # BM25 재구축
+                self._build_bm25()
             
             logger.info(f"✅ 단일 파일 처리 완료: {filename} ({len(chunks)} 청크)")
             return TaskResult(True, f"파일 처리 완료: {filename} ({len(chunks)} 청크)", {
@@ -886,6 +1029,7 @@ class RegulationQASystem:
         cache_dir = self._get_cache_dir(folder)
         self.file_infos.clear()
         self._search_cache.clear()
+        self._keyword_cache = []
         
         # Init FileInfo
         for fp in files:
@@ -917,10 +1061,10 @@ class RegulationQASystem:
         else:
             cache_info = self._load_cache_info(cache_dir)
             for fp in files:
-                fname = os.path.basename(fp)
+                cache_key = self._get_cache_entry_key(folder, fp)
                 meta = FileUtils.get_metadata(fp)
-                if meta and fname in cache_info:
-                    cm = cache_info[fname]
+                if meta and cache_key in cache_info:
+                    cm = cache_info[cache_key]
                     if cm.get('size') == meta['size'] and cm.get('mtime') == meta['mtime']:
                         cached.append(fp)
                         self.file_infos[fp].status = FileStatus.CACHED
@@ -953,14 +1097,8 @@ class RegulationQASystem:
                         data = json.load(f)
                         self.documents = data.get('docs', [])
                         self.doc_meta = data.get('meta', [])
-                        # Back-compat: ensure doc_id exists for fast result merging.
                         if isinstance(self.doc_meta, list):
-                            for i, meta in enumerate(self.doc_meta):
-                                if isinstance(meta, dict) and 'doc_id' not in meta:
-                                    meta['doc_id'] = i
-                                if isinstance(meta, dict) and 'file_id' not in meta:
-                                    path = meta.get('path', '')
-                                    meta['file_id'] = FileUtils.make_file_id(path) if path else ""
+                            self._normalize_doc_meta_locked()
             except Exception as e:
                 logger.warning(f"캐시 로드 실패: {e}")
                 to_process, cached = files, []
@@ -976,12 +1114,7 @@ class RegulationQASystem:
                         self.documents = data.get('docs', [])
                         self.doc_meta = data.get('meta', [])
                         if isinstance(self.doc_meta, list):
-                            for i, meta in enumerate(self.doc_meta):
-                                if isinstance(meta, dict) and 'doc_id' not in meta:
-                                    meta['doc_id'] = i
-                                if isinstance(meta, dict) and 'file_id' not in meta:
-                                    path = meta.get('path', '')
-                                    meta['file_id'] = FileUtils.make_file_id(path) if path else ""
+                            self._normalize_doc_meta_locked()
                 except Exception as e:
                     logger.warning(f"docs.json 캐시 로드 실패: {e}")
         
@@ -1097,7 +1230,8 @@ class RegulationQASystem:
                 self.file_infos[fp].status = FileStatus.SUCCESS
                 self.file_infos[fp].chunks = chunk_count
                 if meta:
-                    new_cache_info[fname] = {'size': meta['size'], 'mtime': meta['mtime'], 'chunks': chunk_count}
+                    cache_key = self._get_cache_entry_key(folder, fp)
+                    new_cache_info[cache_key] = {'size': meta['size'], 'mtime': meta['mtime'], 'chunks': chunk_count}
             except Exception as e:
                 failed.append(f"{fname} ({e})")
                 self.file_infos[fp].status = FileStatus.FAILED
@@ -1147,6 +1281,10 @@ class RegulationQASystem:
         if self.documents:
             self.bm25 = BM25Light()
             self.bm25.fit(self.documents)
+        else:
+            if self.bm25:
+                self.bm25.clear()
+            self.bm25 = None
 
     def _load_cache_info(self, cache_dir: str) -> Dict:
         """캐시 정보 로드 및 설정 검증 (불일치 시 빈 딕셔너리 반환)"""
@@ -1160,6 +1298,10 @@ class RegulationQASystem:
                 cache_meta = cache_info.get('_cache_meta', {})
                 if cache_meta:
                     mismatches = []
+                    if cache_meta.get('cache_key_mode') != self._CACHE_KEY_MODE:
+                        mismatches.append(
+                            f"cache_key_mode: {cache_meta.get('cache_key_mode')} -> {self._CACHE_KEY_MODE}"
+                        )
                     
                     # 모델 ID 검증
                     expected_model_id = self.model_id or "bm25-only"
@@ -1218,6 +1360,7 @@ class RegulationQASystem:
             # 캐시 메타데이터 포함
             cache_meta = {
                 'model_id': self.model_id or "bm25-only",
+                'cache_key_mode': self._CACHE_KEY_MODE,
                 'embed_backend': getattr(AppConfig, 'EMBED_BACKEND', 'torch'),
                 'embed_normalize': getattr(AppConfig, 'EMBED_NORMALIZE', True),
                 'chunk_size': AppConfig.CHUNK_SIZE,
@@ -1324,7 +1467,7 @@ class RegulationQASystem:
         query = query.strip()
         if len(query) < 2: return TaskResult(False, "검색어가 너무 짧습니다 (최소 2자)")
         
-        cached_result = self._search_cache.get(query, k, hybrid, sort_by)
+        cached_result = self._search_cache.get(query, k, hybrid, sort_by, filter_file, filter_file_id)
         if cached_result is not None: return TaskResult(True, "검색 완료 (캐시)", cached_result)
         
         try:
@@ -1475,8 +1618,7 @@ class RegulationQASystem:
             else:
                 sorted_res = sorted(results.values(), key=lambda x: x['score'], reverse=True)[:k]
                 
-            if not filter_file and not filter_file_id:
-                self._search_cache.set(query, k, hybrid, sorted_res, sort_by)
+            self._search_cache.set(query, k, hybrid, sorted_res, sort_by, filter_file, filter_file_id)
             
             # 대용량 문서 컬렉션 시 메모리 모니터링
             if len(self.documents) > 5000:

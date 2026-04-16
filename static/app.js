@@ -537,7 +537,9 @@ const ReaderMode = {
     body: null,
     fontSize: 16,
     currentFile: null,
-    _previewCache: new Map(), // filename -> preview string
+    currentFileId: null,
+    currentFileName: null,
+    _previewCache: new Map(), // file_id or filename -> preview string
     _snippet: null,
     _showingPreview: false,
 
@@ -574,7 +576,9 @@ const ReaderMode = {
         const safe = html ? raw : escapeHtml(raw);
         this.body.innerHTML = safe.replace(/\n/g, '<br>');
 
-        this.currentFile = options.file || this.currentFile || null;
+        this.currentFile = options.file !== undefined ? options.file : (this.currentFile || null);
+        this.currentFileId = options.fileId !== undefined ? options.fileId : (this.currentFileId || null);
+        this.currentFileName = options.fileName !== undefined ? options.fileName : (this.currentFileName || this.currentFile || null);
         if (options.isPreview === true) this._showingPreview = true;
         if (options.isPreview === false) this._showingPreview = false;
         this.updatePreviewButton();
@@ -588,10 +592,13 @@ const ReaderMode = {
         const title = item?.source || '문서';
         const content = item?.content || '';
         const file = item?.source || null;
-        this._snippet = { title, content, file };
+        const fileId = item?.file_id || null;
+        this._snippet = { title, content, file, fileId };
         this._showingPreview = false;
         this.currentFile = file;
-        this.open(title, content, { file, isPreview: false });
+        this.currentFileId = fileId;
+        this.currentFileName = file;
+        this.open(title, content, { file, fileId, fileName: file, isPreview: false });
     },
 
     close() {
@@ -602,21 +609,28 @@ const ReaderMode = {
     updatePreviewButton() {
         const btn = document.getElementById('reader-preview-btn');
         if (!btn) return;
-        btn.hidden = !this.currentFile;
-        btn.disabled = !this.currentFile;
+        const hasPreviewTarget = !!(this.currentFileId || this.currentFileName || this.currentFile);
+        btn.hidden = !hasPreviewTarget;
+        btn.disabled = !hasPreviewTarget;
         btn.textContent = this._showingPreview ? '결과' : '원문';
         btn.title = this._showingPreview ? '검색 결과로 돌아가기' : '원문 미리보기';
         btn.setAttribute('aria-label', btn.title);
     },
 
     async togglePreview() {
-        if (!this.currentFile) return;
+        const previewKey = this.currentFileId || this.currentFileName || this.currentFile;
+        if (!previewKey) return;
 
         // 이미 원문을 보고 있다면 결과 스니펫으로 복귀
         if (this._showingPreview) {
             this._showingPreview = false;
             if (this._snippet) {
-                this.open(this._snippet.title, this._snippet.content, { file: this.currentFile, isPreview: false });
+                this.open(this._snippet.title, this._snippet.content, {
+                    file: this.currentFile,
+                    fileId: this.currentFileId,
+                    fileName: this.currentFileName,
+                    isPreview: false
+                });
             }
             return;
         }
@@ -625,23 +639,35 @@ const ReaderMode = {
         if (btn) btn.disabled = true;
 
         try {
-            const cached = this._previewCache.get(this.currentFile);
+            const cached = this._previewCache.get(previewKey);
             if (cached !== undefined) {
                 this._showingPreview = true;
-                this.open(`${this.currentFile} (원문)`, cached, { file: this.currentFile, isPreview: true });
+                this.open(`${this.currentFileName || this.currentFile || previewKey} (원문)`, cached, {
+                    file: this.currentFile,
+                    fileId: this.currentFileId,
+                    fileName: this.currentFileName,
+                    isPreview: true
+                });
                 return;
             }
 
-            const result = await API.getFilePreview(this.currentFile, 8000);
+            const result = this.currentFileId
+                ? await API.getFilePreviewById(this.currentFileId, 8000)
+                : await API.getFilePreview(this.currentFileName || this.currentFile, 8000);
             if (!result.success) {
                 Toast.error('미리보기 실패', result.message || '원문 미리보기를 불러오지 못했습니다');
                 return;
             }
 
             const preview = result.preview || '';
-            this._previewCache.set(this.currentFile, preview);
+            this._previewCache.set(previewKey, preview);
             this._showingPreview = true;
-            this.open(`${this.currentFile} (원문)`, preview, { file: this.currentFile, isPreview: true });
+            this.open(`${this.currentFileName || this.currentFile || previewKey} (원문)`, preview, {
+                file: this.currentFile,
+                fileId: this.currentFileId,
+                fileName: this.currentFileName,
+                isPreview: true
+            });
         } finally {
             if (btn) btn.disabled = false;
         }

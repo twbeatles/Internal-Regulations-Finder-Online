@@ -265,18 +265,7 @@ def delete_all_files():
             except Exception as e:
                 failed_files.append(f"{os.path.basename(fp)}: {str(e)}")
         
-        # 인덱스 및 캐시 초기화
-        qa_system.file_infos.clear()
-        if hasattr(qa_system, 'file_details'):
-            qa_system.file_details.clear()
-        qa_system.documents = []
-        qa_system.doc_meta = []
-        qa_system.vector_store = None
-        if hasattr(qa_system, '_search_cache'):
-            qa_system._search_cache.clear()
-        if hasattr(qa_system, 'bm25') and qa_system.bm25:
-            qa_system.bm25.clear()
-            qa_system.bm25 = None
+        qa_system.clear_index(preserve_folder=True)
         
         logger.info(f"일괄 삭제 완료: {deleted_count}개 파일 제거")
         logger.info(
@@ -343,36 +332,7 @@ def _delete_file_impl(filename: str | None = None, file_id: str | None = None):
                 else:
                     source_delete_error = "허용된 경로 외 원본 파일은 삭제할 수 없습니다"
             
-            # 2) file_infos에서 제거
-            deleted_from_index = False
-            if target_path in qa_system.file_infos:
-                del qa_system.file_infos[target_path]
-                deleted_from_index = True
-            if hasattr(qa_system, 'file_details') and target_path in qa_system.file_details:
-                qa_system.file_details.pop(target_path, None)
-            
-            # 3) documents 및 doc_meta에서 해당 파일 관련 항목 제거
-            if qa_system.documents and qa_system.doc_meta:
-                indices_to_remove = [
-                    i for i, meta in enumerate(qa_system.doc_meta)
-                    if meta.get('path') == target_path or meta.get('file_id') == resolved_id or meta.get('source') == resolved_name
-                ]
-                # 역순으로 삭제 (인덱스 밀림 방지)
-                for idx in reversed(indices_to_remove):
-                    if idx < len(qa_system.documents):
-                        del qa_system.documents[idx]
-                    if idx < len(qa_system.doc_meta):
-                        del qa_system.doc_meta[idx]
-                if indices_to_remove:
-                    deleted_from_index = True
-                
-                # BM25 인덱스 재구축 필요
-                if indices_to_remove and hasattr(qa_system, '_build_bm25'):
-                    qa_system._build_bm25()
-            
-            # 4) 캐시 무효화
-            if hasattr(qa_system, '_search_cache'):
-                qa_system._search_cache.invalidate_by_file(resolved_name)
+            deleted_from_index = qa_system.remove_file_from_index(target_path, resolved_name, resolved_id)
             
             logger.info(
                 "파일 삭제 완료: name=%s file_id=%s policy=%s deleted_source=%s deleted_from_index=%s",
@@ -763,7 +723,8 @@ def save_revision():
             file_key=resolved_id,
             content=content,
             note=comment,
-            display_name=resolved_name
+            display_name=resolved_name,
+            legacy_key=resolved_name,
         )
         return jsonify({'success': True, 'revision': res})
     except Exception as e:
