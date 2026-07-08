@@ -32,5 +32,12 @@
       "min_confidence": 0.35,
       "disclaimer": "본 답변은 사내 규정 참고용이며 법적 효력이 없습니다."
     }
+  },
+  "mcp": {
+    "enabled": false,
+    "host": "127.0.0.1",
+    "port": 8081,
+    "transport": "sse",
+    "admin_token": ""
   }
 }

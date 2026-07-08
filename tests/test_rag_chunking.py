@@ -22,3 +22,9 @@ class TestArticleChunking:
         assert len(chunks) >= 2
         assert any(c.get("article_no") == "제1조" for c in chunks)
         assert any(c.get("chunk_type") == "article" for c in chunks)
+
+    def test_annex_and_table_chunks(self):
+        text = "부칙\n이 규정은 2024년부터 시행한다.\n| 항목 | 값 |\n| --- | --- |\n| 연차 | 15일 |"
+        chunks = build_chunks_from_text(text, chunk_size=400, chunk_overlap=40)
+        assert any(c.get("chunk_type") == "supplementary" for c in chunks)
+        assert any(c.get("chunk_type") == "table" for c in chunks)

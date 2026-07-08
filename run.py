@@ -90,6 +90,18 @@ def initialize_server():
         else:
             logger.info("📁 문서 폴더가 설정되지 않았습니다. 관리자 페이지에서 설정해주세요.")
         
+        try:
+            from app.mcp.runner import start_mcp_server_thread
+            if start_mcp_server_thread():
+                mcp_cfg = get_settings_store().load().get("mcp", {})
+                logger.info(
+                    "🔌 MCP 서버 스레드 시작 (http://%s:%s)",
+                    mcp_cfg.get("host", "127.0.0.1"),
+                    mcp_cfg.get("port", 8081),
+                )
+        except Exception as mcp_exc:
+            logger.warning("MCP 서버 시작 생략: %s", mcp_exc)
+
         logger.info("✅ 서버 초기화 완료")
         
     except Exception as e:

@@ -42,6 +42,7 @@ class RAGResult:
     answer: str
     citations: list[Citation] = field(default_factory=list)
     confidence: float = 0.0
+    verification_score: float = 0.0
     refused: bool = False
     retrieval_only: bool = False
     conversation_id: str = ""
@@ -52,6 +53,7 @@ class RAGResult:
             "answer": self.answer,
             "citations": [c.to_dict() for c in self.citations],
             "confidence": self.confidence,
+            "verification_score": self.verification_score,
             "refused": self.refused,
             "retrieval_only": self.retrieval_only,
             "conversation_id": self.conversation_id,

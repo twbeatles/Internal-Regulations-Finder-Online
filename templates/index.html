@@ -70,6 +70,7 @@
                         <span class="status-dot" aria-hidden="true"></span>
                         <span id="status-text">연결 중...</span>
                     </span>
+                    <a href="/setup" class="admin-link" aria-label="MCP 연결 안내">🔌 MCP</a>
                     <a href="/admin" class="admin-link" aria-label="관리자 페이지로 이동">⚙️ 관리</a>
                 </div>
             </div>
@@ -80,7 +81,22 @@
             <!-- RAG 채팅 섹션 -->
             <section id="rag-section" class="chat-section" aria-labelledby="chat-title">
                 <h2 id="chat-title" class="sr-only">규정 AI 질문</h2>
-                <div class="chat-layout">
+                <div class="chat-layout chat-layout-with-sidebar">
+                    <aside id="chat-sidebar" class="chat-sidebar" aria-label="대화 목록">
+                        <div class="chat-sidebar-header">
+                            <span>대화</span>
+                            <button id="chat-new-btn" type="button" class="btn btn-secondary btn-sm">새 대화</button>
+                        </div>
+                        <ul id="chat-conversation-list" class="chat-conversation-list"></ul>
+                    </aside>
+                    <div class="chat-main">
+                    <div class="chat-scope-bar">
+                        <label for="chat-file-filter" class="sr-only">문서 범위</label>
+                        <select id="chat-file-filter" class="chat-file-filter" aria-label="문서 범위 필터">
+                            <option value="">전체 규정</option>
+                        </select>
+                        <span id="chat-verification-badge" class="chat-verification-badge" hidden></span>
+                    </div>
                     <div id="chat-welcome" class="chat-welcome">
                         <h3>사내 규정에 대해 질문해보세요</h3>
                         <p>AI가 관련 조문을 찾아 근거와 함께 답변합니다.</p>
@@ -99,6 +115,7 @@
                             <button id="chat-stop-btn" class="btn btn-secondary" type="button" hidden>중지</button>
                             <button id="chat-send-btn" class="btn btn-primary" type="button">전송</button>
                         </div>
+                    </div>
                     </div>
                 </div>
             </section>

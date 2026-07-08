@@ -29,6 +29,10 @@ latest_build.txt
 *.bak
 static/app.js.bak
 
+# Node (Kordoc bridge)
+node_modules/
+package-lock.json
+
 # Agent / IDE session artifacts
 terminals/
 .codegraph/

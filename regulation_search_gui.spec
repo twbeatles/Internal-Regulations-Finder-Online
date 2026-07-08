@@ -202,7 +202,7 @@ try:
     hiddenimports += _csm('rag')
 except Exception:
     pass
-for _m in ('httpx', 'langgraph', 'langgraph.graph'):
+for _m in ('httpx', 'langgraph', 'langgraph.graph', 'mcp', 'mcp.server.fastmcp'):
     if _m not in hiddenimports:
         hiddenimports.append(_m)
 

@@ -17,9 +17,19 @@
 ### 필수
 ```bash
 pip install -r requirements.txt
+npm install
 # 또는 직접 설치
 pip install pyinstaller flask-compress
 ```
+
+### Kordoc (문서 파싱, AI/GUI 빌드 권장)
+- Node.js 18+ 및 `npm ci`로 `kordoc@^2.3.0` 설치
+- 런타임: `.hwp`/`.hwpx`/`.docx`/`.pdf` 업로드 시 Kordoc 우선 → 실패 시 기존 파서 폴백
+- **Lite spec** (`regulation_search_ultra_lite_gui.spec`): Kordoc/Node 미포함 — HWP 휴리스틱만
+
+### MCP 서버 (선택)
+- `config/settings.json` → `"mcp": { "enabled": true, "port": 8081 }`
+- Cursor 연결: `http://127.0.0.1:8081/sse` (상세: `/setup`)
 
 ### 오프라인/폐쇄망 배포 준비
 빌드 전, 정적 자원 및 모델을 미리 다운로드하여 포함할 수 있습니다.
@@ -63,8 +73,9 @@ pyinstaller internal_regulations_lite.spec --clean
 ### v3.0 패키징 참고 (2026-07-08)
 - 엔트리포인트: `run.py` / `server_gui.py` (`server.py` 삭제됨)
 - `static/` 전체 포함 → `static/js/`, `static/css/` ESM·분할 CSS 반영
-- AI 포함 spec은 `rag`, `httpx`, `langgraph` hiddenimports 보강
+- AI 포함 spec은 `rag`, `httpx`, `langgraph`, `mcp` hiddenimports 보강
 - RAG LLM(Ollama)은 런타임 외부 서비스 — 빌드에 Ollama 바이너리 미포함
+- AI GUI 빌드 시 `scripts/kordoc_bridge.mjs` 포함 검토 (또는 사전 `_parsed` 워크플로우)
 
 ---
 

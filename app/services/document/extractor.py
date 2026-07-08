@@ -11,6 +11,7 @@ from app.config import AppConfig
 from app.constants import ErrorMessages, Patterns, Limits
 from app.services.parsers.hwp_adapter import HwpAdapter
 from app.services.parsers.hwpx_adapter import HwpxAdapter
+from app.services.parsers.kordoc_adapter import KordocAdapter
 from app.services.parsers.hwp_models import (
     ExtractedDocument,
     build_basic_metadata,
@@ -166,6 +167,10 @@ class DocumentExtractor:
             )
 
         try:
+            kordoc_doc = self._try_kordoc_extract(path)
+            if kordoc_doc is not None:
+                return kordoc_doc
+
             if ext == '.txt':
                 return self._extract_txt_document(path)
             if ext == '.docx':
@@ -214,6 +219,15 @@ class DocumentExtractor:
     def _extract_xlsx_document(self, path: str) -> ExtractedDocument:
         text, error = self._extract_xlsx(path)
         return self._build_result(path, "xlsx", "xlsx", text, error)
+
+    def _try_kordoc_extract(self, path: str) -> ExtractedDocument | None:
+        adapter = KordocAdapter()
+        if not adapter.supports(path) or not adapter.is_available():
+            return None
+        doc = adapter.extract(path)
+        if doc.text and not doc.error:
+            return doc
+        return None
 
     def _extract_hwp_document(self, path: str) -> ExtractedDocument:
         return HwpAdapter(self.hwp).extract(path)

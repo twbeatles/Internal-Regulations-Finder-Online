@@ -48,6 +48,7 @@ def test_extract_with_details_routes_hwp_and_hwpx(tmp_path, monkeypatch) -> None
         calls.append("hwpx")
         return ExtractedDocument(text="hwpx body")
 
+    monkeypatch.setattr(DocumentExtractor, "_try_kordoc_extract", lambda self, path: None)
     monkeypatch.setattr(DocumentExtractor, "_extract_hwp_document", fake_hwp)
     monkeypatch.setattr(DocumentExtractor, "_extract_hwpx_document", fake_hwpx)
 
@@ -96,12 +97,13 @@ def test_hwpx_parse_failure_is_captured(tmp_path) -> None:
     assert "HWPX ZIP 오류" in result.error
 
 
-def test_hwpx_extracts_text_tables_and_metadata(tmp_path) -> None:
+def test_hwpx_extracts_text_tables_and_metadata(tmp_path, monkeypatch) -> None:
     from app.services.document import DocumentExtractor
 
     target = tmp_path / "normal.hwpx"
     _write_hwpx(target)
 
+    monkeypatch.setattr(DocumentExtractor, "_try_kordoc_extract", lambda self, path: None)
     result = DocumentExtractor().extract_with_details(str(target))
 
     assert result.error is None

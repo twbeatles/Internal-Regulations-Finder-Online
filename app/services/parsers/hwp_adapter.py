@@ -100,6 +100,22 @@ class HwpAdapter:
                     error=None,
                 )
 
+            dump_text = self._extract_with_bundled_dump(path)
+            if dump_text:
+                warnings.append("ole 추출 실패 후 bundled hwp_dump 폴백 사용")
+                return ExtractedDocument(
+                    text=dump_text,
+                    metadata=metadata,
+                    tables=[],
+                    diagnostics=build_diagnostics(
+                        "hwp-bundled-dump",
+                        text=dump_text,
+                        fallback_used=True,
+                        warnings=warnings,
+                    ),
+                    error=None,
+                )
+
             error = "HWP 텍스트 추출 실패 (PrvText/BodyText에서 유효한 텍스트를 찾지 못했습니다)"
             warnings.append("텍스트로 판단 가능한 본문을 찾지 못했습니다")
             return ExtractedDocument(
@@ -145,6 +161,16 @@ class HwpAdapter:
             if is_usable_text(decoded):
                 return decoded
         return ""
+
+    def _extract_with_bundled_dump(self, path: str) -> str:
+        try:
+            from app.services.parsers.assets.hwp_dump import extract_hwp_text
+
+            text = normalize_text(extract_hwp_text(path))
+            return text if is_usable_text(text) else ""
+        except Exception as exc:
+            logger.debug("HWP bundled dump 실패: %s - %s", path, exc)
+            return ""
 
     def _dedupe_texts(self, values: list[str]) -> list[str]:
         result: list[str] = []

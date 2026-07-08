@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 
 from rag.config import RagConfig
+from rag.pipeline.verification import verify_answer_against_chunks
 from rag.schemas import Citation, RAGResult, RetrievedChunk
 
 
@@ -25,13 +26,17 @@ class Guardrails:
         disclaimer = str(self.config.guardrails.get("disclaimer", "")).strip()
         citations = self._build_citations(chunks)
         refused = False
-        confidence = self._estimate_confidence(answer, chunks)
+
+        verification = verify_answer_against_chunks(answer, [c.content for c in chunks])
+        verification_score = verification.score
+        confidence = self._estimate_confidence(answer, chunks, verification_score)
 
         min_conf = float(self.config.guardrails.get("min_confidence", 0.35))
         if not chunks:
             answer = "해당 규정에서 확인할 수 없습니다."
             refused = True
             confidence = 0.0
+            verification_score = 0.0
         elif confidence < min_conf and self.config.guardrails.get("require_citation", True):
             if "확인할 수 없습니다" not in answer:
                 answer = "해당 규정에서 확인할 수 없습니다."
@@ -44,6 +49,7 @@ class Guardrails:
             answer=answer.strip(),
             citations=citations,
             confidence=confidence,
+            verification_score=verification_score,
             refused=refused,
             retrieval_only=retrieval_only,
         )
@@ -65,16 +71,22 @@ class Guardrails:
             )
         return citations
 
-    def _estimate_confidence(self, answer: str, chunks: list[RetrievedChunk]) -> float:
+    def _estimate_confidence(
+        self,
+        answer: str,
+        chunks: list[RetrievedChunk],
+        verification_score: float,
+    ) -> float:
         if not chunks:
             return 0.0
         if "확인할 수 없습니다" in answer:
             return 0.1
         cited = {int(m) for m in self._CITATION_RE.findall(answer)}
+        citation_bonus = 0.0
         if self.config.guardrails.get("require_citation", True) and not cited:
-            return 0.2
-        base = min(0.95, 0.4 + len(chunks) * 0.1)
-        if cited:
+            citation_bonus = 0.15
+        else:
             valid = sum(1 for c in cited if 1 <= c <= len(chunks))
-            base += valid * 0.05
-        return min(base, 1.0)
+            citation_bonus = min(0.2, valid * 0.05)
+        blended = verification_score * 0.75 + citation_bonus + min(0.1, len(chunks) * 0.02)
+        return min(1.0, round(blended, 3))

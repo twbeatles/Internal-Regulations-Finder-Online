@@ -25,6 +25,7 @@ EXCLUDED_PARTS = {
     "uploads",
     "revisions",
     "models",
+    "node_modules",
 }
 EXCLUDED_GLOBS = ("build_log*.txt", "latest_build.txt")
 

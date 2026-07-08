@@ -19,8 +19,15 @@
 - `server.py` 제거 → `run.py` / `server_gui.py` 단일 엔트리
 - 프론트 ESM (`static/js/bootstrap/main.js`, `legacy/app.js`)
 
+### 📄 KCSC-MCP 이식 (2026-07-08)
+- **검색 정규화** — `app/services/search/normalization.py` (조문·금액·동의어 확장)
+- **RAG grounding** — `rag/pipeline/verification.py` + `verification_score`
+- **Kordoc 파서** — `npm install` + `scripts/kordoc_bridge.mjs` (HWP/HWPX/DOCX/PDF 우선)
+- **MCP 도구** — `mcp.enabled=true` 시 `http://127.0.0.1:8081` (`/setup` 안내)
+- **Golden eval** — `scripts/evaluate_search_quality.py`
+
 ### ✅ 검증
-- `python -m pytest -q` → **78 passed**
+- `python -m pytest -q` → **92 passed**
 
 ## ✨ v2.8.3 업데이트 (2026-04-16)
 
