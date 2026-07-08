@@ -2,26 +2,24 @@
 import os
 import zipfile
 import shutil
-import threading
-from collections import OrderedDict
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Optional, Tuple
 from flask import Blueprint, jsonify, request, send_file
 from app.services.search import qa_system
-from app.services.document import DocumentExtractor
+from app.services.files import (
+    acquire_file_lock,
+    file_lock,
+    file_path_resolver,
+    is_source_delete_allowed,
+    preview_service,
+)
 from app.utils import logger, FileUtils, get_app_directory, api_error, api_success
 from app.config import AppConfig
 from app.constants import ErrorMessages, HttpStatus
-from app.exceptions import DocumentNotFoundError, DocumentError
+from app.exceptions import DocumentNotFoundError
 from app.auth import admin_required
 
 files_bp = Blueprint('files', __name__)
-file_lock = threading.Lock()
-LOCK_TIMEOUT = 30  # 파일 잠금 타임아웃 (초)
-_preview_extractor = DocumentExtractor()
-_preview_cache_lock = threading.Lock()
-_preview_cache: OrderedDict = OrderedDict()
-_PREVIEW_CACHE_MAX_SIZE = 128
 
 
 def _normalize_optional_str(value: object) -> str | None:
@@ -73,148 +71,6 @@ def _parse_limit(name: str, default: int, minimum: int = 1) -> Tuple[Optional[in
     return value, None
 
 
-def _get_delete_roots() -> List[Path]:
-    roots: List[Path] = []
-    uploads_root = (Path(get_app_directory()) / AppConfig.UPLOAD_FOLDER).resolve()
-    roots.append(uploads_root)
-
-    current_folder = getattr(qa_system, 'current_folder', '') or ''
-    if current_folder:
-        try:
-            roots.append(Path(current_folder).resolve())
-        except Exception:
-            pass
-
-    # 중복 제거
-    unique = []
-    seen = set()
-    for root in roots:
-        key = str(root)
-        if key not in seen:
-            seen.add(key)
-            unique.append(root)
-    return unique
-
-
-def _is_source_delete_allowed(target_path: Path) -> bool:
-    roots = _get_delete_roots()
-    for root in roots:
-        if root == target_path or root in target_path.parents:
-            return True
-    return False
-
-def _build_file_ref(path: str) -> dict:
-    name = os.path.basename(path)
-    file_id = FileUtils.make_file_id(path)
-    return {
-        "file_id": file_id,
-        "name": name,
-        "label": name,
-        "path": path
-    }
-
-def acquire_file_lock(timeout=LOCK_TIMEOUT):
-    """파일 잠금 획득 (타임아웃 지원)
-    
-    Returns:
-        bool: 잠금 획득 성공 여부
-    """
-    return file_lock.acquire(timeout=timeout)
-
-def _preview_cache_get(cache_key: str):
-    with _preview_cache_lock:
-        payload = _preview_cache.get(cache_key)
-        if payload is not None:
-            _preview_cache.move_to_end(cache_key)
-        return payload
-
-def _preview_cache_set(cache_key: str, payload: dict):
-    with _preview_cache_lock:
-        if cache_key in _preview_cache:
-            del _preview_cache[cache_key]
-        while len(_preview_cache) >= _PREVIEW_CACHE_MAX_SIZE:
-            _preview_cache.popitem(last=False)
-        _preview_cache[cache_key] = payload
-
-def _build_preview_payload(
-    filename: str,
-    target_path: str,
-    content: str,
-    length: int,
-    *,
-    metadata: dict | None = None,
-    tables: list | None = None,
-    diagnostics: dict | None = None,
-) -> dict:
-    text = content or ''
-    preview = text[:length]
-    truncated = len(text) > length
-    info = qa_system.file_infos.get(target_path)
-    file_id = FileUtils.make_file_id(target_path)
-    return {
-        'success': True,
-        'file_id': file_id,
-        'filename': filename,
-        'preview': preview,
-        'content': preview,  # 프론트엔드 하위호환
-        'total_length': len(text),
-        'truncated': truncated,
-        'is_truncated': truncated,  # 프론트엔드 하위호환
-        'status': getattr(getattr(info, 'status', None), 'value', '완료'),
-        'chunks': getattr(info, 'chunks', 0),
-        'metadata': metadata or {},
-        'tables': tables or [],
-        'table_count': len(tables or []),
-        'diagnostics': diagnostics or {},
-    }
-
-def _find_file_path(filename: str) -> str:
-    """파일명으로 전체 경로 찾기
-    
-    Args:
-        filename: 찾을 파일명 (basename)
-        
-    Returns:
-        전체 경로
-        
-    Raises:
-        DocumentNotFoundError: 파일을 찾을 수 없는 경우
-    """
-    # Route uses <path:filename>; normalize to basename to avoid path injection.
-    filename = os.path.basename((filename or "").replace("\\", "/"))
-    if not filename:
-        raise DocumentNotFoundError(filename)
-
-    matches = []
-    for fp in qa_system.file_infos.keys():
-        if os.path.basename(fp) == filename:
-            matches.append(fp)
-    if not matches:
-        raise DocumentNotFoundError(filename)
-    if len(matches) > 1:
-        raise DocumentError(f"동일한 파일명이 여러 개 존재합니다: {filename}")
-    return matches[0]
-
-def _find_file_path_by_id(file_id: str) -> str:
-    file_id = str(file_id or "").strip()
-    if not file_id:
-        raise DocumentNotFoundError(file_id)
-    for fp in qa_system.file_infos.keys():
-        if FileUtils.make_file_id(fp) == file_id:
-            return fp
-    raise DocumentNotFoundError(file_id)
-
-def _resolve_target(file_id: str | None = None, filename: str | None = None) -> tuple[str, str, str]:
-    if file_id is not None:
-        target_path = _find_file_path_by_id(file_id)
-    elif filename is not None:
-        target_path = _find_file_path(filename)
-    else:
-        raise DocumentNotFoundError("")
-    resolved_name = os.path.basename(target_path)
-    resolved_id = FileUtils.make_file_id(target_path)
-    return target_path, resolved_name, resolved_id
-
 @files_bp.route('/files', methods=['GET'])
 def list_files():
     """로드된 파일 목록 반환"""
@@ -224,7 +80,7 @@ def list_files():
 def list_file_names():
     """파일 이름 목록만 반환 (파일 필터용)"""
     try:
-        refs = [_build_file_ref(fp) for fp in qa_system.file_infos.keys()]
+        refs = [file_path_resolver.build_file_ref(fp) for fp in qa_system.file_infos.keys()]
         names = [ref['name'] for ref in refs]
         return jsonify(api_success(files=refs, names=names))
     except Exception as e:
@@ -255,7 +111,7 @@ def delete_all_files():
             try:
                 p = Path(fp).resolve()
                 if delete_source:
-                    if _is_source_delete_allowed(p):
+                    if is_source_delete_allowed(p, qa_system):
                         if p.exists():
                             p.unlink()
                             deleted_source_count += 1
@@ -313,7 +169,7 @@ def delete_file_by_id(file_id):
 def _delete_file_impl(filename: str | None = None, file_id: str | None = None):
     with file_lock:
         try:
-            target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
+            target_path, resolved_name, resolved_id = file_path_resolver.resolve(file_id=file_id, filename=filename)
             delete_source = _get_request_bool('delete_source', False)
             deletion_policy = 'delete_source' if delete_source else 'index_only'
             deleted_source = False
@@ -322,7 +178,7 @@ def _delete_file_impl(filename: str | None = None, file_id: str | None = None):
             # 1) 원본 파일 삭제 (옵션)
             if delete_source:
                 path_obj = Path(target_path).resolve()
-                if _is_source_delete_allowed(path_obj):
+                if is_source_delete_allowed(path_obj, qa_system):
                     try:
                         if path_obj.exists():
                             path_obj.unlink()
@@ -624,125 +480,6 @@ def upload_folder():
         logger.error(f"ZIP 업로드 오류: {e}")
         return jsonify({'success': False, 'message': f'ZIP 업로드 실패: {e}'}), HttpStatus.INTERNAL_ERROR
 
-# ============================================================================
-# 태그 관리 (v2.0)
-# ============================================================================
-@files_bp.route('/tags', methods=['GET'])
-def get_tags():
-    file_id = _normalize_optional_str(request.args.get('file_id'))
-    file_path = _normalize_optional_str(request.args.get('file'))
-    if file_id or file_path:
-        try:
-            target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=file_path)
-            tags = qa_system.tag_manager.get_tags(
-                resolved_id,
-                fallback_keys=[resolved_name]
-            )
-        except Exception:
-            tags = []
-        return jsonify({'success': True, 'tags': tags})
-    else:
-        # 전체 태그 통계
-        stats = qa_system.tag_manager.get_tag_stats()
-        return jsonify({'success': True, 'tags': qa_system.tag_manager.get_all_tags(), 'stats': stats})
-
-@files_bp.route('/tags', methods=['POST'])
-@admin_required
-def add_tag():
-    data = _get_json_payload()
-    file_id = _normalize_optional_str(data.get('file_id'))
-    file_path = _normalize_optional_str(data.get('file'))
-    tag = _normalize_optional_str(data.get('tag'))
-    
-    # 입력 검증
-    if not ((file_id and isinstance(file_id, str)) or (file_path and isinstance(file_path, str))):
-        return jsonify({'success': False, 'message': 'file_id 또는 파일 경로가 필요합니다'}), HttpStatus.BAD_REQUEST
-    if tag is None:
-        return jsonify({'success': False, 'message': '태그가 필요합니다'}), HttpStatus.BAD_REQUEST
-
-    try:
-        target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=file_path)
-    except Exception:
-        return jsonify({'success': False, 'message': '파일을 찾을 수 없습니다'}), HttpStatus.NOT_FOUND
-
-    if qa_system.tag_manager.add_tag(resolved_id, tag):
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': '태그 추가 실패'})
-
-@files_bp.route('/tags', methods=['DELETE'])
-@admin_required
-def remove_tag():
-    data = _get_json_payload()
-    file_id = _normalize_optional_str(data.get('file_id'))
-    file_path = _normalize_optional_str(data.get('file'))
-    tag = _normalize_optional_str(data.get('tag'))
-    
-    # 입력 검증
-    if not ((file_id and isinstance(file_id, str)) or (file_path and isinstance(file_path, str))):
-        return jsonify({'success': False, 'message': 'file_id 또는 파일 경로가 필요합니다'}), HttpStatus.BAD_REQUEST
-    if tag is None:
-        return jsonify({'success': False, 'message': '태그가 필요합니다'}), HttpStatus.BAD_REQUEST
-
-    try:
-        target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=file_path)
-    except Exception:
-        return jsonify({'success': False, 'message': '파일을 찾을 수 없습니다'}), HttpStatus.NOT_FOUND
-
-    if qa_system.tag_manager.remove_tag(resolved_id, tag):
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': '태그 삭제 실패'})
-
-# ============================================================================
-# 개정 관리 (v2.0)
-# ============================================================================
-@files_bp.route('/revisions', methods=['GET'])
-def get_revisions():
-    file_id = _normalize_optional_str(request.args.get('file_id'))
-    filename = _normalize_optional_str(request.args.get('filename'))
-    try:
-        target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
-    except Exception:
-        return jsonify({'success': True, 'history': [], 'revisions': []})
-
-    history = qa_system.revision_tracker.get_history(resolved_id, legacy_key=resolved_name)
-    return jsonify({'success': True, 'history': history, 'revisions': history, 'file_id': resolved_id})
-
-@files_bp.route('/revisions', methods=['POST'])
-@admin_required
-def save_revision():
-    data = _get_json_payload()
-    file_id = _normalize_optional_str(data.get('file_id'))
-    filename = _normalize_optional_str(data.get('filename'))
-    content = data.get('content')
-    comment = _normalize_optional_str(data.get('comment', '')) or ''
-    if not isinstance(content, str) or not content:
-        return jsonify({'success': False, 'message': '저장할 내용(content)이 필요합니다'}), HttpStatus.BAD_REQUEST
-    try:
-        target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
-        res = qa_system.revision_tracker.save_revision(
-            file_key=resolved_id,
-            content=content,
-            note=comment,
-            display_name=resolved_name,
-            legacy_key=resolved_name,
-        )
-        return jsonify({'success': True, 'revision': res})
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
-
-@files_bp.route('/compare', methods=['POST'])
-def compare_docs():
-    data = _get_json_payload()
-    # v1 (content) vs v2 (content) or version IDs
-    # Simply using DocumentComparator directly here
-    from app.services.document import DocumentComparator
-    text1 = data.get('text1', '')
-    text2 = data.get('text2', '')
-    
-    comp = DocumentComparator()
-    res = comp.compare(text1, text2)
-    return jsonify({'success': True, 'comparison': res})
-
 @files_bp.route('/files/<path:filename>/versions', methods=['GET'])
 def get_file_versions(filename):
     """파일의 버전 히스토리 조회"""
@@ -755,7 +492,7 @@ def get_file_versions_by_id(file_id):
 
 def _get_file_versions_impl(filename: str | None = None, file_id: str | None = None):
     try:
-        target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
+        target_path, resolved_name, resolved_id = file_path_resolver.resolve(file_id=file_id, filename=filename)
         history = qa_system.revision_tracker.get_history(resolved_id, legacy_key=resolved_name)
         return jsonify({
             'success': True,
@@ -779,7 +516,7 @@ def get_file_version_content_by_id(file_id, version):
 
 def _get_file_version_content_impl(version: str, filename: str | None = None, file_id: str | None = None):
     try:
-        target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
+        target_path, resolved_name, resolved_id = file_path_resolver.resolve(file_id=file_id, filename=filename)
         content = qa_system.revision_tracker.get_revision(resolved_id, version, legacy_key=resolved_name)
         if content is None:
             return jsonify({'success': False, 'message': '버전을 찾을 수 없습니다'}), 404
@@ -811,7 +548,7 @@ def _compare_file_versions_impl(filename: str | None = None, file_id: str | None
         return jsonify({'success': False, 'message': '버전 파라미터가 필요합니다 (v1, v2)'}), 400
     
     try:
-        target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
+        target_path, resolved_name, resolved_id = file_path_resolver.resolve(file_id=file_id, filename=filename)
     except DocumentNotFoundError:
         return jsonify({'success': False, 'message': '파일을 찾을 수 없습니다'}), HttpStatus.NOT_FOUND
 
@@ -843,7 +580,7 @@ def get_file_preview_by_id(file_id):
 def _get_file_preview_impl(filename: str | None = None, file_id: str | None = None):
     """공용 파일 미리보기 구현"""
     try:
-        target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
+        target_path, resolved_name, resolved_id = file_path_resolver.resolve(file_id=file_id, filename=filename)
         length = request.args.get('length', 2000, type=int) or 2000
         length = max(200, min(length, 10000))
 
@@ -853,7 +590,7 @@ def _get_file_preview_impl(filename: str | None = None, file_id: str | None = No
             mtime = 0
 
         cache_key = f"{target_path}|{mtime}|{length}"
-        cached = _preview_cache_get(cache_key)
+        cached = preview_service.get(cache_key)
         if cached is not None:
             return jsonify(cached)
 
@@ -887,7 +624,7 @@ def _get_file_preview_impl(filename: str | None = None, file_id: str | None = No
                 'quality_score': 1.0 if content.strip() else 0.0,
                 'warnings': [],
             }
-            payload = _build_preview_payload(
+            payload = preview_service.build_payload(
                 resolved_name,
                 target_path,
                 content,
@@ -897,10 +634,10 @@ def _get_file_preview_impl(filename: str | None = None, file_id: str | None = No
                 diagnostics=diagnostics,
             )
         else:
-            extracted = _preview_extractor.extract_with_details(target_path)
+            extracted = preview_service.extractor.extract_with_details(target_path)
             if extracted.error:
                 return jsonify({'success': False, 'message': extracted.error}), 400
-            payload = _build_preview_payload(
+            payload = preview_service.build_payload(
                 resolved_name,
                 target_path,
                 extracted.text,
@@ -910,7 +647,7 @@ def _get_file_preview_impl(filename: str | None = None, file_id: str | None = No
                 diagnostics=extracted.diagnostics,
             )
 
-        _preview_cache_set(cache_key, payload)
+        preview_service.set(cache_key, payload)
         return jsonify(payload)
     except DocumentNotFoundError:
         return api_error("파일을 찾을 수 없습니다", status_code=HttpStatus.NOT_FOUND)
@@ -930,7 +667,7 @@ def download_file_by_id(file_id):
 
 def _download_file_impl(filename: str | None = None, file_id: str | None = None):
     try:
-        target_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
+        target_path, resolved_name, resolved_id = file_path_resolver.resolve(file_id=file_id, filename=filename)
         if not os.path.exists(target_path) or not os.path.isfile(target_path):
             return api_error("파일을 찾을 수 없습니다", status_code=HttpStatus.NOT_FOUND)
         return send_file(
@@ -972,66 +709,3 @@ def get_file_structure():
     except Exception as e:
         logger.error(f"파일 구조 조회 오류: {e}")
         return jsonify({'success': False, 'message': str(e), 'files': []})
-
-@files_bp.route('/tags/set', methods=['POST'])
-@admin_required
-def set_file_tags():
-    """파일 태그 일괄 설정 (덮어쓰기)"""
-    data = _get_json_payload()
-    file_id = _normalize_optional_str(data.get('file_id'))
-    filename = _normalize_optional_str(data.get('filename'))
-    tags = data.get('tags', [])
-    
-    if not ((file_id and isinstance(file_id, str)) or (filename and isinstance(filename, str))):
-        return jsonify({'success': False, 'message': 'file_id 또는 파일명이 필요합니다'}), HttpStatus.BAD_REQUEST
-    
-    if not isinstance(tags, list):
-        return jsonify({'success': False, 'message': '태그는 배열이어야 합니다'}), HttpStatus.BAD_REQUEST
-    
-    try:
-        file_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
-        qa_system.tag_manager.set_tags(resolved_id, tags)
-        return jsonify({'success': True, 'message': f'{len(tags)}개 태그 설정 완료'})
-    except DocumentNotFoundError:
-        return jsonify({'success': False, 'message': '파일을 찾을 수 없습니다'}), HttpStatus.NOT_FOUND
-    except Exception as e:
-        logger.error(f"태그 설정 오류: {e}")
-        return jsonify({'success': False, 'message': str(e)})
-
-@files_bp.route('/tags/auto', methods=['POST'])
-@admin_required
-def auto_tag_file():
-    """파일 자동 태그 추천"""
-    data = _get_json_payload()
-    file_id = _normalize_optional_str(data.get('file_id'))
-    filename = _normalize_optional_str(data.get('filename'))
-    
-    if not ((file_id and isinstance(file_id, str)) or (filename and isinstance(filename, str))):
-        return jsonify({'success': False, 'message': 'file_id 또는 파일명이 필요합니다'}), HttpStatus.BAD_REQUEST
-    
-    try:
-        file_path, resolved_name, resolved_id = _resolve_target(file_id=file_id, filename=filename)
-        
-        # 문서 내용 추출
-        from app.services.document import DocumentExtractor
-        extractor = DocumentExtractor()
-        content, error = extractor.extract(file_path)
-        
-        if error:
-            return jsonify({'success': False, 'message': f'문서 추출 실패: {error}'})
-        
-        # 자동 카테고리 추천
-        suggested_tags = qa_system.tag_manager.auto_categorize(content, resolved_name)
-        
-        return jsonify({
-            'success': True,
-            'file_id': resolved_id,
-            'filename': resolved_name,
-            'suggested_tags': suggested_tags,
-            'tags': suggested_tags
-        })
-    except DocumentNotFoundError:
-        return jsonify({'success': False, 'message': '파일을 찾을 수 없습니다'}), HttpStatus.NOT_FOUND
-    except Exception as e:
-        logger.error(f"자동 태그 오류: {e}")
-        return jsonify({'success': False, 'message': str(e)})

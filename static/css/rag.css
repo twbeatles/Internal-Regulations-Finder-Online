@@ -1,0 +1,168 @@
+/* ==========================================================================
+   RAG 채팅 UI (v3)
+   ========================================================================== */
+.chat-section {
+    max-width: 920px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+.chat-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-height: calc(100vh - var(--header-height) - 120px);
+}
+
+.chat-welcome {
+    text-align: center;
+    padding: 32px 16px;
+    color: var(--text-secondary);
+}
+
+.chat-welcome h3 {
+    color: var(--text-primary);
+    margin-bottom: 8px;
+}
+
+.chat-suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 16px;
+}
+
+.chat-suggestion {
+    border: 1px solid var(--glass-border);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border-radius: var(--border-radius-full);
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.chat-suggestion:hover {
+    background: var(--bg-hover);
+}
+
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 8px 4px 16px;
+    min-height: 280px;
+}
+
+.chat-message {
+    display: flex;
+}
+
+.chat-message-user {
+    justify-content: flex-end;
+}
+
+.chat-message-assistant {
+    justify-content: flex-start;
+}
+
+.chat-bubble {
+    max-width: 85%;
+    padding: 12px 16px;
+    border-radius: var(--border-radius);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.chat-message-user .chat-bubble {
+    background: var(--accent-gradient-subtle);
+    border: 1px solid var(--glass-border);
+}
+
+.chat-message-assistant .chat-bubble {
+    background: var(--bg-card);
+    border: 1px solid var(--glass-border);
+}
+
+.chat-message[data-streaming="true"] .chat-bubble::after {
+    content: "▋";
+    animation: chat-blink 1s step-end infinite;
+    margin-left: 2px;
+}
+
+@keyframes chat-blink {
+    50% { opacity: 0; }
+}
+
+.chat-citations {
+    border-top: 1px solid var(--glass-border);
+    padding-top: 12px;
+}
+
+.citations-title {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.citation-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    margin-bottom: 6px;
+    padding: 8px 10px;
+    border-radius: var(--border-radius-sm);
+    border: 1px solid var(--glass-border);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.citation-item:hover {
+    background: var(--bg-hover);
+}
+
+.cite-link {
+    display: inline;
+    border: none;
+    background: transparent;
+    color: var(--accent-tertiary);
+    cursor: pointer;
+    padding: 0 2px;
+    font: inherit;
+}
+
+.chat-composer {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    padding-top: 8px;
+    border-top: 1px solid var(--glass-border);
+}
+
+.chat-composer textarea {
+    flex: 1;
+    resize: vertical;
+    min-height: 56px;
+    max-height: 180px;
+    padding: 12px 14px;
+    border-radius: var(--border-radius-sm);
+    border: 1px solid var(--glass-border);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font: inherit;
+}
+
+.chat-composer-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.mode-toggle-btn {
+    font-size: 0.85rem;
+}

@@ -103,8 +103,12 @@ try:
     hiddenimports += collect_submodules("app.services.parsers")
     hiddenimports += collect_submodules("docx")
     hiddenimports += collect_submodules("pypdf")
+    hiddenimports += collect_submodules("rag")
 except Exception:
     pass
+for _rag_mod in ("httpx", "langgraph", "langgraph.graph"):
+    if _rag_mod not in hiddenimports:
+        hiddenimports.append(_rag_mod)
 
 excludes = [
     "tkinter",

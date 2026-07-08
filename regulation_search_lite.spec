@@ -65,6 +65,11 @@ hiddenimports = [
     "app.services.parsers.hwp_adapter",
     "app.services.parsers.hwpx_adapter",
     "app.services.parsers.hwp_models",
+    "app.services.files",
+    "app.routes.api_tags",
+    "app.routes.api_revisions",
+    "app.routes.files_request",
+    "app.services.search.index",
 ]
 
 excludes = [

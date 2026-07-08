@@ -151,7 +151,19 @@ hiddenimports = [
     'app.services.parsers.hwp_adapter',
     'app.services.parsers.hwpx_adapter',
     'app.services.parsers.hwp_models',
+    'app.services.files',
+    'app.routes.api_tags',
+    'app.routes.api_revisions',
+    'app.routes.files_request',
 ]
+
+try:
+    hiddenimports += collect_submodules('rag')
+except Exception:
+    pass
+for _rag_mod in ('httpx', 'langgraph', 'langgraph.graph'):
+    if _rag_mod not in hiddenimports:
+        hiddenimports.append(_rag_mod)
 
 # PyQt6 서브모듈 추가
 hiddenimports += pyqt_hiddenimports

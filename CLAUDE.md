@@ -4,10 +4,10 @@
 
 ## 📋 프로젝트 개요
 
-**프로젝트명**: 사내 규정 검색기 v2.8.3  
-**목적**: AI 기반 하이브리드 검색 시스템 (Vector + BM25)으로 사내 규정 문서를 검색  
-**기술 스택**: Flask + PyTorch + LangChain + FAISS + SQLite  
-**실행 방식**: 웹 서버 (콘솔 또는 GUI/시스템 트레이)
+**프로젝트명**: 사내 규정 검색기 v3.0  
+**목적**: RAG 질의응답 + 레거시 하이브리드 검색(Vector + BM25)으로 사내 규정 문서 검색  
+**기술 스택**: Flask + PyTorch + LangChain + FAISS + SQLite + RAG(Ollama/클라우드 LLM)  
+**실행 방식**: 웹 서버 (`run.py` 콘솔 / `server_gui.py` PyQt6 GUI) — `server.py` 제거됨
 
 ---
 
@@ -16,7 +16,8 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                         Client (Browser)                     │
-│  static/app.js - SPA 스타일 프론트엔드 (v1.7)                │
+│  static/js/bootstrap/main.js (ESM) + legacy/app.js           │
+│  RAG: static/js/rag/* — 레거시: search-section UI            │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -35,10 +36,13 @@
           ▼                   ▼                   ▼
 ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
 │    Routes       │ │    Services     │ │    Database     │
-│ api_search.py   │ │ search.py       │ │ db.py (SQLite)  │
-│ api_files.py    │ │ document.py     │ │                 │
-│ api_system.py   │ │ file_manager.py │ │                 │
-│ main_routes.py  │ │ metadata.py     │ │                 │
+│ api_search.py   │ │ search/ (pkg)   │ │ db.py (SQLite)  │
+│ api_files.py    │ │ document/ (pkg) │ │                 │
+│ api_tags.py     │ │ files/ (pkg)    │ │                 │
+│ api_revisions.py│ │ file_manager.py │ │                 │
+│ rag/api_chat.py │ │ rag/ pipeline   │ │                 │
+│ api_system.py   │ │ metadata.py     │ │                 │
+│ main_routes.py  │ │                 │ │                 │
 └─────────────────┘ └─────────────────┘ └─────────────────┘
 ```
 
@@ -46,7 +50,7 @@
 
 ## 🔑 핵심 컴포넌트 상세
 
-### 1. 검색 엔진 (`app/services/search.py`)
+### 1. 검색 엔진 (`app/services/search/` 패키지)
 
 | 클래스 | 역할 | 주요 메서드 |
 |--------|------|-------------|
@@ -563,5 +567,32 @@ class AppConfig:
 - 리비전 버전 계산은 현재 `file_id`와 legacy filename 키를 함께 본다.
 - `ReaderMode` 원문 미리보기는 가능하면 `file_id` 기반 API(`/api/files/by-id/.../preview`)를 우선 사용한다.
 - `internal_regulations_lite.spec`를 포함한 전체 `.spec`는 재점검했으며, 현재 코드 변경 기준 추가 packaging 수정은 불필요했다.
-- 현재 검증 기준:
-  - `python -m pytest -q` -> `70 passed`
+- 현재 검증 기준 (2026-04-16): `python -m pytest -q` -> `70 passed`
+
+### Maintenance Addendum (2026-07-08) — v3.0 RAG + SOLID 리팩토링
+
+#### 백엔드 구조
+- `app/services/search.py` 삭제 → `app/services/search/` 패키지 (`qa_system`, `hybrid_search`, `bm25`, `cache`, `index/` 등)
+- `app/services/document.py` 삭제 → `app/services/document/` 패키지
+- `app/services/files/` 신규 — 경로 해석·미리보기·삭제 정책
+- `app/routes/api_tags.py`, `api_revisions.py` 분리 / `files_request.py` 공통 헬퍼
+- `server.py`, `server_backup.py` 삭제 — 엔트리포인트는 `run.py` / `server_gui.py`
+- `RegulationQAFacade` (`qa_facade.py`) — 공개 API 파사드
+
+#### RAG v3
+- `rag/` 패키지: LLM(Ollama/OpenAI/Anthropic/Gemini), pipeline, `/api/rag/chat` SSE
+- Retrieval은 `qa_system.search()` 재사용 (레거시 엔진이 RAG 기반)
+- `settings.json` → `search_mode`: `rag` | `legacy`, `rag` 섹션 LLM 설정
+
+#### 프론트엔드
+- ESM: `static/js/bootstrap/main.js`, `static/js/legacy/app.js`, `static/js/rag/*`
+- CSS: `static/css/{tokens,rag,search,admin}.css` + `style.css` @import
+- `static/app.js` — deprecated shim (모듈 부트스트랩 안내)
+
+#### 빌드 (spec)
+- `server.spec` Analysis 엔트리: `run.py`
+- AI 포함 spec: `collect_submodules('rag')`, `httpx`, `langgraph` hiddenimports 추가
+- Lite spec: `app.services.files`, `api_tags`, `api_revisions` 경로 추가
+
+#### 검증
+- `python -m pytest -q` -> **78 passed** (RAG 테스트 포함)

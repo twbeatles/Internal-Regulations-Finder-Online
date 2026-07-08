@@ -4,8 +4,9 @@
 
 | Spec 파일 | 모드 | AI 기능 | 예상 크기 | 특징 |
 |-----------|------|---------|-----------|------|
-| `regulation_search_gui.spec` | GUI | ✅ | 500-800MB | AI 벡터 검색 + BM25 |
+| `regulation_search_gui.spec` | GUI | ✅ | 500-800MB | AI 벡터 검색 + BM25 + RAG |
 | `regulation_search_ultra_lite_gui.spec` | GUI | ❌ | 60-100MB | BM25만 (torch 제외) |
+| `server.spec` | 콘솔 | ✅ | ~500MB+ | `run.py` 엔트리 (구 `server.py` 대체) |
 
 > 💡 **v2.8.2 반영**: `.hwpx` ZIP+XML 추출 경로와 `.hwp`/`.hwpx` 진단 정보가 앱 기반 빌드 흐름에도 연결됩니다.
 
@@ -51,10 +52,19 @@ pyinstaller regulation_search_gui.spec --clean
 # [저사양] AI 기능이 필요 없는 경우
 pyinstaller regulation_search_ultra_lite_gui.spec --clean
 
+# 콘솔 서버 빌드 (RAG 포함)
+pyinstaller server.spec --clean
+
 # 레거시 콘솔 빌드가 필요하면
 pyinstaller internal_regulations.spec --clean
 pyinstaller internal_regulations_lite.spec --clean
 ```
+
+### v3.0 패키징 참고 (2026-07-08)
+- 엔트리포인트: `run.py` / `server_gui.py` (`server.py` 삭제됨)
+- `static/` 전체 포함 → `static/js/`, `static/css/` ESM·분할 CSS 반영
+- AI 포함 spec은 `rag`, `httpx`, `langgraph` hiddenimports 보강
+- RAG LLM(Ollama)은 런타임 외부 서비스 — 빌드에 Ollama 바이너리 미포함
 
 ---
 

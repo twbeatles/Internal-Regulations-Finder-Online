@@ -84,6 +84,7 @@ class AppConfig:
     SEARCH_CACHE_SIZE: ClassVar[int] = 1000 # 캐시 크기 대폭 증가 (자주 조회되는 검색어 부하 감소)
     MAX_CONCURRENT_SEARCHES: ClassVar[int] = 10 # 동시 검색 실행 제한 (AI 모델 CPU 과부하 방지)
     RATE_LIMIT_PER_MINUTE: ClassVar[int] = 300 # 사용자당 분당 요청 제한 완화
+    RAG_RATE_LIMIT_PER_MINUTE: ClassVar[int] = _env_int("RAG_RATE_LIMIT_PER_MINUTE", 60)
     
     # ========================================================================
     # 성능 최적화 설정 (v2.6.1)

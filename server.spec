@@ -97,8 +97,17 @@ try:
 except Exception:
     pass
 
+# RAG v3 (2026-07)
+try:
+    hiddenimports += collect_submodules("rag")
+except Exception:
+    pass
+for _rag_mod in ("httpx", "langgraph", "langgraph.graph"):
+    if _rag_mod not in hiddenimports:
+        hiddenimports.append(_rag_mod)
+
 a = Analysis(
-    ["server.py"],
+    ["run.py"],
     pathex=[project_dir],
     binaries=[],
     datas=datas,

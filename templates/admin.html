@@ -88,6 +88,39 @@
                 </div>
             </section>
 
+            <!-- RAG LLM 설정 -->
+            <section class="rag-section card admin-only" style="display: none;">
+                <h2 class="section-title">💬 RAG LLM 설정</h2>
+                <div class="model-settings">
+                    <div class="form-group">
+                        <label for="rag-provider">LLM 프로바이더</label>
+                        <select id="rag-provider" class="form-select">
+                            <option value="ollama">Ollama (로컬)</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="anthropic">Anthropic</option>
+                            <option value="gemini">Gemini</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="rag-model">모델명</label>
+                        <input id="rag-model" class="form-input" type="text" placeholder="exaone3.5:7.8b">
+                    </div>
+                    <div class="form-group">
+                        <label for="rag-base-url">Ollama Base URL</label>
+                        <input id="rag-base-url" class="form-input" type="text" placeholder="http://127.0.0.1:11434">
+                    </div>
+                    <div class="form-group">
+                        <label for="search-mode-select">기본 검색 모드</label>
+                        <select id="search-mode-select" class="form-select">
+                            <option value="rag">RAG 질문 (기본)</option>
+                            <option value="legacy">키워드 검색</option>
+                        </select>
+                    </div>
+                    <p id="rag-llm-status" class="form-hint">LLM 상태 확인 중...</p>
+                    <button id="save-rag-settings-btn" class="btn btn-primary" type="button">RAG 설정 저장</button>
+                </div>
+            </section>
+
             <!-- AI 모델 설정 섹션 -->
             <section class="model-section card admin-only" style="display: none;">
                 <h2 class="section-title">🤖 AI 모델 설정</h2>
@@ -289,7 +322,7 @@
     <!-- 토스트 알림 -->
     <div id="toast-container" class="toast-container"></div>
 
-    <script defer src="/static/app.js"></script>
+    <script type="module" src="/static/js/bootstrap/admin.js"></script>
 </body>
 
 </html>

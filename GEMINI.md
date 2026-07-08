@@ -6,8 +6,8 @@
 
 | 항목 | 내용 |
 |------|------|
-| **프로젝트** | 사내 규정 검색기 v2.8.3 |
-| **목적** | AI 기반 하이브리드 검색 (Vector + BM25) |
+| **프로젝트** | 사내 규정 검색기 v3.0 |
+| **목적** | RAG 질의응답 + 하이브리드 검색 (Vector + BM25) |
 | **언어** | Python 3.10+ (3.14 호환) |
 | **프레임워크** | Flask + PyTorch + LangChain + FAISS |
 | **DB** | SQLite (WAL 모드) |
@@ -30,12 +30,16 @@ Internal-Regulations-Finder-Online-main/
 │   ├── utils.py            # 유틸리티 (TaskResult, FileInfo, MemoryMonitor)
 │   ├── routes/             # API 라우트
 │   │   ├── api_search.py   # 검색 API (/api/search)
-│   │   ├── api_files.py    # 파일/태그/개정 관리 API
+│   │   ├── api_files.py    # 파일 CRUD/업로드
+│   │   ├── api_tags.py     # 태그 API
+│   │   ├── api_revisions.py # 개정/비교 API
 │   │   ├── api_system.py   # 시스템/동기화 API
 │   │   └── main_routes.py  # 메인 페이지 라우트
 │   └── services/           # 비즈니스 로직 서비스
-│       ├── search.py       # 하이브리드 검색 엔진 (RegulationQASystem)
-│       ├── document.py     # 문서 추출/파싱/분할/비교
+│       ├── search/         # 하이브리드 검색 패키지
+│       ├── document/       # 문서 처리 패키지
+│       ├── files/          # 파일 경로·미리보기
+├── rag/                    # RAG v3 (LLM, pipeline, api_chat)
 │       ├── parsers/        # HWP/HWPX 전용 어댑터 + 결과 모델
 │       ├── db.py           # SQLite 싱글톤 DB 관리
 │       ├── file_manager.py # RevisionTracker, FolderWatcher
@@ -46,8 +50,11 @@ Internal-Regulations-Finder-Online-main/
 │           ├── torch_backend.py  # PyTorch/HuggingFace 백엔드
 │           └── onnx_backend.py   # ONNX Runtime 백엔드
 ├── static/                 # 프론트엔드 정적 파일
-│   ├── app.js              # SPA 스타일 클라이언트 (v1.7, 3339 lines 기준)
-│   ├── style.css           # CSS 스타일 (다크/라이트 테마)
+│   ├── js/bootstrap/main.js # ESM 엔트리
+│   ├── js/legacy/app.js    # 레거시 UI 번들
+│   ├── js/rag/             # RAG 채팅 모듈
+│   ├── css/                # 분할 CSS
+│   ├── style.css           # @import 허브
 │   └── sw.js               # PWA 서비스 워커
 ├── templates/              # HTML 템플릿
 │   ├── index.html          # 메인 페이지
@@ -64,7 +71,7 @@ Internal-Regulations-Finder-Online-main/
 
 ## 🔑 Core Components
 
-### 1. Search Engine (`app/services/search.py`)
+### 1. Search Engine (`app/services/search/` 패키지)
 
 **핵심 클래스**:
 | 클래스 | 역할 |
@@ -91,7 +98,7 @@ qa_system.search(query, k=5, hybrid=True)
 qa_system.process_single_file(file_path)  # 단일 파일 즉시 인덱싱
 ```
 
-### 2. Document Processing (`app/services/document.py`)
+### 2. Document Processing (`app/services/document/` 패키지)
 
 | 클래스 | 역할 |
 |--------|------|

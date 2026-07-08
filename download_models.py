@@ -28,7 +28,7 @@ import time
 import importlib
 from typing import Dict, Optional
 
-# 사용 가능한 모델 목록 (server.py의 AppConfig.AVAILABLE_MODELS와 동일)
+# 사용 가능한 모델 목록 (AppConfig.AVAILABLE_MODELS와 동일)
 AVAILABLE_MODELS: Dict[str, str] = {
     "SNU SBERT (고성능)": "snunlp/KR-SBERT-V40K-klueNLI-augSTS",
     "BM-K Simal (균형)": "BM-K/ko-simal-roberta-base",

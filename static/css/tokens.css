@@ -1,0 +1,87 @@
+/* Design tokens */
+/* CSS 변수 */
+:root {
+    /* 색상 팔레트 (다크 테마 - 기본) */
+    --bg-primary: #0a0a12;
+    --bg-secondary: #12121a;
+    --bg-card: rgba(22, 28, 45, 0.8);
+    --bg-card-solid: #161c2d;
+    --bg-input: rgba(15, 40, 70, 0.6);
+    --bg-hover: rgba(255, 255, 255, 0.05);
+
+    --text-primary: #f0f0f5;
+    --text-secondary: #a8a8b8;
+    --text-muted: #6a6a7a;
+
+    --accent-primary: #ff6b8a;
+    --accent-secondary: rgba(15, 52, 96, 0.8);
+    --accent-tertiary: #3b82f6;
+    --accent-gradient: linear-gradient(135deg, #ff6b8a 0%, #845ef7 50%, #3b82f6 100%);
+    --accent-gradient-subtle: linear-gradient(135deg, rgba(255, 107, 138, 0.1) 0%, rgba(132, 94, 247, 0.1) 100%);
+    --accent-gradient-hover: linear-gradient(135deg, #ff8da6 0%, #9775fa 50%, #5c9aff 100%);
+
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --info: #3b82f6;
+
+    /* 글래스모피즘 */
+    --glass-bg: rgba(18, 24, 38, 0.85);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-blur: blur(20px);
+    --glass-saturate: saturate(180%);
+
+    /* 그림자 */
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.25);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.35);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.45);
+    --shadow-glow: 0 0 30px rgba(255, 107, 138, 0.25);
+    --shadow-glow-accent: 0 4px 20px rgba(255, 107, 138, 0.3);
+    --shadow-glow-lg: 0 0 50px rgba(255, 107, 138, 0.35);
+    --shadow-inner: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+
+    /* 트랜지션 */
+    --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-normal: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    --transition-spring: 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+
+    /* 레이아웃 */
+    --border-radius: 16px;
+    --border-radius-sm: 10px;
+    --border-radius-lg: 24px;
+    --border-radius-full: 9999px;
+    --header-height: 72px;
+    --footer-height: 56px;
+
+    /* 포커스 */
+    --focus-ring: 0 0 0 3px rgba(255, 107, 138, 0.4);
+}
+
+/* 라이트 테마 */
+[data-theme="light"] {
+    --bg-primary: #f8fafc;
+    --bg-secondary: #ffffff;
+    --bg-card: rgba(255, 255, 255, 0.9);
+    --bg-card-solid: #ffffff;
+    --bg-input: rgba(241, 245, 249, 0.8);
+    --bg-hover: rgba(0, 0, 0, 0.03);
+
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #94a3b8;
+
+    --accent-secondary: rgba(226, 232, 240, 0.8);
+
+    /* 라이트 모드 글래스모피즘 */
+    --glass-bg: rgba(255, 255, 255, 0.85);
+    --glass-border: rgba(0, 0, 0, 0.08);
+
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+    --shadow-glow: 0 0 30px rgba(255, 107, 138, 0.15);
+    --shadow-glow-accent: 0 4px 20px rgba(255, 107, 138, 0.2);
+    --shadow-glow-lg: 0 0 50px rgba(255, 107, 138, 0.25);
+}

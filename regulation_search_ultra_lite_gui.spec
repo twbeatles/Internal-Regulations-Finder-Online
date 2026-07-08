@@ -140,6 +140,13 @@ hiddenimports = [
     'app.services.parsers.hwp_adapter',
     'app.services.parsers.hwpx_adapter',
     'app.services.parsers.hwp_models',
+    'app.services.search.qa_facade',
+    'app.services.search.hybrid_search',
+    'app.services.search.index',
+    'app.routes.files_request',
+    'app.routes.api_revisions',
+    'app.routes.api_tags',
+    'app.services.files',
 ]
 
 # PyQt6 서브모듈 추가

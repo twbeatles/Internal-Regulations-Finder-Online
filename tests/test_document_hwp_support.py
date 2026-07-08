@@ -169,7 +169,7 @@ def test_process_single_file_preserves_parser_details_in_chunk_meta(tmp_path, mo
 
 def test_preview_route_returns_parser_metadata_and_diagnostics(tmp_path, monkeypatch) -> None:
     from app import create_app
-    from app.routes import api_files as api_files_module
+    from app.services.files import preview_service
     from app.services.parsers.hwp_models import ExtractedDocument
     from app.services.search import qa_system
     from app.utils import FileInfo, FileUtils
@@ -185,7 +185,7 @@ def test_preview_route_returns_parser_metadata_and_diagnostics(tmp_path, monkeyp
         raising=False,
     )
     monkeypatch.setattr(
-        api_files_module._preview_extractor,
+        preview_service.extractor,
         "extract_with_details",
         lambda path: ExtractedDocument(
             text="미리보기 본문",

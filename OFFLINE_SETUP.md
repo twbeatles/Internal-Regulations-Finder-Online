@@ -44,6 +44,12 @@ python download_static.py
 python run.py
 ```
 
+### RAG (v3) 오프라인 참고
+
+- RAG 채팅은 **로컬 Ollama** (`rag.llm.base_url`, 기본 `http://127.0.0.1:11434`) 또는 폐쇄망 내 LLM 게이트웨이가 필요합니다.
+- LLM 없이도 **retrieval-only** 모드로 발췌+인용만 제공됩니다 (`search_mode: rag` 유지 가능).
+- 레거시 키워드 검색은 LLM 없이 BM25/벡터만으로 동작합니다 (`search_mode: legacy`).
+
 ### 문서 포맷 참고
 
 - `.hwpx`는 추가 패키지 없이 ZIP+XML 경로로 추출됩니다.
