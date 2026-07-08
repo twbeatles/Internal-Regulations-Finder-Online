@@ -8,6 +8,7 @@ from collections import Counter
 from typing import Dict, List, Tuple
 
 from app.constants import Patterns
+from app.services.search.normalization import prepare_bm25_query_terms
 
 class BM25Light:
     """
@@ -93,19 +94,12 @@ class BM25Light:
         with self._lock:
             if not self.postings or not query:
                 return []
-            q_tokens = self._tokenize(query)
+            q_tokens = prepare_bm25_query_terms(self._tokenize, query)
             if not q_tokens:
                 return []
-            
-            # 쿼리 토큰 정규화: 중복 제거 + postings 있는 토큰만
-            terms = []
-            seen = set()
-            for t in q_tokens:
-                if t in seen:
-                    continue
-                seen.add(t)
-                if t in self.idf and t in self.postings:
-                    terms.append(t)
+
+            # 쿼리 토큰 정규화: postings 있는 토큰만
+            terms = [t for t in q_tokens if t in self.idf and t in self.postings]
             if not terms:
                 return []
 

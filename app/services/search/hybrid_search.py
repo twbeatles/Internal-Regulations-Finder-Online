@@ -7,6 +7,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from app.config import AppConfig
+from app.services.search.normalization import prepare_vector_query
 from app.utils import FileUtils, TaskResult, logger
 
 if TYPE_CHECKING:
@@ -35,6 +36,8 @@ class HybridSearchService:
         if len(query) < 2:
             return TaskResult(False, "검색어가 너무 짧습니다 (최소 2자)")
 
+        vector_query = prepare_vector_query(query)
+
         cached_result = qa._search_cache.get(query, k, hybrid, sort_by, filter_file, filter_file_id)
         if cached_result is not None:
             return TaskResult(True, "검색 완료 (캐시)", cached_result)
@@ -45,9 +48,9 @@ class HybridSearchService:
             parallel_search = getattr(AppConfig, "PARALLEL_SEARCH", True)
 
             if hybrid and qa.vector_store and qa.bm25 and parallel_search:
-                results = self._parallel_hybrid(qa, query, k)
+                results = self._parallel_hybrid(qa, query, vector_query, k)
             else:
-                results = self._sequential_hybrid(qa, query, k, hybrid)
+                results = self._sequential_hybrid(qa, query, vector_query, k, hybrid)
 
             if filter_file_id:
                 results = {key: val for key, val in results.items() if val.get("file_id") == filter_file_id}
@@ -99,13 +102,19 @@ class HybridSearchService:
             logger.error(f"검색 오류 ({elapsed_ms:.1f}ms): {e}")
             return TaskResult(False, f"검색 오류: {e}")
 
-    def _parallel_hybrid(self, qa: "RegulationQASystem", query: str, k: int) -> dict[Any, dict[str, Any]]:
+    def _parallel_hybrid(
+        self,
+        qa: "RegulationQASystem",
+        query: str,
+        vector_query: str,
+        k: int,
+    ) -> dict[Any, dict[str, Any]]:
         fetch_k = k * 2
         results: dict[Any, dict[str, Any]] = {}
 
         def vector_search():
             try:
-                return qa.vector_store.similarity_search_with_score(query, k=fetch_k)
+                return qa.vector_store.similarity_search_with_score(vector_query, k=fetch_k)
             except Exception as e:
                 logger.debug(f"Vector 검색 오류: {e}")
                 return []
@@ -128,12 +137,19 @@ class HybridSearchService:
             self._merge_bm25_results(qa, bm_res, results)
         return results
 
-    def _sequential_hybrid(self, qa: "RegulationQASystem", query: str, k: int, hybrid: bool) -> dict[Any, dict[str, Any]]:
+    def _sequential_hybrid(
+        self,
+        qa: "RegulationQASystem",
+        query: str,
+        vector_query: str,
+        k: int,
+        hybrid: bool,
+    ) -> dict[Any, dict[str, Any]]:
         results: dict[Any, dict[str, Any]] = {}
         fetch_k = k * 2 if hybrid else k
 
         if qa.vector_store:
-            vec_results = qa.vector_store.similarity_search_with_score(query, k=fetch_k)
+            vec_results = qa.vector_store.similarity_search_with_score(vector_query, k=fetch_k)
             if vec_results:
                 self._merge_vector_results(qa, vec_results, results)
 
