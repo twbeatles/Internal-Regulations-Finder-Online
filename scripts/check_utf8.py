@@ -14,7 +14,26 @@ TEXT_SUFFIXES = {
     ".js",
 }
 
-EXCLUDED_PARTS = {"__pycache__", ".git", ".pytest_cache"}
+EXCLUDED_PARTS = {
+    "__pycache__",
+    ".git",
+    ".pytest_cache",
+    "build",
+    "dist",
+    "terminals",
+    "logs",
+    "uploads",
+    "revisions",
+    "models",
+}
+EXCLUDED_GLOBS = ("build_log*.txt", "latest_build.txt")
+
+
+def _is_excluded(path: Path, root: Path) -> bool:
+    if any(part in EXCLUDED_PARTS for part in path.parts):
+        return True
+    rel = path.relative_to(root)
+    return any(rel.match(pattern) for pattern in EXCLUDED_GLOBS)
 
 
 def iter_text_files(root: Path) -> list[Path]:
@@ -22,7 +41,7 @@ def iter_text_files(root: Path) -> list[Path]:
     for path in root.rglob("*"):
         if not path.is_file():
             continue
-        if any(part in EXCLUDED_PARTS for part in path.parts):
+        if _is_excluded(path, root):
             continue
         if path.suffix.lower() in TEXT_SUFFIXES:
             files.append(path)
