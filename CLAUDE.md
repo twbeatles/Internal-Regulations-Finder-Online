@@ -74,7 +74,7 @@ VECTOR_WEIGHT = 0.7  # 의미 기반 검색 (FAISS)
 BM25_WEIGHT = 0.3    # 키워드 기반 검색 (BM25Light)
 ```
 
-### 2. 문서 처리 (`app/services/document.py`)
+### 2. 문서 처리 (`app/services/document/` 패키지)
 
 | 클래스 | 역할 | 주요 메서드 |
 |--------|------|-------------|
@@ -169,8 +169,8 @@ RegSearchError                   # 기본 예외
 │   │   ├── api_system.py   # /api/status, /api/sync, /api/models
 │   │   └── main_routes.py  # GET /, /admin
 │   └── services/
-│       ├── search.py       # RegulationQASystem, BM25Light, SearchCache
-│       ├── document.py     # DocumentExtractor, ArticleParser, DocumentSplitter
+│       ├── search/         # RegulationQASystem, BM25Light, SearchCache (패키지)
+│       ├── document/       # DocumentExtractor, ArticleParser, DocumentSplitter (패키지)
 │       ├── parsers/        # HWP/HWPX 어댑터 + 공통 추출 결과 모델
 │       ├── db.py           # DBManager 싱글톤
 │       ├── file_manager.py # RevisionTracker, FolderWatcher
@@ -595,4 +595,16 @@ class AppConfig:
 - Lite spec: `app.services.files`, `api_tags`, `api_revisions` 경로 추가
 
 #### 검증
-- `python -m pytest -q` -> **78 passed** (RAG 테스트 포함)
+- `python -m pytest -q` -> **104 passed** (2026-07-15, RAG·감사 hardening 포함)
+
+### Maintenance Addendum (2026-07-15) — 감사 hardening
+
+- 문서: `PROJECT_AUDIT.md` (이슈 + Remediation Log)
+- 인덱스: `initialize` 단일 비행, 검색 시 `_lock`, `BLOCK_SEARCH_DURING_INDEXING`
+- 보안: 관리자 로그인 rate limit, MCP `admin_token` 필수 재인덱스, 대화 세션 스코프
+- RAG: 메시지/history 상한, SSE `replace`, LLM health TTL 캐시
+- 업로드: ZIP 실제 해제 바이트 제한, `validate_folder_path` (init/sync 공용)
+- 캐시: FAISS/docs 무결성 메타 검증
+- 테스트: `tests/test_audit_hardening.py`, `tests/conftest.py`
+- Lite spec: `app.services.files.path_validation` 등 서브모듈 명시
+- 설정 샘플: `config/settings.example.json` MCP 토큰 안내 (`_comments`)

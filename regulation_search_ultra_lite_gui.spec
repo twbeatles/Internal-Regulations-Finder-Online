@@ -4,6 +4,7 @@
 빌드: pyinstaller regulation_search_ultra_lite_gui.spec
 정합성 점검(2026-03-01): config 전체 포함 대신 settings.example.json만 포함
 정합성 점검(2026-03-16): HWP/HWPX 파서 서브모듈 hiddenimports 보강
+정합성 점검(2026-07-15): files.path_validation 등 hardening 서브모듈 명시
 
 특징:
 - GUI 모드 (콘솔 창 없음)
@@ -147,6 +148,13 @@ hiddenimports = [
     'app.routes.api_revisions',
     'app.routes.api_tags',
     'app.services.files',
+    'app.services.files.path_resolver',
+    'app.services.files.path_validation',
+    'app.services.files.delete_policy',
+    'app.services.files.lock',
+    'app.services.files.preview_service',
+    'app.services.settings_store',
+    'app.auth',
 ]
 
 # PyQt6 서브모듈 추가

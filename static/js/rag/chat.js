@@ -206,9 +206,21 @@ export const ChatManager = {
                     this.citations.push(data);
                     CitationRenderer.renderList(this.citations, this.citationsEl);
                 },
+                // 가드레일 거부/교체: 스트림 본문을 서버 확정 답변으로 교체
+                replace: (data) => {
+                    if (data && data.answer != null) {
+                        answer = data.answer;
+                        bubble.innerHTML = CitationRenderer.linkifyAnswer(answer, this.citations);
+                        CitationRenderer.bindCitationLinks(bubble, this.citations);
+                    }
+                },
                 done: (data) => {
                     if (data.conversation_id) this.conversationId = data.conversation_id;
-                    if (data.answer) answer = data.answer;
+                    if (data.refused && data.answer) {
+                        answer = data.answer;
+                    } else if (data.answer) {
+                        answer = data.answer;
+                    }
                     this.citations = data.citations || this.citations;
                     bubble.innerHTML = CitationRenderer.linkifyAnswer(answer, this.citations);
                     CitationRenderer.bindCitationLinks(bubble, this.citations);

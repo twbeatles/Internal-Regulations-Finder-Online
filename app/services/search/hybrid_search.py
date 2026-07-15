@@ -7,6 +7,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from app.config import AppConfig
+from app.constants import ErrorMessages
 from app.services.search.normalization import prepare_vector_query
 from app.utils import FileUtils, TaskResult, logger
 
@@ -29,12 +30,19 @@ class HybridSearchService:
     ) -> TaskResult:
         start_time = time.perf_counter()
 
+        if getattr(AppConfig, "BLOCK_SEARCH_DURING_INDEXING", True) and getattr(qa, "is_loading", False):
+            return TaskResult(False, ErrorMessages.SEARCH_INDEXING_IN_PROGRESS)
+
         if not qa.vector_store and not qa.bm25:
             return TaskResult(False, "문서가 로드되지 않음")
 
         query = query.strip()
         if len(query) < 2:
             return TaskResult(False, "검색어가 너무 짧습니다 (최소 2자)")
+
+        max_qlen = int(getattr(AppConfig, "MAX_SEARCH_QUERY_LENGTH", 500) or 500)
+        if len(query) > max_qlen:
+            return TaskResult(False, ErrorMessages.SEARCH_QUERY_TOO_LONG)
 
         vector_query = prepare_vector_query(query)
 
@@ -44,63 +52,88 @@ class HybridSearchService:
 
         try:
             k = max(1, min(k, AppConfig.MAX_SEARCH_RESULTS))
-            results: dict[Any, dict[str, Any]] = {}
-            parallel_search = getattr(AppConfig, "PARALLEL_SEARCH", True)
-
-            if hybrid and qa.vector_store and qa.bm25 and parallel_search:
-                results = self._parallel_hybrid(qa, query, vector_query, k)
-            else:
-                results = self._sequential_hybrid(qa, query, vector_query, k, hybrid)
-
-            if filter_file_id:
-                results = {key: val for key, val in results.items() if val.get("file_id") == filter_file_id}
-            if filter_file:
-                results = {key: val for key, val in results.items() if val["source"] == filter_file}
-
-            for item in results.values():
-                item["score"] = (
-                    AppConfig.VECTOR_WEIGHT * item["vec_score"]
-                    + AppConfig.BM25_WEIGHT * item["bm25_score"]
-                )
-
-            if sort_by == "filename":
-                sorted_res = sorted(results.values(), key=lambda x: x["source"])[:k]
-            elif sort_by == "length":
-                sorted_res = sorted(results.values(), key=lambda x: len(x["content"]), reverse=True)[:k]
-            else:
-                sorted_res = sorted(results.values(), key=lambda x: x["score"], reverse=True)[:k]
-
-            qa._search_cache.set(query, k, hybrid, sorted_res, sort_by, filter_file, filter_file_id)
-
-            if len(qa.documents) > 5000:
-                from app.utils import MemoryMonitor
-
-                warning = MemoryMonitor.check_memory_warning(threshold_mb=512)
-                if warning:
-                    logger.warning(f"검색 후 메모리 경고: {warning}")
-
-            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-            if elapsed_ms > 1000.0:
-                logger.warning(
-                    "search_slow query_len=%d results=%d elapsed_ms=%.1f",
-                    len(query),
-                    len(sorted_res),
-                    elapsed_ms,
-                )
-            elif elapsed_ms > 500.0:
-                logger.info(
-                    "search_done query_len=%d results=%d elapsed_ms=%.1f",
-                    len(query),
-                    len(sorted_res),
-                    elapsed_ms,
-                )
-
-            return TaskResult(True, "검색 완료", sorted_res)
+            # 인덱스 쓰기(재인덱싱/삭제)와 공유 상태 레이스 방지
+            lock = getattr(qa, "_lock", None)
+            if lock is not None:
+                with lock:
+                    return self._search_unlocked(
+                        qa, query, vector_query, k, hybrid, sort_by,
+                        filter_file, filter_file_id, start_time,
+                    )
+            return self._search_unlocked(
+                qa, query, vector_query, k, hybrid, sort_by,
+                filter_file, filter_file_id, start_time,
+            )
 
         except Exception as e:
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
             logger.error(f"검색 오류 ({elapsed_ms:.1f}ms): {e}")
-            return TaskResult(False, f"검색 오류: {e}")
+            return TaskResult(False, "검색 중 오류가 발생했습니다")
+
+    def _search_unlocked(
+        self,
+        qa: "RegulationQASystem",
+        query: str,
+        vector_query: str,
+        k: int,
+        hybrid: bool,
+        sort_by: str,
+        filter_file: str | None,
+        filter_file_id: str | None,
+        start_time: float,
+    ) -> TaskResult:
+        results: dict[Any, dict[str, Any]] = {}
+        parallel_search = getattr(AppConfig, "PARALLEL_SEARCH", True)
+
+        if hybrid and qa.vector_store and qa.bm25 and parallel_search:
+            results = self._parallel_hybrid(qa, query, vector_query, k)
+        else:
+            results = self._sequential_hybrid(qa, query, vector_query, k, hybrid)
+
+        if filter_file_id:
+            results = {key: val for key, val in results.items() if val.get("file_id") == filter_file_id}
+        if filter_file:
+            results = {key: val for key, val in results.items() if val["source"] == filter_file}
+
+        for item in results.values():
+            item["score"] = (
+                AppConfig.VECTOR_WEIGHT * item["vec_score"]
+                + AppConfig.BM25_WEIGHT * item["bm25_score"]
+            )
+
+        if sort_by == "filename":
+            sorted_res = sorted(results.values(), key=lambda x: x["source"])[:k]
+        elif sort_by == "length":
+            sorted_res = sorted(results.values(), key=lambda x: len(x["content"]), reverse=True)[:k]
+        else:
+            sorted_res = sorted(results.values(), key=lambda x: x["score"], reverse=True)[:k]
+
+        qa._search_cache.set(query, k, hybrid, sorted_res, sort_by, filter_file, filter_file_id)
+
+        if len(qa.documents) > 5000:
+            from app.utils import MemoryMonitor
+
+            warning = MemoryMonitor.check_memory_warning(threshold_mb=512)
+            if warning:
+                logger.warning(f"검색 후 메모리 경고: {warning}")
+
+        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+        if elapsed_ms > 1000.0:
+            logger.warning(
+                "search_slow query_len=%d results=%d elapsed_ms=%.1f",
+                len(query),
+                len(sorted_res),
+                elapsed_ms,
+            )
+        elif elapsed_ms > 500.0:
+            logger.info(
+                "search_done query_len=%d results=%d elapsed_ms=%.1f",
+                len(query),
+                len(sorted_res),
+                elapsed_ms,
+            )
+
+        return TaskResult(True, "검색 완료", sorted_res)
 
     def _parallel_hybrid(
         self,

@@ -479,6 +479,13 @@ class RegulationQASystem:
         ):
             try:
                 if progress_cb: progress_cb(10, "캐시 로드...")
+                from app.services.search.index.cache_store import (
+                    get_stored_integrity,
+                    verify_cache_integrity,
+                )
+                if not verify_cache_integrity(cache_dir, get_stored_integrity(cache_dir)):
+                    raise ValueError("캐시 무결성 검증 실패")
+                # FAISS 로컬 로드는 pickle 기반일 수 있음 — 무결성 검증 후 로드
                 self.vector_store = _search_exports.FAISS.load_local(
                     cache_dir, self.embedding_model,
                     allow_dangerous_deserialization=True
@@ -681,6 +688,12 @@ class RegulationQASystem:
         save_cache(self, cache_dir, old_info, new_info)
 
     def initialize(self, folder_path: str, force_reindex: bool = False) -> TaskResult:
+        # 단일 비행: 진행 중이면 중복 백그라운드 인덱싱 거부
+        with self._lock:
+            if self._is_loading:
+                from app.constants import ErrorMessages
+                return TaskResult(False, ErrorMessages.SYNC_ALREADY_RUNNING)
+
         # AI 모델 로드 시도 (실패해도 BM25로 계속 진행)
         if not self._is_ready and not self.embedding_model:
             try:
@@ -690,10 +703,17 @@ class RegulationQASystem:
             except Exception as e:
                 logger.warning(f"AI 모델 로드 오류, BM25 모드로 진행: {e}")
 
-        self.current_folder = folder_path
-        self._cancel_event.clear()
-        self._cancel_reason = ""
-        
+        with self._lock:
+            if self._is_loading:
+                from app.constants import ErrorMessages
+                return TaskResult(False, ErrorMessages.SYNC_ALREADY_RUNNING)
+            self._is_loading = True
+            self._load_progress = "인덱싱 준비 중..."
+            self._load_error = ""
+            self._cancel_event.clear()
+            self._cancel_reason = ""
+            self.current_folder = folder_path
+
         stats_path = os.path.join(get_app_directory(), 'config', 'stats.json')
         if os.path.exists(stats_path):
              try:
@@ -717,8 +737,6 @@ class RegulationQASystem:
                     files.append(os.path.join(root, f))
         
         def bg_process():
-            self._is_loading = True
-            self._load_error = ""
             try:
                 def cb(p, msg): self._load_progress = f"{p}% {msg}"
                 res = self.process_documents(folder_path, files, cb, force_reindex=force_reindex)
@@ -737,7 +755,8 @@ class RegulationQASystem:
                 logger.error(f"초기화 오류: {e}")
                 self._load_error = str(e)
             finally:
-                self._is_loading = False
+                with self._lock:
+                    self._is_loading = False
                 if self._cancel_event.is_set():
                     self._load_progress = "중단됨"
                 else:

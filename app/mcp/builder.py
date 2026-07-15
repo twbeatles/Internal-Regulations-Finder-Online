@@ -43,7 +43,7 @@ def build_mcp_server(host: str = "127.0.0.1", port: int = 8081):
 
     @mcp.tool(name="regulations.reindex")
     def regulations_reindex(admin_token: str = "") -> dict[str, Any]:
-        """폴더 재인덱스 (mcp.admin_token 필요 시)."""
+        """폴더 재인덱스 (settings mcp.admin_token 필수)."""
         return mcp_tools.regulations_reindex(admin_token=admin_token)
 
     return mcp

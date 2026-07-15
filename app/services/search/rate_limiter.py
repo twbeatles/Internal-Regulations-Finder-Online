@@ -70,6 +70,14 @@ class RateLimiter:
         if expired_ips:
             logger.debug(f"RateLimiter cleanup: {len(expired_ips)} IPs removed")
     
+    def reset(self) -> None:
+        """상태 초기화 (테스트·운영 리셋용)."""
+        with self._lock:
+            self.requests.clear()
+            self._total_allowed = 0
+            self._total_blocked = 0
+            self._last_cleanup = time.time()
+
     def get_stats(self) -> Dict[str, Any]:
         """Rate limiter 통계"""
         with self._lock:

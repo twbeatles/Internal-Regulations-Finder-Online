@@ -2,7 +2,7 @@
 import json
 import time
 
-from flask import Blueprint, Response, jsonify, request, stream_with_context
+from flask import Blueprint, Response, jsonify, request, session, stream_with_context
 
 from app.auth import admin_required
 from app.config import AppConfig
@@ -29,6 +29,55 @@ _rag_rate_limiter = RateLimiter(requests_per_minute=getattr(AppConfig, "RAG_RATE
 def _rag_rate_allowed() -> bool:
     client_ip = request.remote_addr or "unknown"
     return _rag_rate_limiter.is_allowed(client_ip)
+
+
+def _session_conversation_ids() -> list[str]:
+    raw = session.get("rag_conversation_ids") or []
+    if not isinstance(raw, list):
+        return []
+    return [str(x) for x in raw if x]
+
+
+def _claim_conversation(conversation_id: str) -> None:
+    if not conversation_id:
+        return
+    ids = _session_conversation_ids()
+    if conversation_id not in ids:
+        ids.append(conversation_id)
+        session["rag_conversation_ids"] = ids[-100:]
+
+
+def _can_access_conversation(conversation_id: str) -> bool:
+    if session.get("admin_authenticated"):
+        return True
+    return str(conversation_id) in set(_session_conversation_ids())
+
+
+def _sanitize_history(raw: list | None) -> list[dict[str, str]]:
+    if not isinstance(raw, list):
+        return []
+    max_items = int(getattr(AppConfig, "MAX_RAG_HISTORY_ITEMS", 6) or 6)
+    max_len = int(getattr(AppConfig, "MAX_RAG_HISTORY_ITEM_LENGTH", 2000) or 2000)
+    cleaned: list[dict[str, str]] = []
+    for item in raw[-max_items:]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role", "user"))
+        if role not in ("user", "assistant"):
+            continue
+        content = str(item.get("content", ""))[:max_len]
+        cleaned.append({"role": role, "content": content})
+    return cleaned
+
+
+def _redact_llm_settings(cfg: dict) -> dict:
+    """응답에서 API 키 등 민감 필드 제거."""
+    out = dict(cfg or {})
+    for key in list(out.keys()):
+        lk = str(key).lower()
+        if "key" in lk or "secret" in lk or "token" in lk or "password" in lk:
+            out[key] = "***"
+    return out
 
 
 @rag_bp.route("/rag/status", methods=["GET"])
@@ -78,8 +127,8 @@ def get_rag_settings():
             "RAG 설정",
             {
                 "rag": {
-                    "llm": config.llm,
-                    "llm_fallback": config.llm_fallback,
+                    "llm": _redact_llm_settings(config.llm),
+                    "llm_fallback": _redact_llm_settings(config.llm_fallback),
                     "retrieval": config.retrieval,
                     "guardrails": config.guardrails,
                 }
@@ -105,8 +154,8 @@ def set_rag_settings():
             "RAG 설정 저장됨",
             {
                 "rag": {
-                    "llm": cfg.llm,
-                    "llm_fallback": cfg.llm_fallback,
+                    "llm": _redact_llm_settings(cfg.llm),
+                    "llm_fallback": _redact_llm_settings(cfg.llm_fallback),
                     "retrieval": cfg.retrieval,
                     "guardrails": cfg.guardrails,
                 }
@@ -120,6 +169,9 @@ def _parse_chat_request() -> tuple[dict, tuple | None]:
     message = str(data.get("message", "")).strip()
     if len(message) < 2:
         return data, api_error("메시지는 2자 이상이어야 합니다", "MESSAGE_TOO_SHORT", 400)
+    max_len = int(getattr(AppConfig, "MAX_RAG_MESSAGE_LENGTH", 4000) or 4000)
+    if len(message) > max_len:
+        return data, api_error(ErrorMessages.MESSAGE_TOO_LONG, "MESSAGE_TOO_LONG", 400)
     return data, None
 
 
@@ -127,6 +179,8 @@ def _parse_chat_request() -> tuple[dict, tuple | None]:
 def rag_chat_sync():
     if not _rag_rate_allowed():
         return api_error(ErrorMessages.SEARCH_RATE_LIMITED, "RATE_LIMITED", HttpStatus.TOO_MANY_REQUESTS)
+    if getattr(qa_system, "is_loading", False) and getattr(AppConfig, "BLOCK_SEARCH_DURING_INDEXING", True):
+        return api_error(ErrorMessages.SEARCH_INDEXING_IN_PROGRESS, "INDEXING", 503)
     if not search_queue.acquire(timeout=10):
         return api_error(ErrorMessages.SEARCH_QUEUE_FULL, "QUEUE_FULL", HttpStatus.SERVICE_UNAVAILABLE)
     try:
@@ -138,7 +192,10 @@ def rag_chat_sync():
         filter_file_id = data.get("filter_file_id")
         filter_file = data.get("filter_file")
         use_agentic = bool(data.get("agentic", False))
-        history = data.get("history") if isinstance(data.get("history"), list) else []
+        history = _sanitize_history(data.get("history") if isinstance(data.get("history"), list) else [])
+
+        if conversation_id and not _can_access_conversation(str(conversation_id)):
+            return api_error(ErrorMessages.CONVERSATION_FORBIDDEN, "FORBIDDEN", 403)
 
         if not _pipeline.is_ready():
             return api_error("인덱스가 준비되지 않았습니다", "INDEX_NOT_READY", 503)
@@ -160,6 +217,7 @@ def rag_chat_sync():
 
         if not conversation_id:
             conversation_id = _store.create_conversation(title=message[:40])
+        _claim_conversation(str(conversation_id))
         _store.add_message(conversation_id, "user", message)
         msg_id = _store.add_message(
             conversation_id,
@@ -178,6 +236,8 @@ def rag_chat_sync():
 def rag_chat_stream():
     if not _rag_rate_allowed():
         return api_error(ErrorMessages.SEARCH_RATE_LIMITED, "RATE_LIMITED", HttpStatus.TOO_MANY_REQUESTS)
+    if getattr(qa_system, "is_loading", False) and getattr(AppConfig, "BLOCK_SEARCH_DURING_INDEXING", True):
+        return api_error(ErrorMessages.SEARCH_INDEXING_IN_PROGRESS, "INDEXING", 503)
     if not search_queue.acquire(timeout=10):
         return api_error(ErrorMessages.SEARCH_QUEUE_FULL, "QUEUE_FULL", HttpStatus.SERVICE_UNAVAILABLE)
 
@@ -190,8 +250,12 @@ def rag_chat_stream():
     conversation_id = data.get("conversation_id")
     filter_file_id = data.get("filter_file_id")
     filter_file = data.get("filter_file")
-    history = data.get("history") if isinstance(data.get("history"), list) else []
+    history = _sanitize_history(data.get("history") if isinstance(data.get("history"), list) else [])
     stream = data.get("stream", True)
+
+    if conversation_id and not _can_access_conversation(str(conversation_id)):
+        search_queue.release()
+        return api_error(ErrorMessages.CONVERSATION_FORBIDDEN, "FORBIDDEN", 403)
 
     if not _pipeline.is_ready():
         search_queue.release()
@@ -203,6 +267,7 @@ def rag_chat_stream():
 
     if not conversation_id:
         conversation_id = _store.create_conversation(title=message[:40])
+    _claim_conversation(str(conversation_id))
     _store.add_message(conversation_id, "user", message)
 
     def event_stream():
@@ -225,16 +290,23 @@ def rag_chat_stream():
                 elif event == "citation":
                     citations.append(payload)
                     yield f"event: citation\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                elif event == "replace":
+                    # 가드레일 거부 시 스트림 본문 교체
+                    if isinstance(payload, dict) and payload.get("answer") is not None:
+                        answer_parts = [str(payload.get("answer"))]
+                    yield f"event: replace\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 elif event == "done":
                     done_payload = payload if isinstance(payload, dict) else {}
             answer = "".join(answer_parts) or str(done_payload.get("answer", ""))
+            if done_payload.get("refused") and done_payload.get("answer"):
+                answer = str(done_payload.get("answer"))
             msg_id = _store.add_message(conversation_id, "assistant", answer, citations)
             done_payload["conversation_id"] = conversation_id
             done_payload["message_id"] = msg_id
             yield f"event: done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
         except Exception as e:
             logger.error(f"RAG 스트리밍 오류: {e}")
-            yield f"event: error\ndata: {json.dumps({'message': str(e)}, ensure_ascii=False)}\n\n"
+            yield f"event: error\ndata: {json.dumps({'message': '응답 생성 중 오류가 발생했습니다'}, ensure_ascii=False)}\n\n"
         finally:
             search_queue.release()
 
@@ -251,11 +323,19 @@ def rag_chat_stream():
 @rag_bp.route("/rag/conversations", methods=["GET"])
 def list_conversations():
     limit = int(request.args.get("limit", 30))
-    return jsonify(api_success("대화 목록", {"conversations": _store.list_conversations(limit=limit)}))
+    all_items = _store.list_conversations(limit=max(limit, 100))
+    if session.get("admin_authenticated"):
+        items = all_items[:limit]
+    else:
+        allowed = set(_session_conversation_ids())
+        items = [c for c in all_items if c.get("id") in allowed][:limit]
+    return jsonify(api_success("대화 목록", {"conversations": items}))
 
 
 @rag_bp.route("/rag/conversations/<conversation_id>", methods=["GET"])
 def get_conversation(conversation_id: str):
+    if not _can_access_conversation(conversation_id):
+        return api_error(ErrorMessages.CONVERSATION_FORBIDDEN, "FORBIDDEN", 403)
     conv = _store.get_conversation(conversation_id)
     if not conv:
         return api_error("대화를 찾을 수 없습니다", "NOT_FOUND", 404)
@@ -264,13 +344,19 @@ def get_conversation(conversation_id: str):
 
 @rag_bp.route("/rag/conversations/<conversation_id>", methods=["DELETE"])
 def delete_conversation(conversation_id: str):
+    if not _can_access_conversation(conversation_id):
+        return api_error(ErrorMessages.CONVERSATION_FORBIDDEN, "FORBIDDEN", 403)
     if not _store.delete_conversation(conversation_id):
         return api_error("대화를 찾을 수 없습니다", "NOT_FOUND", 404)
+    ids = [i for i in _session_conversation_ids() if i != conversation_id]
+    session["rag_conversation_ids"] = ids
     return jsonify(api_success("대화 삭제됨"))
 
 
 @rag_bp.route("/rag/conversations/<conversation_id>/export", methods=["GET"])
 def export_conversation(conversation_id: str):
+    if not _can_access_conversation(conversation_id):
+        return api_error(ErrorMessages.CONVERSATION_FORBIDDEN, "FORBIDDEN", 403)
     fmt = request.args.get("format", "md").lower()
     conv = _store.get_conversation(conversation_id)
     if not conv:

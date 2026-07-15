@@ -404,6 +404,7 @@ def upload_folder():
                             }
                         }), 413
 
+                actual_total_written = 0
                 for info in entries:
                     if info.is_dir():
                         continue
@@ -440,10 +441,29 @@ def upload_folder():
                             continue
 
                     try:
+                        written = 0
                         with zf.open(info) as src, open(save_path, 'wb') as dst:
-                            shutil.copyfileobj(src, dst)
+                            while True:
+                                chunk = src.read(64 * 1024)
+                                if not chunk:
+                                    break
+                                written += len(chunk)
+                                if written > max_single_file_bytes:
+                                    raise ValueError(
+                                        f"실제 해제 크기 제한 초과: {written} > {max_single_file_bytes}"
+                                    )
+                                actual_total_written += len(chunk)
+                                if actual_total_written > max_uncompressed_bytes:
+                                    raise ValueError("전체 압축해제 용량 제한 초과")
+                                dst.write(chunk)
                     except Exception as e:
-                        failed_items.append(f"{base_name}: 압축 해제 실패 ({e})")
+                        try:
+                            if save_path.exists():
+                                save_path.unlink()
+                        except Exception:
+                            pass
+                        failed_items.append(f"{base_name}: 압축 해제 실패")
+                        logger.warning(f"ZIP 멤버 해제 실패: {member_name} - {e}")
                         continue
 
                     result = qa_system.process_single_file(str(save_path))

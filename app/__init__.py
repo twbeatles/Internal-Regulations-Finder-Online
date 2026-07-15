@@ -143,7 +143,8 @@ def create_app() -> Flask:
     def server_error(e):
         logger.error(f"서버 내부 오류: {e}")
         if request.path.startswith('/api/'):
-            return jsonify({'success': False, 'message': '서버 내부 오류가 발생했습니다', 'error': str(e)}), 500
+            # 내부 예외 문자열은 클라이언트에 노출하지 않음
+            return jsonify({'success': False, 'message': '서버 내부 오류가 발생했습니다'}), 500
         return "서버 오류발생", 500
 
     # Blueprint 등록 (Lazy Import to avoid circular refs)

@@ -7,7 +7,7 @@ from typing import Iterator
 
 from app.services.search import RegulationQASystem, qa_system
 from rag.config import RagConfig
-from rag.llm.factory import create_llm_provider
+from rag.llm.factory import create_llm_provider, is_provider_healthy
 from rag.pipeline.context import ContextBuilder
 from rag.pipeline.generation import AnswerGenerator
 from rag.pipeline.guardrails import Guardrails
@@ -44,7 +44,7 @@ class RAGPipeline:
         chunks = self.reranker.rerank(processed.primary(), chunks)
         context, used_chunks = self.context_builder.build(chunks)
         llm = create_llm_provider(self.config)
-        retrieval_only = llm is None or not llm.health()
+        retrieval_only = not is_provider_healthy(llm)
         answer = self.generator.complete(message, context, history)
         return self.guardrails.apply(answer, used_chunks, retrieval_only=retrieval_only)
 
@@ -62,7 +62,7 @@ class RAGPipeline:
         context, used_chunks = self.context_builder.build(chunks)
 
         llm = create_llm_provider(self.config)
-        retrieval_only = llm is None or not llm.health()
+        retrieval_only = not is_provider_healthy(llm)
 
         for citation in self.guardrails._build_citations(used_chunks):
             yield {"event": "citation", "data": citation.to_dict()}
@@ -80,4 +80,14 @@ class RAGPipeline:
 
         answer = "".join(answer_parts)
         result = self.guardrails.apply(answer, used_chunks, retrieval_only=retrieval_only)
+        # 스트리밍 중 노출된 본문이 가드레일에 의해 거부·교체된 경우 클라이언트에 알림
+        if result.refused or (result.answer or "").strip() != (answer or "").strip():
+            yield {
+                "event": "replace",
+                "data": {
+                    "answer": result.answer,
+                    "refused": result.refused,
+                    "confidence": result.confidence,
+                },
+            }
         yield {"event": "done", "data": result.to_dict()}

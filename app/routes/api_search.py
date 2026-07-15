@@ -121,7 +121,7 @@ def search_route():
         logger.error(f"검색 API 예상치 못한 오류: {e}")
         return jsonify({
             'success': False, 
-            'message': f'{ErrorMessages.SEARCH_FAILED}: {str(e)}',
+            'message': ErrorMessages.SEARCH_FAILED,
             'error_code': 'UNEXPECTED_ERROR'
         }), HttpStatus.INTERNAL_ERROR
     finally:

@@ -39,5 +39,10 @@
     "port": 8081,
     "transport": "sse",
     "admin_token": ""
+  },
+  "_comments": {
+    "mcp.admin_token": "regulations.reindex 호출 시 필수. 비어 있으면 재인덱스 도구가 거부됩니다.",
+    "search_mode": "rag | legacy",
+    "embed_backend": "torch | onnx_fp32 | onnx_int8"
   }
 }

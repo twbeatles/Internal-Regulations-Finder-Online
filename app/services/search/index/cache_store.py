@@ -14,6 +14,55 @@ from app.utils import logger
 CACHE_KEY_MODE = "relative_path_v1"
 
 
+def compute_cache_integrity(cache_dir: str) -> Dict[str, Any]:
+    """캐시 디렉터리 무결성 지문 (docs + faiss 메타)."""
+    integrity: Dict[str, Any] = {}
+    docs_path = os.path.join(cache_dir, "docs.json")
+    faiss_path = os.path.join(cache_dir, "index.faiss")
+    try:
+        if os.path.isfile(docs_path):
+            h = hashlib.sha256()
+            with open(docs_path, "rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 256), b""):
+                    h.update(chunk)
+            integrity["docs_sha256"] = h.hexdigest()
+            integrity["docs_size"] = os.path.getsize(docs_path)
+        if os.path.isfile(faiss_path):
+            integrity["faiss_size"] = os.path.getsize(faiss_path)
+            integrity["faiss_mtime_ns"] = int(os.path.getmtime(faiss_path) * 1e9)
+    except OSError as e:
+        logger.debug(f"캐시 무결성 계산 실패: {cache_dir} - {e}")
+    return integrity
+
+
+def verify_cache_integrity(cache_dir: str, expected: Dict[str, Any] | None) -> bool:
+    """저장된 무결성 메타와 현재 파일이 일치하는지 확인."""
+    if not expected:
+        # 구버전 캐시: 엄격 검증 없이 허용 (하위호환)
+        return True
+    current = compute_cache_integrity(cache_dir)
+    for key in ("docs_sha256", "docs_size", "faiss_size", "faiss_mtime_ns"):
+        if key in expected and expected.get(key) != current.get(key):
+            logger.warning(f"캐시 무결성 불일치 ({key}): expected={expected.get(key)} current={current.get(key)}")
+            return False
+    return True
+
+
+def get_stored_integrity(cache_dir: str) -> Dict[str, Any] | None:
+    """cache_info.json에 저장된 integrity 메타 조회."""
+    path = os.path.join(cache_dir, "cache_info.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            cache_info = json.load(f)
+        meta = cache_info.get("_cache_meta") or {}
+        integrity = meta.get("integrity")
+        return integrity if isinstance(integrity, dict) else None
+    except Exception:
+        return None
+
+
 def get_cache_dir(qa, folder: str) -> str:
     """FAISS 캐시 디렉토리 경로 생성.
 
@@ -114,12 +163,15 @@ def save_cache(qa, cache_dir: str, old_info: Dict[str, Any], new_info: Dict[str,
             'bm25_weight': AppConfig.BM25_WEIGHT,
         }
 
+        with open(os.path.join(cache_dir, "docs.json"), 'w', encoding='utf-8') as f:
+            json.dump({'docs': qa.documents, 'meta': qa.doc_meta}, f, ensure_ascii=False)
+
+        # docs/faiss 기록 후 무결성 지문 저장 (변조·손상 감지)
+        cache_meta['integrity'] = compute_cache_integrity(cache_dir)
         cache_info = {**old_info, **new_info, '_cache_meta': cache_meta}
 
         with open(os.path.join(cache_dir, "cache_info.json"), 'w', encoding='utf-8') as f:
             json.dump(cache_info, f, ensure_ascii=False)
-        with open(os.path.join(cache_dir, "docs.json"), 'w', encoding='utf-8') as f:
-            json.dump({'docs': qa.documents, 'meta': qa.doc_meta}, f, ensure_ascii=False)
 
         logger.debug(f"캐시 저장 완료: {cache_dir} (meta: {cache_meta})")
     except Exception as e:

@@ -36,6 +36,13 @@ class ErrorMessages:
     SEARCH_RATE_LIMITED = "요청이 너무 많습니다. 잠시 후 다시 시도하세요"
     SEARCH_TIMEOUT = "검색 요청 대기 시간 초과"
     SEARCH_QUEUE_FULL = "검색 큐가 가득 찼습니다"
+    SEARCH_INDEXING_IN_PROGRESS = "문서 인덱싱이 진행 중입니다. 잠시 후 다시 시도하세요"
+    SEARCH_QUERY_TOO_LONG = "검색어가 너무 깁니다"
+    SYNC_ALREADY_RUNNING = "이미 동기화/인덱싱이 진행 중입니다"
+    MESSAGE_TOO_LONG = "메시지가 너무 깁니다"
+    AUTH_RATE_LIMITED = "로그인 시도가 너무 많습니다. 잠시 후 다시 시도하세요"
+    CONVERSATION_FORBIDDEN = "이 대화에 접근할 권한이 없습니다"
+    MCP_ADMIN_TOKEN_REQUIRED = "MCP admin_token이 설정·제공되어야 합니다"
     
     # 캐시 관련
     CACHE_LOAD_FAILED = "캐시 로드 실패"
@@ -96,6 +103,8 @@ class Limits:
     DEFAULT_SEARCH_RESULTS = 5
     MAX_SEARCH_RESULTS = 20
     MIN_QUERY_LENGTH = 2
+    MAX_QUERY_LENGTH = 500
+    MAX_RAG_MESSAGE_LENGTH = 4000
     
     # 캐시
     DEFAULT_CACHE_SIZE = 100

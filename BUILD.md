@@ -28,8 +28,18 @@ pip install pyinstaller flask-compress
 - **Lite spec** (`regulation_search_ultra_lite_gui.spec`): Kordoc/Node 미포함 — HWP 휴리스틱만
 
 ### MCP 서버 (선택)
-- `config/settings.json` → `"mcp": { "enabled": true, "port": 8081 }`
+- `config/settings.json` → `"mcp": { "enabled": true, "port": 8081, "admin_token": "<필수>" }`
+- **`admin_token`은 재인덱스(`regulations.reindex`)에 필수** — 비어 있으면 도구가 거부됩니다
 - Cursor 연결: `http://127.0.0.1:8081/sse` (상세: `/setup`)
+- 바인딩은 `127.0.0.1` 권장 (LAN 노출 시 검색·규정 내용 유출 위험)
+
+### v3.0.1 안정성 (2026-07-15)
+- 동기화/인덱싱 **단일 비행** — 중복 `initialize` 거부
+- 인덱싱 중 검색 차단 (`BLOCK_SEARCH_DURING_INDEXING`, 기본 true) + 검색 시 인덱스 락
+- 관리자 로그인 분당 rate limit (`ADMIN_AUTH_RATE_LIMIT_PER_MINUTE`)
+- RAG: 메시지/히스토리 길이 상한, SSE `replace` 이벤트(가드레일 거부 시 본문 교체)
+- ZIP 업로드: 메타 크기 + **실제 해제 바이트** 이중 제한
+- 패키징: Lite spec에 `app.services.files.path_validation` 명시 (collect_submodules 미사용 경로)
 
 ### 오프라인/폐쇄망 배포 준비
 빌드 전, 정적 자원 및 모델을 미리 다운로드하여 포함할 수 있습니다.
@@ -70,12 +80,14 @@ pyinstaller internal_regulations.spec --clean
 pyinstaller internal_regulations_lite.spec --clean
 ```
 
-### v3.0 패키징 참고 (2026-07-08)
+### v3.0 패키징 참고 (2026-07-08 / 2026-07-15 보강)
 - 엔트리포인트: `run.py` / `server_gui.py` (`server.py` 삭제됨)
 - `static/` 전체 포함 → `static/js/`, `static/css/` ESM·분할 CSS 반영
-- AI 포함 spec은 `rag`, `httpx`, `langgraph`, `mcp` hiddenimports 보강
+- AI 포함 spec은 `rag`, `httpx`, `langgraph`, `mcp` hiddenimports 보강 (`collect_submodules('app')`/`rag`)
+- Lite GUI/onefile: `app.services.files` + `path_validation` 등 서브모듈 명시
 - RAG LLM(Ollama)은 런타임 외부 서비스 — 빌드에 Ollama 바이너리 미포함
 - AI GUI 빌드 시 `scripts/kordoc_bridge.mjs` 포함 검토 (또는 사전 `_parsed` 워크플로우)
+- 런타임 설정은 `config/settings.example.json`만 패키징 (secret/db 제외)
 
 ---
 

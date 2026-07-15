@@ -4,6 +4,7 @@
 빌드: pyinstaller regulation_search_gui.spec --clean
 정합성 점검(2026-03-01): config 전체 포함 대신 settings.example.json만 포함
 정합성 점검(2026-03-09): optional import hiddenimports 경로 동기화
+정합성 점검(2026-07-15): app/rag collect_submodules로 path_validation·hardening 포함
 
 특징:
 - GUI 모드 (콘솔 창 없음)

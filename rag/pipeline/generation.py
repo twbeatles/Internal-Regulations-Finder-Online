@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Iterator
 
+from app.config import AppConfig
 from rag.config import RagConfig
 from rag.llm.base import LLMProvider
 from rag.llm.factory import create_llm_provider
@@ -33,17 +34,21 @@ class AnswerGenerator:
         return self.llm
 
     def build_messages(self, query: str, context: str, history: list[dict[str, str]] | None = None) -> list[dict[str, str]]:
+        max_q = int(getattr(AppConfig, "MAX_RAG_MESSAGE_LENGTH", 4000) or 4000)
+        safe_query = str(query or "")[:max_q]
         user_content = (
             f"다음은 사내 규정 발췌 내용입니다.\n\n{context}\n\n"
-            f"질문: {query}\n\n"
+            f"질문: {safe_query}\n\n"
             "위 컨텍스트만 근거로 답변하고, 각 주장 뒤에 [번호] 인용을 붙이세요."
         )
         messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
         if history:
-            for item in history[-6:]:
+            max_items = int(getattr(AppConfig, "MAX_RAG_HISTORY_ITEMS", 6) or 6)
+            max_len = int(getattr(AppConfig, "MAX_RAG_HISTORY_ITEM_LENGTH", 2000) or 2000)
+            for item in history[-max_items:]:
                 role = item.get("role", "user")
                 if role in ("user", "assistant"):
-                    messages.append({"role": role, "content": str(item.get("content", ""))})
+                    messages.append({"role": role, "content": str(item.get("content", ""))[:max_len]})
         messages.append({"role": "user", "content": user_content})
         return messages
 

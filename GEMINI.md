@@ -35,20 +35,18 @@ Internal-Regulations-Finder-Online-main/
 │   │   ├── api_revisions.py # 개정/비교 API
 │   │   ├── api_system.py   # 시스템/동기화 API
 │   │   └── main_routes.py  # 메인 페이지 라우트
+│   ├── mcp/                # MCP 도구 (선택, admin_token 필수 재인덱스)
 │   └── services/           # 비즈니스 로직 서비스
 │       ├── search/         # 하이브리드 검색 패키지
 │       ├── document/       # 문서 처리 패키지
-│       ├── files/          # 파일 경로·미리보기
-├── rag/                    # RAG v3 (LLM, pipeline, api_chat)
+│       ├── files/          # 경로 해석·검증·미리보기·삭제 정책
 │       ├── parsers/        # HWP/HWPX 전용 어댑터 + 결과 모델
 │       ├── db.py           # SQLite 싱글톤 DB 관리
 │       ├── file_manager.py # RevisionTracker, FolderWatcher
 │       ├── metadata.py     # TagManager
-│       └── embeddings_backends/  # 임베딩 백엔드 (v2.6 신규)
-│           ├── __init__.py       # create_embeddings export
-│           ├── factory.py        # 백엔드 선택 팩토리
-│           ├── torch_backend.py  # PyTorch/HuggingFace 백엔드
-│           └── onnx_backend.py   # ONNX Runtime 백엔드
+│       └── embeddings_backends/
+├── rag/                    # RAG v3 (LLM, pipeline, api_chat)
+├── PROJECT_AUDIT.md        # 기능 감사 + Remediation Log
 ├── static/                 # 프론트엔드 정적 파일
 │   ├── js/bootstrap/main.js # ESM 엔트리
 │   ├── js/legacy/app.js    # 레거시 UI 번들

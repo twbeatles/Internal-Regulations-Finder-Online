@@ -1,12 +1,18 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
+.eggs/
+*.egg
+*.pyo
+*.pyd
 
 # Virtualenv
 .venv/
 venv/
 env/
+ENV/
 
 # Test/Tool caches
 .pytest_cache/
@@ -15,10 +21,13 @@ env/
 .ruff_cache/
 .pytype/
 pyright-report*.json
-pyright*.json
 .coverage
 .coverage.*
 htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.cache/
 
 # Build artifacts
 build/
@@ -28,14 +37,24 @@ latest_build.txt
 *.log
 *.bak
 static/app.js.bak
+warn-*.txt
+xref-*.html
 
 # Node (Kordoc bridge)
 node_modules/
+# package-lock.json은 재현 빌드용으로 커밋하는 편이 나을 수 있으나
+# 기존 정책(로컬 npm 전용)을 유지한다.
 package-lock.json
 
 # Agent / IDE session artifacts
 terminals/
 .codegraph/
+mcps/
+.grok/
+.claude/
+.cursor/
+*.swp
+*~
 
 # OS / IDE
 .DS_Store
@@ -43,6 +62,13 @@ Thumbs.db
 Desktop.ini
 .vscode/
 .idea/
+*.sublime-*
+
+# Secrets / environment
+.env
+.env.*
+!.env.example
+!.env.sample
 
 # App runtime/user data (do not commit)
 uploads/
@@ -61,6 +87,14 @@ config/*.sqlite3
 *.db-wal
 *.db-shm
 
-# Model cache (too large for GitHub)
+# Model / index cache (too large for GitHub)
 models/
 *.onnx
+reg_qa_server_v10/
+**/reg_qa_server_v10/
+
+# Optional local evaluation dumps
+eval_out/
+tmp/
+temp/
+.tmp/

@@ -100,11 +100,15 @@ def regulations_get_article(file_id: str, article_query: str) -> dict[str, Any]:
 
 
 def regulations_reindex(admin_token: str = "") -> dict[str, Any]:
+    from app.constants import ErrorMessages
     from app.services.settings_store import get_settings_store
 
     settings = get_settings_store().load()
-    expected = str(settings.get("mcp", {}).get("admin_token") or "").strip()
-    if expected and admin_token != expected:
+    expected = str((settings.get("mcp") or {}).get("admin_token") or "").strip()
+    # 토큰 미설정 시 재인덱스 비활성 (감사 H-6)
+    if not expected:
+        return {"success": False, "message": ErrorMessages.MCP_ADMIN_TOKEN_REQUIRED}
+    if not admin_token or admin_token != expected:
         return {"success": False, "message": "admin_token 불일치"}
     folder = str(settings.get("folder") or "").strip()
     if not folder or not os.path.isdir(folder):

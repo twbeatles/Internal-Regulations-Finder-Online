@@ -85,6 +85,20 @@ class AppConfig:
     MAX_CONCURRENT_SEARCHES: ClassVar[int] = 10 # 동시 검색 실행 제한 (AI 모델 CPU 과부하 방지)
     RATE_LIMIT_PER_MINUTE: ClassVar[int] = 300 # 사용자당 분당 요청 제한 완화
     RAG_RATE_LIMIT_PER_MINUTE: ClassVar[int] = _env_int("RAG_RATE_LIMIT_PER_MINUTE", 60)
+    # 관리자 로그인 실패 포함 요청 제한 (브루트포스 완화)
+    ADMIN_AUTH_RATE_LIMIT_PER_MINUTE: ClassVar[int] = _env_int("ADMIN_AUTH_RATE_LIMIT_PER_MINUTE", 20)
+
+    # 검색/RAG 입력 상한 (DoS·비용 완화)
+    MAX_SEARCH_QUERY_LENGTH: ClassVar[int] = _env_int("MAX_SEARCH_QUERY_LENGTH", 500)
+    MAX_RAG_MESSAGE_LENGTH: ClassVar[int] = _env_int("MAX_RAG_MESSAGE_LENGTH", 4000)
+    MAX_RAG_HISTORY_ITEMS: ClassVar[int] = _env_int("MAX_RAG_HISTORY_ITEMS", 6)
+    MAX_RAG_HISTORY_ITEM_LENGTH: ClassVar[int] = _env_int("MAX_RAG_HISTORY_ITEM_LENGTH", 2000)
+
+    # 인덱싱 중 검색 차단 (True: 503성 실패 메시지, False: 락 대기)
+    BLOCK_SEARCH_DURING_INDEXING: ClassVar[bool] = _env_bool("BLOCK_SEARCH_DURING_INDEXING", True)
+
+    # LLM health 체크 TTL (초)
+    LLM_HEALTH_CACHE_TTL: ClassVar[int] = _env_int("LLM_HEALTH_CACHE_TTL", 30)
     
     # ========================================================================
     # 성능 최적화 설정 (v2.6.1)
