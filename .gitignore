@@ -81,6 +81,37 @@ config/stats.json
 config/*.db
 config/*.db-*
 config/*.db.*
+pyright-report*.json
+pyright*.json
+.coverage
+.coverage.*
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+build_log*.txt
+latest_build.txt
+*.log
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+
+# App runtime/user data (do not commit)
+uploads/
+revisions/
+logs/
+backup/
+config/settings.json
+config/secret_key*
+config/stats.json
+config/*.db
+config/*.db-*
+config/*.db.*
 config/*.sqlite
 config/*.sqlite3
 *.db-journal
@@ -98,3 +129,7 @@ eval_out/
 tmp/
 temp/
 .tmp/
+
+# CodeGraph cache
+.codegraph/
+

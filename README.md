@@ -1,618 +1,390 @@
-# 📚 사내 규정 검색기 v3.0
+# 📚 사내 규정 검색기 (Internal Regulations Finder) v3.0
 
-> RAG 질의응답 + AI 하이브리드 검색 (Vector + BM25)
+> **RAG 대화형 질의응답 + AI 하이브리드 검색(Ko-SBERT + BM25) 사내 규정 및 사규 관리 솔루션**  
+> 사내 규정, 지침, 업무 매뉴얼을 LLM 기반 대화형 RAG로 질문하고, 하이브리드 검색·조문 단위 열람 및 개정 이력 비교까지 지원합니다. (인터넷망 및 폐쇄망/오프라인 완벽 지원)
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![Flask](https://img.shields.io/badge/Flask-3.x-green.svg)](https://flask.palletsprojects.com/)
+[![PyQt6](https://img.shields.io/badge/GUI-PyQt6-brightgreen.svg)](https://riverbankcomputing.com/software/pyqt/)
+[![RAG](https://img.shields.io/badge/RAG-Ollama%20%7C%20Cloud%20LLM-blueviolet.svg)](https://ollama.ai/)
+[![ONNX Runtime](https://img.shields.io/badge/Engine-ONNX%20%7C%20PyTorch-orange.svg)](https://onnxruntime.ai/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## ✨ v3.0 업데이트 (2026-07-08)
+---
 
-### 🤖 RAG 질의응답
-- **LLM RAG 채팅** — Ollama 기본 + 클라우드 API 폴백 (`config/settings.json` → `rag` 섹션)
-- **SSE 스트리밍** — `/api/rag/chat`, 인용(citation) 링크, 대화 저장
-- **검색 모드** — `search_mode`: `rag`(기본) | `legacy` (UI 토글 + 관리자 설정)
+## 💡 핵심 기능
 
-### 🏗️ SOLID 리팩토링
-- `app/services/search/`, `document/`, `files/` 패키지 분리
-- `api_tags`, `api_revisions` Blueprint 분리
-- `server.py` 제거 → `run.py` / `server_gui.py` 단일 엔트리
-- 프론트 ESM (`static/js/bootstrap/main.js`, `legacy/app.js`)
-
-### 📄 KCSC-MCP 이식 (2026-07-08)
-- **검색 정규화** — `app/services/search/normalization.py` (조문·금액·동의어 확장)
-- **RAG grounding** — `rag/pipeline/verification.py` + `verification_score`
-- **Kordoc 파서** — `npm install` + `scripts/kordoc_bridge.mjs` (HWP/HWPX/DOCX/PDF 우선)
-- **MCP 도구** — `mcp.enabled=true` 시 `http://127.0.0.1:8081` (`/setup` 안내)
-- **Golden eval** — `scripts/evaluate_search_quality.py`
-
-### 🔒 감사 hardening (2026-07-15)
-- 인덱싱 단일 비행·검색 락, 관리자 로그인 rate limit, MCP reindex 토큰 필수
-- RAG 입력 상한·SSE `replace`, ZIP 실제 바이트 제한, 대화 세션 스코프
-- 상세: [`PROJECT_AUDIT.md`](PROJECT_AUDIT.md)
-
-### ✅ 검증
-- `python -m pytest -q` → **104 passed** (감사 hardening 포함, 2026-07-15)
-
-## ✨ v2.8.3 업데이트 (2026-04-16)
-
-### 🔎 검색 정확도/정합성 보강
-- **필터 검색 캐시 분리** - `filter_file`, `filter_file_id`를 검색 캐시 키에 포함해 필터 검색이 비필터 캐시를 재사용하지 않도록 수정
-- **히스토리 품질 개선** - 검색 히스토리는 성공적으로 검증/수행된 쿼리만 저장
-- **동명이인 파일 캐시 충돌 해소** - 동기화 캐시 메타데이터 키를 basename 대신 폴더 상대경로 기준으로 변경
-
-### 🧠 인덱스 일관성 강화
-- **삭제 후 인덱스 재구축** - 파일 삭제 시 BM25뿐 아니라 vector index도 현재 메모리 상태에서 함께 재구축
-- **공용 인덱스 정리 경로 도입** - `clear_index()`, `remove_file_from_index()`로 인덱스/캐시 정리를 통합
-- **상태 변경 락 정렬** - 업로드/삭제/재구축 경로가 동일한 인메모리 상태를 더 일관되게 갱신하도록 보강
-
-### 🧾 리비전/프론트 UX 보완
-- **리비전 버전 연속성 보장** - legacy filename 기반 이력과 `file_id` 기반 이력을 함께 보고 다음 버전을 계산
-- **ReaderMode 원문 미리보기 개선** - 가능하면 `file_id` 기준으로 원문 미리보기를 호출해 동명 파일 충돌 완화
-
-### 📦 빌드/검증 정합성
-- **spec 재점검 완료** - `internal_regulations_lite.spec` 포함 전체 `.spec` 파일을 다시 확인했고, 현재 코드 변경 기준 추가 수정은 불필요
-- **검증 기준 갱신** - 현재 브랜치 기준 `python -m pytest -q` -> `70 passed`
-
-## ✨ v2.6.1 업데이트 (2026-01-18)
-
-### 🚀 성능 최적화 (Advanced)
-- **API 응답 최적화** - Gzip 압축, JSON 정밀도 제한, 콘텐츠 미리보기 제한
-- **렌더링 가속** - HTML Resource Hints (preload/preconnect), Script defer, DOM 처리 최적화
-- **정규식 캐싱** - 백엔드 TextHighlighter LRU 캐시 도입
-
-### 🔌 완전 오프라인 지원
-- **정적 자원 다운로더** - `download_static.py`로 jsPDF, AutoTable 등 필수 라이브러리 로컬 저장
-- **자동 폴백 시스템** - CDN 연결 실패 시 로컬 리소스 자동 전환, 시스템 폰트 폴백
-- **검증된 모델 다운로드** - `download_models.py`를 통한 안정적인 모델 준비
-
-### 🧠 임베딩 백엔드 시스템
-- **설정 가능한 임베딩 엔진** - torch / onnx_fp32 / onnx_int8 선택 가능
-- **ONNX Runtime 지원** - 인텀 없이 경량 추론 가능
-- **자동 Fallback** - ONNX 실패 시 torch로 자동 전환
-- **GUI 설정** - 서버 GUI에서 백엔드 선택 UI 추가
-
-## ✨ v2.6.2 업데이트 (2026-02)
-
-### 🚀 성능 리팩토링
-- **클라이언트 중복 제거** - 관리자 초기화/업로드/상태 갱신 레거시 블록 정리
-- **관리자 부트스트랩 단일화** - `initAdmin()` idempotent 가드 + 단일 폴링 루프
-- **API 소프트 캐시** - `/api/status`, `/api/stats` 1.5초 메모리 캐시로 중복 호출 억제
-- **PDF 지연 로딩** - jsPDF/AutoTable을 내보내기 클릭 시점에 로드 (로컬 vendor 우선)
-
-### 🧠 서버 검색 경로 최적화
-- **SearchCache 구조 개선** - 튜플 대신 명시 엔트리 구조 사용
-- **캐시 키 정합성 강화** - `sort_by`를 캐시 키에 포함
-- **TTL 정책 정리** - 기본 TTL + 적응형 연장(상한 2배)
-- **하이라이트 최적화** - 쿼리 단일 정규식 패턴 캐시 적용
-
-### 📄 파일 미리보기 최적화
-- **Preview LRU 캐시** - `path+mtime+length` 기반 캐시
-- **TXT fast-path** - 미리보기 요청 시 선두 텍스트 우선 읽기
-- **추출기 재사용** - 요청마다 `DocumentExtractor` 재생성 제거
-
-## ✨ v2.8 구현 반영 (2026-02-25)
-
-### 🔐 보안/운영 안전장치
-- **CORS allowlist 강제** - `CORS_ALLOWED_ORIGINS` 기반 허용 origin만 응답
-- **세션 쿠키 정책 명시 적용** - `HttpOnly`, `SameSite`, `Secure`를 설정값으로 고정
-- **운영 fail-fast** - `APP_ENV=production`에서 waitress 미설치 시 서버 즉시 종료
-
-### 🔌 API 계약 표준화
-- `/api/search/history`: `success` + `popular[{query,count}]` + `popular_legacy` 동시 제공
-- `/api/search/suggest`: `success` envelope 추가
-- `/api/status`, `/api/health`: `success` envelope 추가(기존 필드 유지)
-- `/api/models`: `reindex` 기본값 `true`, 실제 재인덱스 트리거 여부 응답 포함
-
-### 📁 파일/업로드 정책 강화
-- 파일 삭제 기본 정책을 `index_only`로 전환 (`delete_source=true` 옵션 시에만 물리 삭제)
-- 삭제 응답에 `deletion_policy`, `deleted_source`, `deleted_from_index` 포함
-- ZIP 업로드 제한 도입:
-  - `max_entries`
-  - `max_uncompressed_bytes`
-  - `max_single_file_bytes`
-
-### 🌐 프론트/PWA 정합성
-- 자동완성 히스토리가 표준/레거시 포맷 모두 처리
-- 검색 결과 하이라이트 상태(`lastRenderedQuery`) 동기화
-- 관리자 테마 아이콘 로직을 `ThemeManager.getTheme()` 기반으로 수정
-- Toast 렌더링을 `textContent` 기반으로 변경(XSS 방어)
-- Service Worker는 GET allowlist API만 캐시하고 POST/인증/관리 API 캐시 제외
-
-## ✨ v2.8.2 업데이트 (2026-03-16)
-
-### 📄 HWP/HWPX 추출 경로 보강
-- **`.hwpx` 지원 추가** - ZIP+XML 기반 파서를 통해 문단/표 텍스트를 추출
-- **포맷별 엔진 분리** - `.hwp`는 `olefile` 기반, `.hwpx`는 내장 ZIP/XML 경로로 명시 분기
-- **진단 정보 유지** - `engine_used`, `fallback_used`, `quality_score`, `warnings`를 미리보기/업로드 후속 흐름에 보존
-- **안전한 실패 처리** - 파싱 실패나 선택 의존성 누락 시 서버 전체는 계속 동작하고 파일 단위 오류만 반환
-
-### 📦 이전 버전
-| 버전 | 주요 변경 |
-|------|----------|
-| v2.5 | 벡터 검색 최적화, DB 인덱스, API 경량화 |
-| v2.4 | 검색 캐시 히트율 향상, DB PRAGMA 최적화 |
-| v2.3 | BM25 최적화, Lazy Import, 예외 처리 강화 |
-| v2.2 | API 호환성, LangChain 버전 대응 |
-| v2.1 | HWP/Excel 지원, OCR 기능 |
+* 🤖 **RAG 대화형 AI 질의응답**: 로컬 LLM(Ollama) 및 클라우드 LLM(OpenAI/Anthropic/Gemini)과 연동하여 사내 규정을 기반으로 정확한 답변과 조문 출처(Citation)를 실시간 SSE 스트리밍으로 제공
+* 🔍 **AI 하이브리드 검색 & 질의 정규화**: 시맨틱 벡터 검색(Ko-SBERT)과 키워드 검색(BM25)을 결합하고, 조문 번호·금액 단위·동의어를 자동 확장하여 높은 정확도 보장
+* 📑 **다양한 문서 포맷 지원 (Kordoc 통합)**: `HWP`, `HWPX`, `DOCX`, `PDF`, `XLSX`, `XLS`, `TXT` 문서의 본문, 표, 조문 구조 정보 자동 추출
+* 📖 **조문 단위 파싱 & 리더 모드**: 제X조/제X장 단위의 스마트 분할, 검색어 하이라이트 순차 이동, 글자 크기 조절 가능한 원문 리더
+* 🔄 **개정 이력 관리 & Diff 비교**: 규정 변경 시 버전별 이력 추적 및 추가/수정/삭제된 조항의 시각적 비교
+* 🔌 **KCSC-MCP 연동 지원**: Model Context Protocol 서버를 내장하여 외부 AI 에이전트(Claude Desktop, Cursor, Grok 등)와 손쉽게 사내 규정 연동
+* 🖥️ **PyQt6 시스템 트레이 GUI & 모던 웹 UI**: 백그라운드 트레이 구동, 윈도우 시작프로그램 등록, RAG 채팅/레거시 검색 탭 전환이 가능한 반응형 UI
+* ⚡ **완전 오프라인(폐쇄망) 지원**: 인터넷이 차단된 사내망에서도 사전 다운로드된 모델, Ollama 로컬 LLM, 정적 리소스로 100% 로컬 구동 가능
 
 ---
 
-## 📋 주요 기능
+## 🚀 빠른 시작 (Quick Start)
 
-| 기능 | 설명 |
-|------|------|
-| 📂 **다양한 포맷** | TXT, DOCX, PDF, XLSX, XLS, HWP, HWPX |
-| 🔍 **하이브리드 검색** | Vector + BM25 결합 검색 |
-| 🏷️ **문서 태깅** | 자동 분류 및 파일별 태그 필터링 |
-| 🔄 **버전 관리** | 개정 이력 추적, Diff 비교 |
-| 📌 **북마크** | 검색 결과 즐겨찾기 |
-| 🌙 **다크/라이트** | 테마 전환 지원 |
-| 🔌 **오프라인 모드** | 폐쇄망 지원 (로컬 모델) |
-| 📊 **통계 대시보드** | 실시간 시스템 상태 모니터링 |
+### 1. 시스템 요구사항
 
----
+| 구분 | RAG + AI 하이브리드 모드 (기본) | 초경량 모드 (BM25 키워드 전용) |
+|------|-------------------------------|-----------------------------|
+| **Python** | 3.10 이상 | 3.10 이상 |
+| **RAM** | 최소 8GB / 권장 16GB (로컬 LLM 구동 시) | 최소 2GB / 권장 4GB |
+| **저장공간** | 약 3~5GB (임베딩 및 로컬 LLM 포함) | 약 200MB |
+| **운영체제** | Windows 10/11, Linux, macOS | Windows 10/11, Linux, macOS |
 
-## 🚀 빠른 시작
-
-### 시스템 요구사항
-
-| 항목 | 최소 | 권장 |
-|------|------|------|
-| **Python** | 3.10+ | 3.11+ |
-| **RAM** | 4GB | 8GB (AI 모델 사용 시) |
-| **디스크** | 1GB | 3GB (오프라인 모델 포함) |
-| **OS** | Windows 10, Linux, macOS | Windows 11 |
-
-### 설치
+### 2. 설치
 
 ```bash
-# 1. 저장소 클론
+# 1. 저장소 클론 및 이동
 git clone <repository-url>
-cd Internal-Regulations-Finder-Online-main
+cd Internal-Regulations-Finder-Online
 
-# 2. 가상환경 생성 (권장)
+# 2. 가상환경 생성 및 활성화 (권장)
 python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # Linux/macOS
+venv\Scripts\activate      # Windows
+# source venv/bin/activate  # Linux / macOS
 
-# 3. 의존성 설치
-# 전체 기능 (AI 포함, ~2GB)
-pip install -r requirements.txt
+# 3. 의존성 패키지 설치 (환경에 따라 선택)
+pip install -r requirements.txt       # 전체 기능 (RAG + AI 하이브리드)
+# pip install -r requirements_lite.txt # 초경량 모드 (BM25 전용)
 
-# 경량 버전 (BM25만, ~200MB)
-pip install -r requirements_lite.txt
+# (선택) Kordoc 고도화 파서 브릿지 사용 시
+# npm install
 ```
 
-### 실행
+### 3. 서버 실행
 
 ```bash
-# 콘솔 서버
-python run.py
-
-# GUI 서버 (시스템 트레이, 권장)
+# [추천] 시스템 트레이 지원 GUI 서버 실행
 python server_gui.py
+
+# 또는 백그라운드/콘솔 서버 실행
+python run.py
 ```
 
-**브라우저 접속**: `http://localhost:8080`  
-**관리자 페이지**: `http://localhost:8080/admin`
+* **사용자 웹 페이지 (RAG 채팅 & 검색)**: `http://localhost:8080`
+* **관리자 설정 페이지**: `http://localhost:8080/admin`
+* **MCP 서버 엔드포인트**: `http://localhost:8081` (설정 활성화 시)
 
 ---
 
-## 📦 빌드 (PyInstaller)
+## 📖 상세 사용 가이드 (User Guide)
 
-### 빌드 옵션 비교
+### 1️⃣ 서버 실행 및 GUI 환경 설정 (`server_gui.py`)
 
-| Spec 파일 | 모드 | AI 기능 | 예상 크기 | 용도 |
-|-----------|------|---------|-----------|------|
-| `regulation_search_gui.spec` | GUI | ✅ 포함 | 500-800MB | 고성능 검색 필요 시 |
-| `regulation_search_ultra_lite_gui.spec` | GUI | ❌ BM25만 | 60-100MB | 경량 배포, 빠른 시작 |
-| `regulation_search_onefile.spec` | GUI (단일 파일) | ❌ BM25만 | 40-60MB | USB 휴대용 |
+GUI 서버를 실행하면 작업 표시줄 오른쪽 **시스템 트레이**에 상주하며 간편하게 서버를 제어할 수 있습니다.
 
-레거시 콘솔 빌드도 계속 유지됩니다:
-- `internal_regulations.spec`
-- `internal_regulations_lite.spec`
-- `regulation_search.spec`
-- `regulation_search_lite.spec`
-
-### 빌드 명령
-
-```bash
-# AI 포함 GUI 버전 (고성능)
-pyinstaller regulation_search_gui.spec --clean
-
-# 초경량 GUI 버전 (BM25만)
-pyinstaller regulation_search_ultra_lite_gui.spec --clean
-
-# 단일 실행 파일 (휴대용)
-pyinstaller regulation_search_onefile.spec --clean
-
-# 레거시 콘솔 full/lite
-pyinstaller internal_regulations.spec --clean
-pyinstaller internal_regulations_lite.spec --clean
+```
+[GUI 주요 기능]
+┌─────────────────────────────────────────────────────────┐
+│ 📚 사내 규정 검색기 서버                                │
+├─────────────────────────────────────────────────────────┤
+│ 상태: 🟢 실행 중 (http://localhost:8080)               │
+│                                                         │
+│ [ 웹 브라우저 열기 ]   [ 관리자 페이지 ]   [ 서버 재시작 ]│
+├─────────────────────────────────────────────────────────┤
+│ ⚙️ 환경 설정                                           │
+│  - 서버 포트: [ 8080 ]                                  │
+│  - AI 모델: [ SNU SBERT (고성능) ▼ ]                    │
+│  - 임베딩 백엔드: [ onnx_fp32 (ONNX 고속 추론) ▼ ]       │
+│  - 검색 모드: [ rag (RAG 대화형) ▼ ]                    │
+│  - [x] Windows 시작 시 자동 실행                        │
+│  - [x] 오프라인(폐쇄망) 모드 활성화                     │
+│  - [ 관리자 비밀번호 변경 ]                             │
+├─────────────────────────────────────────────────────────┤
+│ 📋 실시간 서버 로그 모니터링...                         │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### 빌드 최적화 팁
-
-1. **UPX 설치**: 추가 30-50% 크기 절감
-   ```bash
-   # Windows: https://github.com/upx/upx/releases
-   # spec 파일에서 upx=True 설정
-   ```
-
-2. **CUDA 제외**: GPU 미사용 시 CUDA 라이브러리 제외 (이미 설정됨)
-
-3. **불필요한 언어 제외**: PyQt6 locale 파일 제거
+* **트레이 최소화**: 창을 닫아도 트레이 영역에서 백그라운드로 계속 실행됩니다. (트레이 아이콘 우클릭으로 종료)
+* **포트 및 모델/백엔드 변경**: 포트 번호(기본 `8080`), AI 모델, 임베딩 백엔드(`torch`, `onnx_fp32`, `onnx_int8`)를 UI에서 즉시 변경할 수 있습니다.
+* **관리자 비밀번호 설정**: 웹 관리자 페이지 접속 시 사용할 비밀번호를 GUI에서 안전하게 등록/변경할 수 있습니다.
 
 ---
 
-## 🏗️ 프로젝트 구조
+### 2️⃣ 규정 문서 등록 및 인덱싱 (관리자)
+
+웹 브라우저에서 `http://localhost:8080/admin`으로 접속하여 사내 규정 문서를 시스템에 등록합니다.
 
 ```
-📁 Internal-Regulations-Finder-Online-main/
-├── 📄 run.py                  # 콘솔 엔트리포인트
-├── 📄 server_gui.py           # GUI 서버 (PyQt6, 시스템 트레이)
-├── 📄 download_models.py      # 오프라인용 모델 다운로드
-├── 📁 app/                    # Flask 앱 패키지
-│   ├── __init__.py            # 앱 팩토리 (create_app)
-│   ├── config.py              # AppConfig 설정 클래스
-│   ├── constants.py           # 상수, 에러 메시지, 정규식 패턴
-│   ├── exceptions.py          # 커스텀 예외 클래스 계층
-│   ├── utils.py               # 유틸리티 (TaskResult, MemoryMonitor)
-│   ├── 📁 routes/             # API 라우트
-│   │   ├── api_search.py      # 레거시 검색 API (/api/search)
-│   │   ├── api_files.py       # 파일 CRUD/업로드
-│   │   ├── api_tags.py        # 태그 API
-│   │   ├── api_revisions.py   # 개정/비교 API
-│   │   ├── api_system.py      # 시스템/동기화 API
-│   │   └── main_routes.py     # 메인 페이지 라우트
-│   └── 📁 services/           # 비즈니스 로직 서비스
-│       ├── search/            # 하이브리드 검색 패키지 (RegulationQASystem)
-│       ├── document/          # 문서 추출/파싱/분할/비교
-│       ├── files/             # 경로 해석·미리보기·삭제 정책
-│       ├── 📁 parsers/        # HWP/HWPX 어댑터
-│       ├── db.py              # SQLite 싱글톤 DB 관리
-│       ├── file_manager.py    # RevisionTracker, FolderWatcher
-│       ├── metadata.py        # TagManager
-│       └── embeddings_backends/
-├── 📁 rag/                    # RAG v3 (LLM, pipeline, /api/rag/*)
-├── 📁 static/
-│   ├── js/bootstrap/main.js   # ESM 부트스트랩
-│   ├── js/legacy/app.js       # 레거시 UI 번들
-│   ├── js/rag/                # RAG 채팅 모듈
-│   ├── css/                   # tokens, search, admin, rag
-│   ├── style.css              # 메인 스타일 (@import)
-│   └── sw.js                  # PWA 서비스 워커
-├── 📁 templates/              # HTML 템플릿
-│   ├── index.html             # 메인 검색 페이지
-│   └── admin.html             # 관리자 페이지
-├── 📁 config/                 # 런타임 설정
-│   ├── settings.json          # 사용자 설정
-│   └── regulations.db         # SQLite 데이터베이스
-├── 📁 uploads/                # 업로드된 문서
-├── 📁 revisions/              # 개정 이력 파일
-└── 📁 models/                 # AI 모델 캐시
+[관리자 페이지 워크플로]
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│ 1. 관리자 인증  │ ──> │ 2. 규정 문서    │ ──> │ 3. 자동 인덱싱  │
+│ (비밀번호 입력) │     │    업로드 / 동기화 │   │ (청킹 + 벡터화) │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
 ```
+
+1. **관리자 인증**: 설정된 관리자 비밀번호를 입력하고 로그인합니다.
+2. **문서 업로드**:
+   * **개별 파일 업로드**: `HWPX`, `HWP`, `PDF`, `DOCX`, `XLSX`, `TXT` 파일을 드래그 앤 드롭하여 즉시 업로드합니다.
+   * **ZIP 폴더 업로드**: 폴더째 압축된 ZIP 파일을 업로드하면 내부 폴더 구조를 유지하면서 일괄 추출 및 인덱싱됩니다.
+3. **자동 폴더 동기화 (Watchdog)**:
+   * 사내 공유 드라이브나 로컬 폴더 경로를 지정하고 `▶ 시작`을 누르면, 파일 추가/수정/삭제 시 실시간으로 검색 인덱스에 자동 반영됩니다.
+4. **문서 관리 및 캐시 초기화**:
+   * 등록된 문서 목록에서 파일별 상태, 청크 수, 버전을 확인하고 필요 시 `⚡ 재처리` 또는 `🗑️ 캐시 삭제`를 수행할 수 있습니다.
 
 ---
 
-## 🔌 API 엔드포인트
+### 3️⃣ RAG 대화형 질문 & 하이브리드 검색 (사용자)
 
-### 검색 API
-| 메서드 | 경로 | 설명 |
-|--------|------|------|
-| POST | `/api/search` | 하이브리드 검색 `{query, k, hybrid, sort_by, filter_file, filter_file_id}` |
-| GET | `/api/search/history` | 검색 히스토리 (`success`, `recent`, `popular`, `popular_legacy`) |
-| GET | `/api/search/suggest` | 자동완성 `?q=검색어` (`success`, `suggestions`) |
-| POST | `/api/cache/clear` | 캐시 초기화 |
+메인 페이지(`http://localhost:8080`)에서 자연어 질문이나 검색어를 입력하여 원하는 규정을 빠르게 찾습니다.
 
-### 파일 API
-| 메서드 | 경로 | 설명 |
-|--------|------|------|
-| GET | `/api/files` | 파일 목록 |
-| GET | `/api/files/names` | 파일명 + `file_id` 목록 |
-| POST | `/api/upload` | 파일 업로드 + 인덱싱 |
-| POST | `/api/upload/folder` | ZIP 업로드 + 자동 인덱싱 (제한 파라미터 지원) |
-| DELETE | `/api/files/<filename>` | 파일 삭제 (기본 `index_only`, `delete_source=true` 옵션) |
-| DELETE | `/api/files/all` | 전체 삭제 (기본 `index_only`) |
-| GET/POST/DELETE | `/api/tags` | 태그 관리 |
-| GET/POST | `/api/revisions` | 개정 이력 |
-
-by-id 파일 라우트도 함께 제공됩니다:
-- `/api/files/by-id/<file_id>/preview`
-- `/api/files/by-id/<file_id>/download`
-- `/api/files/by-id/<file_id>`
-- `/api/files/by-id/<file_id>/versions`
-- `/api/files/by-id/<file_id>/versions/<version>`
-- `/api/files/by-id/<file_id>/versions/compare`
-
-### 시스템 API
-| 메서드 | 경로 | 설명 |
-|--------|------|------|
-| GET | `/api/status` | 서버 상태 (`success` + `progress/load_progress`) |
-| GET | `/api/health` | 헬스 체크 (`success` envelope) |
-| GET | `/api/models` | 모델 목록 |
-| POST | `/api/models` | 모델 변경 (`reindex` 기본 `true`) |
-| POST | `/api/sync/start` | 동기화 시작 |
-| POST | `/api/sync/stop` | 동기화 중지 요청 |
-
----
-
-## ⌨️ 단축키
-
-| 키 | 기능 |
-|----|------|
-| `Ctrl+K` | 검색창 포커스 |
-| `J` / `K` | 결과 위/아래 탐색 |
-| `N` / `P` | 하이라이트 탐색 |
-| `T` | 테마 전환 |
-| `R` | 읽기 모드 |
-| `Esc` | 모달 닫기 |
-
----
-
-## ⚙️ 설정
-
-### app/config.py
-
-```python
-class AppConfig:
-    # 서버
-    SERVER_PORT = 8080
-    SERVER_THREADS = 32
-    MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
-    APP_ENV = "development"  # production 시 waitress 필수
-    CORS_ALLOWED_ORIGINS = ["http://localhost:8080", "http://127.0.0.1:8080"]
-    SESSION_COOKIE_HTTPONLY = True
-    SESSION_COOKIE_SAMESITE = "Lax"
-    SESSION_COOKIE_SECURE = False  # production+HTTPS에서는 True 권장
-    
-    # AI 모델
-    DEFAULT_MODEL = "SNU SBERT (고성능)"
-    AVAILABLE_MODELS = {
-        "SNU SBERT (고성능)": "snunlp/KR-SBERT-V40K-klueNLI-augSTS",
-        "BM-K Simal (균형)": "BM-K/ko-simal-roberta-base",
-        "JHGan SBERT (빠름)": "jhgan/ko-sbert-nli"
-    }
-    
-    # 오프라인 모드
-    OFFLINE_MODE = False
-    LOCAL_MODEL_PATH = "./models/snunlp--KR-SBERT-V40K-klueNLI-augSTS"
-    
-    # 검색
-    CHUNK_SIZE = 800
-    CHUNK_OVERLAP = 80
-    VECTOR_WEIGHT = 0.7
-    BM25_WEIGHT = 0.3
-    
-    # 성능
-    MAX_WORKERS = 8
-    SEARCH_CACHE_SIZE = 1000
-    MAX_CONCURRENT_SEARCHES = 10
-    RATE_LIMIT_PER_MINUTE = 300
-    
-    # 임베딩 백엔드 (v2.6 신규)
-    EMBED_BACKEND = "onnx_fp32"  # "torch" | "onnx_fp32" | "onnx_int8"
-    EMBED_NORMALIZE = True   # L2 정규화 여부
-
-    # ZIP 업로드 제한
-    ZIP_MAX_ENTRIES = 1000
-    ZIP_MAX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024
-    ZIP_MAX_SINGLE_FILE_BYTES = 50 * 1024 * 1024
+```
+┌─────────────────────────────────────────────────────────┐
+│ 📚 사내 규정 검색기 (RAG 모드)                          │
+│                                                         │
+│ [ 💬 질문: 부모님 회갑 때 경조사 휴가는 며칠인가요?    ][ 전송 ]│
+│                                                         │
+│ 🤖 답변:                                                │
+│ "취업규칙 제25조에 따르면, 부모의 환갑(회갑) 시         │
+│  유급휴가 1일이 부여됩니다. [출처: 취업규칙.docx (제25조)]" │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### 오프라인 모드 설정
+* **🤖 RAG 대화형 질의응답 (기본)**:
+  * 복잡한 질문도 사내 규정을 실시간 검색/참조하여 명확한 문장으로 정리하고, 근거 조항을 링크(출처)와 함께 안내합니다.
+  * SSE(Server-Sent Events) 실시간 스트리밍으로 지연 없이 빠르게 답변을 확인합니다.
+* **🔍 하이브리드 키워드 검색 모드**:
+  * 상단 토글을 통해 기존 카드형 하이브리드 검색(`Vector + BM25`)으로 전환할 수 있습니다.
+  * 관련도순, 파일명순, 길이순 정렬 및 파일 필터링 지원.
+* **고급 검색 연산자 지원**:
+  * `AND`, `OR`, `NOT`, `"정확한 문구"`, 정규식 검색 지원.
 
-```bash
-# 모델 다운로드
-python download_models.py
+---
 
-# config/settings.json
+### 4️⃣ 상세 읽기, 북마크 & 결과 내보내기
+
+* **📖 읽기 모드 (Reader Mode)**:
+  * 검색 결과 카드 또는 RAG 출처 링크를 클릭하면 조문 단위로 깔끔하게 정리된 뷰어가 열립니다.
+  * `원문` 버튼으로 전체 문서 원본 열람 및 글자 크기(`A+`/`A-`) 조절이 가능합니다.
+* **🔦 하이라이트 순차 탐색**:
+  * 문서 내에서 키워드가 강조 표시되며, <kbd>N</kbd>(다음) / <kbd>P</kbd>(이전) 키로 하이라이트 위치를 빠르게 넘나듭니다.
+* **📌 북마크 & 💾 결과 내보내기**:
+  * 자주 보는 규정은 즐겨찾기에 등록하고, 검색 결과를 `TXT`, `Markdown`, `JSON`, `PDF` 형식으로 다운로드할 수 있습니다.
+
+---
+
+### 5️⃣ 규정 개정 이력 관리 및 Diff 비교
+
+규정이 개정되었을 때 이전 버전과 현재 버전의 차이점을 한눈에 파악할 수 있습니다.
+
+```
+[버전 비교 예시]
+───────────────────────────────────────────────────────────
+- 제12조 (연차유급휴가) 연간 15일의 유급휴가를 부여한다.
++ 제12조 (연차유급휴가) 연간 16일의 유급휴가를 부여하며, 근속연수에 따라 가산한다.
+───────────────────────────────────────────────────────────
+```
+
+* 관리자 페이지 또는 문서 메뉴에서 `버전 이력`을 선택합니다.
+* 비교할 두 버전을 선택하면 추가된 내용(초록색 `+`), 삭제된 내용(빨간색 `-`), 수정된 문단이 시각적인 Diff로 표시됩니다.
+
+---
+
+### 6️⃣ KCSC-MCP (Model Context Protocol) 연동
+
+사내 규정 검색기 v3.0은 **MCP 서버**를 내장하여 외부 AI 도구에서 사내 규정을 조회할 수 있습니다.
+
+* `config/settings.json`에서 `"mcp": {"enabled": true, "port": 8081}` 설정
+* Claude Desktop 또는 Cursor의 MCP 설정에 추가:
+```json
 {
-    "offline_mode": true,
-    "local_model_path": "./models/snunlp--KR-SBERT-V40K-klueNLI-augSTS"
+  "mcpServers": {
+    "regulations": {
+      "url": "http://127.0.0.1:8081/sse"
+    }
+  }
 }
 ```
 
-### HWP / HWPX 지원
+---
 
-- `.hwpx`는 별도 추가 패키지 없이 ZIP+XML 경로로 처리합니다.
-- `.hwp`는 `olefile`이 필요합니다.
-  - 기본 `requirements.txt`, `requirements_lite.txt`에는 포함되어 있습니다.
-  - 커스텀 설치 환경에서 누락되면 `.hwp`만 안전하게 실패하고 나머지 서버 기능은 유지됩니다.
-- 인덱싱은 항상 추출 결과의 `text`만 사용합니다.
-- `metadata`, `tables`, `diagnostics`는 미리보기/업로드 응답과 내부 부가정보로 유지합니다.
+### 7️⃣ 오프라인(폐쇄망) 환경 완벽 구동 가이드
 
-### HWP / HWPX 제한사항
+외부 인터넷 연결이 불가능한 폐쇄망 환경에서도 아래 3단계로 완벽하게 작동합니다.
 
-- `.hwpx`는 문단/표 추출을 우선 지원하지만, 복잡한 수식/도형/매크로/서명 정보는 인덱싱 대상이 아닙니다.
-- `.hwp`는 정식 바이너리 레코드 파서가 아니라 `PrvText` + `BodyText` 휴리스틱 기반 best-effort 추출입니다.
-- 암호화/DRM/손상 문서는 `.hwp`, `.hwpx` 모두 실패할 수 있습니다.
-- 파서가 일부 섹션만 복구한 경우 `warnings`와 `fallback_used`에 반영됩니다.
+#### 1) 인터넷이 되는 PC에서 리소스 준비
+```bash
+# 1. HuggingFace AI 모델 다운로드 (models/ 디렉토리에 저장)
+python download_models.py
+
+# 2. 웹 UI 필수 라이브러리 로컬 다운로드 (static/vendor/ 에 저장)
+python download_static.py
+
+# 3. (RAG 사용 시) Ollama 모델 준비 (예: qwen2.5, llama3 등)
+```
+
+#### 2) 폐쇄망 서버로 파일 복사
+* 소스 코드 전체와 함께 생성된 `models/` 및 `static/vendor/` 폴더를 폐쇄망 서버로 이동합니다.
+
+#### 3) 오프라인 모드 실행
+* `config/settings.json`에서 `"offline_mode": true`로 설정하거나 GUI에서 오프라인 모드를 체크합니다.
+```json
+{
+  "offline_mode": true,
+  "local_model_path": "./models/snunlp--KR-SBERT-V40K-klueNLI-augSTS",
+  "embed_backend": "onnx_fp32",
+  "search_mode": "rag"
+}
+```
 
 ---
 
-## 📊 성능 벤치마크
+## ⌨️ 키보드 단축키 일람
 
-| 항목 | v2.5 | v2.6.2 |
-|------|------|--------|
-| 검색 응답 시간 | ~120ms | ~80ms |
-| 캐시 히트율 | ~85% | ~90% |
-| 메모리 사용량 | ~0.65GB | ~0.60GB |
-| 응답 압축 | 기본 | Gzip 활성화 |
-
-### 성능 특성
-
-| 지표 | 값 |
-|------|-----|
-| 동시 검색 제한 | 10개 (SearchQueue) |
-| 분당 요청 제한 | 300회/IP (RateLimiter) |
-| 캐시 TTL | 600초 (적응형 최대 2배) |
-| 캐시 키 | `query + k + hybrid + sort_by + filter_file + filter_file_id` |
-| 최대 업로드 | 50MB |
+| 단축키 | 기능 | 설명 |
+|--------|------|------|
+| <kbd>Ctrl</kbd> + <kbd>K</kbd> | **검색/질문창 포커스** | 어느 위치에서든 즉시 입력창으로 이동 |
+| <kbd>Enter</kbd> | **검색 / 질문 전송** | 검색 실행 또는 RAG 질문 전송 |
+| <kbd>J</kbd> / <kbd>↓</kbd> | **다음 결과 선택** | 검색 결과 목록에서 아래 항목으로 이동 |
+| <kbd>K</kbd> / <kbd>↑</kbd> | **이전 결과 선택** | 검색 결과 목록에서 위 항목으로 이동 |
+| <kbd>N</kbd> | **다음 하이라이트** | 본문 내 검색어 일치 위치로 다음 이동 |
+| <kbd>P</kbd> | **이전 하이라이트** | 본문 내 검색어 일치 위치로 이전 이동 |
+| <kbd>R</kbd> | **읽기 모드** | 선택된 문서의 상세 리더 창 토글 |
+| <kbd>T</kbd> | **테마 전환** | 다크 모드 ⇄ 라이트 모드 전환 |
+| <kbd>?</kbd> | **단축키 안내** | 키보드 단축키 도움말 모달 표시 |
+| <kbd>Esc</kbd> | **창 닫기** | 열려 있는 모달/뷰어 닫기 |
 
 ---
 
-## 🧪 성능 측정
+## ⚙️ 설정 레퍼런스 (Configuration)
+
+### `app/config.py` & `config/settings.json`
+
+| 설정 변수 | 기본값 | 설명 |
+|-----------|--------|------|
+| `SERVER_PORT` | `8080` | 웹/API 서버 포트 |
+| `DEFAULT_MODEL` | `SNU SBERT (고성능)` | 기본 한국어 임베딩 모델 (`snunlp/KR-SBERT-V40K-klueNLI-augSTS`) |
+| `EMBED_BACKEND` | `onnx_fp32` | 임베딩 엔진 (`torch`, `onnx_fp32`, `onnx_int8`) |
+| `search_mode` | `rag` | 기본 검색 모드 (`rag` 또는 `legacy`) |
+| `CHUNK_SIZE` | `800` | 문서 분할 시 조문 단위 청크 크기 (글자 수) |
+| `CHUNK_OVERLAP` | `80` | 청크 간 중첩 글자 수 (문맥 보존) |
+| `VECTOR_WEIGHT` | `0.7` | 하이브리드 검색 시 시맨틱 벡터 점수 가중치 (0.0 ~ 1.0) |
+| `BM25_WEIGHT` | `0.3` | 하이브리드 검색 시 키워드 BM25 점수 가중치 (0.0 ~ 1.0) |
+| `SEARCH_CACHE_SIZE` | `1000` | LRU 검색 캐시 최대 항목 수 |
+| `SEARCH_CACHE_TTL` | `600` | 검색 캐시 유지 시간 (초, 적응형 2배 연장) |
+| `RATE_LIMIT_PER_MINUTE` | `300` | IP당 분당 최대 요청 수 |
+| `MAX_CONTENT_LENGTH` | `50MB` | 단일 파일 업로드 최대 크기 |
+
+---
+
+## 📦 배포 및 바이너리 빌드 (PyInstaller)
+
+Python이 설치되지 않은 사용자 PC 배포를 위해 PyInstaller 빌드 스크립트를 제공합니다.
+
+| Spec 파일 | 대상 환경 | AI 기능 | 예상 크기 | 용도 |
+|-----------|-----------|---------|-----------|------|
+| `regulation_search_gui.spec` | PyQt6 GUI | ✅ RAG + 임베딩 | ~600MB | **일반 권장 배포본** (고성능 AI 검색) |
+| `regulation_search_ultra_lite_gui.spec` | PyQt6 GUI | ❌ BM25만 | 60~100MB | 저사양 PC 및 초경량 배포 |
+| `regulation_search_onefile.spec` | 단일 exe | ❌ BM25만 | 40~60MB | USB 휴대용 단일 파일 |
 
 ```bash
-# 테스트 실행 (표준)
+# 1. 정식 GUI 버전 빌드 (권장)
+pyinstaller regulation_search_gui.spec --clean
+
+# 2. 초경량 GUI 버전 빌드
+pyinstaller regulation_search_ultra_lite_gui.spec --clean
+
+# 3. 단일 실행파일(Onefile) 빌드
+pyinstaller regulation_search_onefile.spec --clean
+```
+
+> **빌드 결과물 위치**: `dist/` 폴더 내 실행 파일 생성
+
+---
+
+## 🔌 주요 REST API 요약
+
+### 1. RAG & 검색 API
+| 메서드 | 엔드포인트 | 설명 |
+|--------|------------|------|
+| `POST` | `/api/rag/chat` | RAG 대화형 스트리밍 질의응답 (SSE 지원) |
+| `POST` | `/api/search` | 하이브리드/키워드 검색 (`query`, `k`, `hybrid`, `sort_by`, `filter_file_id`) |
+| `GET` | `/api/search/suggest` | 검색어 자동완성 추천 (`?q=검색어`) |
+| `GET` | `/api/search/history` | 최근 및 인기 검색어 히스토리 조회 |
+| `POST` | `/api/cache/clear` | 검색 캐시 수동 초기화 |
+
+### 2. 파일 & 개정 관리 API
+| 메서드 | 엔드포인트 | 설명 |
+|--------|------------|------|
+| `GET` | `/api/files` | 등록된 파일 목록 및 상태 조회 |
+| `POST` | `/api/upload` | 단일/다중 파일 업로드 및 자동 인덱싱 |
+| `POST` | `/api/upload/folder` | ZIP 압축 폴더 업로드 |
+| `GET` | `/api/files/by-id/<file_id>/preview` | 파일 원본 텍스트 미리보기 |
+| `GET` | `/api/files/by-id/<file_id>/download` | 파일 원본 다운로드 |
+| `DELETE` | `/api/files/by-id/<file_id>` | 파일 삭제 (`delete_source=true` 시 물리 삭제) |
+| `GET` | `/api/files/by-id/<file_id>/versions` | 문서의 버전별 개정 이력 조회 |
+| `GET` | `/api/files/by-id/<file_id>/versions/compare` | 두 버전 간 차이점(Diff) 데이터 조회 |
+
+### 3. 시스템 및 동기화 API
+| 메서드 | 엔드포인트 | 설명 |
+|--------|------------|------|
+| `GET` | `/api/status` | 서버 준비 상태 및 인덱싱 진행률 (`load_progress`) |
+| `GET` | `/api/health` | 서버 헬스체크 |
+| `GET` / `POST` | `/api/models` | 사용 가능한 AI 모델 목록 조회 및 모델 동적 변경 |
+| `POST` | `/api/sync/start` | 폴더 실시간 감시 동기화(Watchdog) 시작 |
+| `POST` | `/api/sync/stop` | 동기화 중지 요청 |
+
+---
+
+## 🧪 성능 벤치마크 및 테스트
+
+```bash
+# 1. 단위 및 통합 테스트 실행 (104개 테스트 통과)
 python -m pytest -q
 
-# 검색 API 스모크 벤치마크
-python scripts/perf_smoke.py
+# 2. 검색 성능 스모크 벤치마크 (동시성 1/5/10, 워밍업 30회, 측정 200회)
 python scripts/perf_smoke.py --base-url http://127.0.0.1:8080 --query "휴가 규정"
 ```
 
-`scripts/perf_smoke.py`는 워밍업 30회, 측정 200회, 동시성 1/5/10 기준으로 p50/p95/p99, 평균 응답 크기, 에러율을 출력합니다.
+* **평균 검색 응답 속도**: ~80ms (캐시 적중 시 < 5ms)
+* **캐시 히트율**: ~90% (적응형 TTL 적용)
+* **테스트 스위트**: 104 passed (2026-07-15 hardening 포함)
 
 ---
 
-## 🔒 보안
+## 🔒 보안 아키텍처
 
-- **XSS 방지**: 모든 사용자 입력에 `escapeHtml()` 적용
-- **Path Traversal 방지**: 경로 정규화 및 `..` 패턴 차단
-- **SQL Injection 방지**: 파라미터 바인딩 사용
-- **Rate Limiting**: IP 기반 요청 제한
-- **CORS Allowlist**: 허용된 Origin만 credentials 응답 허용
-- **세션 쿠키 강화**: `HttpOnly`/`SameSite`/`Secure` 정책 적용
+* **XSS 방어**: 프론트엔드 전 영역에서 텍스트 기반 안전 렌더링(`escapeHtml` / `textContent`) 적용
+* **Path Traversal 방지**: 업로드 및 미리보기 경로의 정규화(`normpath`)와 상위 디렉터리(`..`) 참조 차단
+* **인증 및 상태 변경 제어**: 파일 업로드, 삭제, 태그 수정, 모델 변경 등 상태 변경 API는 관리자 인증 강제
+* **CORS Allowlist & 세션 쿠키**: `HttpOnly`, `SameSite=Lax` 정책 적용 및 허용된 오리진만 통신 허용
+* **감사 Hardening**: 인덱싱 단일 비행 락, 관리자 로그인 속도 제한, ZIP 압축 해제 용량 실시간 감시
 
 ---
 
-## 🐛 트러블슈팅
+## 🐛 트러블슈팅 & FAQ
 
-| 문제 | 해결 |
-|------|------|
-| 모델 로드 실패 | `OFFLINE_MODE=True` + `LOCAL_MODEL_PATH` 설정 |
-| 검색 느림 | 캐시 크기 증가 (`SEARCH_CACHE_SIZE`) |
-| 메모리 부족 | 경량 버전 사용 (`requirements_lite.txt`) |
-| HWP 추출 실패 | `pip install olefile` 확인, 없으면 `.hwp`만 안전하게 실패하고 서버는 계속 동작 |
-| HWPX 추출 실패 | 손상된 ZIP/XML 여부 확인, 실패 시 파일 단위 오류만 반환되고 다른 문서 처리는 계속 진행 |
-| OCR 필요 | Tesseract 설치 + `pip install pytesseract pdf2image` |
-| 빌드 오류 | PyInstaller 최신 버전 사용, `--clean` 옵션 |
-| 운영 실행 시 즉시 종료 | `APP_ENV=production`이면 `waitress` 설치 필요 (`pip install waitress`) |
+**Q1. AI 모델 로드 시 메모리 부족(OOM) 오류가 발생합니다.**  
+A. `requirements_lite.txt`를 사용하는 초경량 모드(`regulation_search_ultra_lite_gui.spec`)를 사용하거나, `settings.json`에서 `"embed_backend": "onnx_int8"`로 변경하여 메모리 사용량을 대폭 절감할 수 있습니다.
+
+**Q2. 한글(.hwp/.hwpx) 문서 내용이 추출되지 않습니다.**  
+A. `.hwpx`는 기본 파서로 동작하며, `.hwp`는 `pip install olefile`이 필요합니다. 더 높은 품질의 파싱을 원하시면 `npm install` 후 Kordoc 브릿지를 활성화하세요.
+
+**Q3. 사내 폐쇄망에서 폰트나 아이콘이 깨집니다.**  
+A. 인터넷이 되는 환경에서 `python download_static.py`를 실행하여 `static/vendor/` 폴더를 생성한 후 폐쇄망 서버로 함께 복사하면 시스템 기본 폰트와 로컬 리소스로 자동 전환됩니다.
+
+**Q4. 서버를 다른 PC에서 접속하게 하려면 어떻게 하나요?**  
+A. 방화벽에서 포트(기본 `8080`)를 허용하고, 접속하려는 PC의 웹 브라우저에서 `http://[서버IP]:8080`으로 접속하면 됩니다.
+
+---
+
+## 📜 릴리즈 노트 (v3.0 기준)
+
+* **v3.0.0**: RAG 대화형 질의응답 탑재, KCSC-MCP 서버 내장, Kordoc 파서 통합, SOLID 아키텍처 리팩토링 및 감사 hardening
+* **v2.8.3**: 파일 필터 캐시 키 분리, 삭제 시 인메모리 벡터/BM25 동시 재구축, 리비전 버전 연속성 보강
+* **v2.8.2**: `.hwpx` 전용 ZIP/XML 파서 추가 및 `.hwp` olefile 엔진 분리 안정화
+* **v2.8.0**: CORS 화이트리스트 도입, 세션 쿠키 보안 강화, ZIP 폴더 업로드 기능 탑재
+* **v2.7.0**: 파일 고유 식별자(`file_id`) 도입, 관리자 인증 강화, 안전한 클라이언트 하이라이트 전환
+* **v2.6.1**: ONNX Runtime 임베딩 백엔드 지원, 적응형 LRU 캐시, 완전 오프라인 정적 다운로더 추가
 
 ---
 
 ## 📝 라이선스
 
-© 2026 사내 규정 검색기
-
----
-
-## 🔗 관련 링크
-
-- [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki)
-- [HuggingFace 한국어 SBERT](https://huggingface.co/snunlp/KR-SBERT-V40K-klueNLI-augSTS)
-- [PyInstaller 문서](https://pyinstaller.org/)
-- [Flask 문서](https://flask.palletsprojects.com/)
-
----
-
-## ✨ v2.7 구현 반영 (2026-02-20)
-
-### 🔐 보안 강화
-- 기본 관리자 비밀번호 fallback(`"admin"`) 제거: 미설정 시 fail-closed
-- 상태 변경 API 관리자 권한 통일:
-  - `POST /api/upload`
-  - `POST /api/upload/folder`
-  - `POST /api/revisions`
-  - `POST /api/tags/set`
-  - `POST /api/tags/auto`
-  - `POST /api/cache/clear`
-- 검색 결과 렌더링 XSS 방어: 클라이언트 안전 하이라이트(escape 기반)로 전환
-- 리비전 저장 경로 검증 강화: revisions 루트 이탈 차단
-
-### 🧭 파일 식별 체계 개선
-- `file_id`(정규화 절대경로 기반 해시) 도입
-- 파일 관련 API/검색 결과에 `file_id` 병행 제공
-- 동명이인 파일 충돌 완화(미리보기/태그/리비전/필터)
-
-### 🔌 API 정합화(하위호환 alias 포함)
-- `/api/status`: `load_progress` 유지 + `progress` alias 추가
-- `/api/sync/status`: 기존 필드 유지 + `status.{running,current_folder,progress,error}` 추가
-- `/api/revisions` GET: `history` 유지 + `revisions` alias 추가
-- `/api/tags/auto`: `suggested_tags` 유지 + `tags` alias 추가
-
-### 📁 파일/업로드 기능
-- ZIP 폴더 업로드 API 추가: `POST /api/upload/folder`
-- 다운로드 복구:
-  - `GET /api/files/by-id/<file_id>/download`
-  - `GET /api/files/<path:filename>/download` (호환)
-- by-id 파일 API 추가:
-  - `GET /api/files/by-id/<file_id>/preview`
-  - `DELETE /api/files/by-id/<file_id>`
-  - `GET /api/files/by-id/<file_id>/versions`
-  - `GET /api/files/by-id/<file_id>/versions/<version>`
-  - `GET /api/files/by-id/<file_id>/versions/compare`
-
-### 🧠 Lite(BM25-only) 안정화
-- 모델 미로드 환경 캐시 경로 안정화
-- splitter/캐시 로직의 BM25-only fallback 보강
-
-### 📱 PWA/UX 정합화
-- 프론트 업로드 확장자 필터를 백엔드와 일치(`txt/docx/pdf/xlsx/xls/hwp/hwpx`)
-- PWA 아이콘 경로 정합화:
-  - `static/icons/icon-192.png`
-  - `static/icons/icon-512.png`
-
-### 🧪 테스트
-- 신규/보강 테스트 추가 후 기준 통과:
-  - `python -m pytest -q`
-
----
-
-## ✅ 정합성 점검 메모 (2026-03-01)
-
-- `.spec` 문법 점검 결과: `python -m py_compile *.spec` 기준 전부 정상.
-- 보안 관점 정합화: 주요 GUI/Lite spec 5종은 `config` 폴더 전체 포함 대신 `config/settings.example.json`만 포함하도록 보강.
-- 문서/코드 기준 고정:
-- 프론트는 ESM (`static/js/`) 기준; `static/app.js`는 deprecated shim.
-- `python -m pytest -q` → **104 passed** (2026-07-15, 감사 hardening 포함).
-  - `BUILD.md` Lite 예상 크기 표기는 `60-100MB`로 정합화.
-- 2026-07-15 hardening: 인덱싱 단일 비행, 검색 락/인덱싱 중 차단, 관리자 로그인 rate limit,
-  MCP reindex 토큰 필수, RAG 입력 상한·스트림 `replace` 이벤트, ZIP 실제 바이트 제한,
-  `validate_folder_path` 공용화, 대화 세션 스코프. 상세는 `PROJECT_AUDIT.md` Remediation Log.
-
----
-
-## v2.8.1 유지보수 반영 (2026-03-15)
-
-- 선택적 의존성 fallback 정리:
-  - `flask-cors` 미설치 시 allowlist 기반 내장 CORS fallback 사용 가능
-  - `waitress` 미설치 시 development 에서만 Flask fallback, production 에서는 fail-fast 유지
-  - OCR(`pytesseract`, `pdf2image`, `Pillow`)은 계속 선택적 의존성
-- 품질 가드 추가:
-  - `scripts/check_utf8.py`
-  - `pyrightconfig.json`
-  - `tests/test_optional_dependencies.py`
-  - `tests/test_file_routes_by_id.py`
-- 패키징 정합화 범위 확장:
-  - `internal_regulations.spec`
-  - `internal_regulations_lite.spec`
-  - `regulation_search.spec`
-  - `regulation_search_lite.spec`
-  - `server.spec`
-  - `server_gui.spec`
-- 위 spec은 최근 동적 import 경로와 `config/settings.example.json` 포함 정책에 맞춰 재점검함.
-
----
-
-## v2.8.3 유지보수 반영 (2026-04-16)
-
-- 검색 캐시 키는 이제 `query + k + hybrid + sort_by + filter_file + filter_file_id` 기준으로 분리됩니다.
-- 파일 삭제는 인메모리 검색 상태에서 BM25/vector index를 함께 재구축합니다.
-- 동기화 캐시 메타데이터는 basename이 아니라 폴더 상대경로 기준으로 관리됩니다.
-- 리비전 버전 번호는 `file_id`와 legacy filename 키를 함께 보고 이어서 증가합니다.
-- ReaderMode 원문 미리보기는 가능하면 `file_id`를 우선 사용합니다.
-- 전체 `.spec` 문법은 다시 점검했고, `internal_regulations_lite.spec` 포함 현 상태에서 추가 패키징 수정은 불필요했습니다.
-- 현재 브랜치 검증 기준:
-  - `python -m pytest -q` -> `70 passed`
-
-### PowerShell에서 spec 문법 점검
-
-`python -m py_compile *.spec`는 bash 계열 셸에서는 편하지만, PowerShell에서는 와일드카드가 그대로 전달될 수 있습니다. Windows/PowerShell에서는 아래 명령을 권장합니다.
-
-```powershell
-Get-ChildItem -Name *.spec | ForEach-Object { python -m py_compile $_ }
-```
+본 프로젝트는 **MIT License**에 따라 자유롭게 수정 및 배포가 가능합니다.  
+© 2026 사내 규정 검색기 (Internal Regulations Finder).
