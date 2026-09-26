@@ -229,7 +229,8 @@ excluded_binaries = [
     'tbb', 'libtbb',
     
     # OpenBLAS
-    'openblas', 'libopenblas',
+    # NumPy 2.x 실행에 필수이므로 OpenBLAS는 유지 (제거 시 _multiarray_umath 로드 실패)
+    # 'openblas', 'libopenblas',
     
     # Qt (PyQt6는 필요하므로 제외하지 않음)
     'qt5', 'pyside',

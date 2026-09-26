@@ -18,6 +18,7 @@
 
 import os
 import sys
+from PyInstaller.utils.hooks import copy_metadata
 
 block_cipher = None
 project_dir = os.path.dirname(os.path.abspath(SPEC))
@@ -187,7 +188,8 @@ excluded_binaries = [
     'tbb', 'libtbb',
     
     # OpenBLAS
-    'openblas', 'libopenblas',
+    # NumPy 2.x 실행에 필수이므로 OpenBLAS는 유지 (제거 시 _multiarray_umath 로드 실패)
+    # 'openblas', 'libopenblas',
     
     # Qt (GUI)
     'qt5', 'qt6', 'pyqt', 'pyside',
@@ -249,6 +251,21 @@ a.datas = [
 ]
 print(f"[Ultra Lite] 필터링 후 데이터 수: {len(a.datas)}")
 
+# .dist-info 일괄 제외로 날아간 실행 필수 메타데이터 복원
+# (werkzeug serving이 importlib.metadata.version() 호출)
+for _pkg in ('werkzeug', 'flask'):
+    try:
+        for _src, _dest in copy_metadata(_pkg):
+            if os.path.isdir(_src):
+                for _root, _, _files in os.walk(_src):
+                    for _fn in _files:
+                        _full = os.path.join(_root, _fn)
+                        a.datas.append((os.path.join(_dest, os.path.relpath(_full, _src)), _full, 'DATA'))
+            else:
+                a.datas.append((_dest, _src, 'DATA'))
+    except Exception:
+        pass
+
 # ============================================================================
 # PYZ
 # ============================================================================
@@ -269,7 +286,7 @@ exe = EXE(
     name='사내규정검색기_Lite',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=True,          # 디버그 심볼 제거
+    strip=False,         # Windows에 GNU strip 없음 (True면 FileNotFoundError로 exit 1)
     upx=True,            # UPX 압축
     console=True,        # 콘솔 모드 (GUI 제외)
     disable_windowed_traceback=False,
@@ -288,7 +305,7 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
-    strip=True,
+    strip=False,
     upx=True,
     upx_exclude=[
         'vcruntime140.dll',

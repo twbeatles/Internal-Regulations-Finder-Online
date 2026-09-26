@@ -191,7 +191,7 @@ exe = EXE(
     name="사내규정검색기",
     debug=False,
     bootloader_ignore_signals=False,
-    strip=True,
+    strip=False,
     upx=True,
     console=True,
     disable_windowed_traceback=False,
@@ -208,7 +208,7 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
-    strip=True,
+    strip=False,
     upx=True,
     upx_exclude=[
         "vcruntime140.dll",

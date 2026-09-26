@@ -192,3 +192,11 @@ Get-ChildItem -Name *.spec | ForEach-Object { python -m py_compile $_ }
   - `watchdog.observers`, `watchdog.events`
   - `langchain_text_splitters`, `langchain_core.documents`, `langchain_community.embeddings`, `langchain_community.vectorstores`
   - run.py 기반 full spec에서 `onnxruntime` 및 `app.services.embeddings_backends` 수집 경로 명시
+
+## 빌드 결함 수정 메모 (2026-09-26)
+
+- `regulation_search_ultra_lite.spec` 빌드·실행 검증 중 발견된 3건을 전 lite 계열 spec에 동일 적용함.
+- OpenBLAS 제외 삭제: NumPy 2.x는 `libopenblas` DLL 없이 `_multiarray_umath` 로드에 실패하므로 제외 목록에서 제외 (ultra_lite/lite/onefile/ultra_lite_gui).
+- `strip=True`를 `strip=False`로 변경: Windows에 GNU strip이 없어 `FileNotFoundError`로 빌드 exit 1이 되던 문제 (internal_regulations_lite/regulation_search/regulation_search_lite/ultra_lite).
+- `werkzeug`/`flask` dist-info 복원: `.dist-info` 일괄 제외 뒤 `copy_metadata`를 3-튜플 TOC로 전개해 다시 추가 (frozen 실행 시 `PackageNotFoundError: werkzeug` 해소).
+- 검증: `regulation_search_ultra_lite` 빌드 exit 0, 산출물 71MB, frozen 실행 후 `/api/health` 200·`/api/models` 신 5종 목록 확인.
