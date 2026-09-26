@@ -1280,7 +1280,7 @@ class ServerWindow(QMainWindow):
         
         # 활성 검색 수 업데이트
         try:
-            from server import search_queue
+            from app.services.search import search_queue
             queue_stats = search_queue.get_stats()
             self.search_value.setText(str(queue_stats.get('active', 0)))
         except (ImportError, AttributeError):

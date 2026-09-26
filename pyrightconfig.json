@@ -4,7 +4,6 @@
     "app",
     "tests",
     "run.py",
-    "server.py",
     "server_gui.py",
     "download_models.py",
     "download_static.py",
@@ -12,7 +11,6 @@
   ],
   "exclude": [
     "**/__pycache__",
-    ".pytest_cache",
-    "server_backup.py"
+    ".pytest_cache"
   ]
 }

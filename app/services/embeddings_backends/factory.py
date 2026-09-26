@@ -7,11 +7,35 @@
 """
 
 import os
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from app.utils import logger, get_app_directory
 from app.config import AppConfig
 from app.exceptions import ModelLoadError, ModelOfflineError
+
+
+def get_model_preset(model_id_or_path: str) -> Dict[str, str]:
+    """모델 ID/경로에 대응하는 EMBED_MODEL_PRESETS 조회
+
+    HF ID 정확 매칭을 우선하고, 로컬 캐시 경로
+    (`..--..` 폴더명)인 경우 repo 부분으로 매칭을 시도한다.
+    매칭 실패 시 빈 dict를 반환한다.
+    """
+    presets = getattr(AppConfig, 'EMBED_MODEL_PRESETS', {}) or {}
+    if not model_id_or_path:
+        return {}
+
+    if model_id_or_path in presets:
+        return dict(presets[model_id_or_path])
+
+    candidate = str(model_id_or_path).replace('\\', '/').rstrip('/')
+    folder_name = candidate.split('/')[-1]
+    # 로컬 캐시 폴더명 규칙: "org--repo"
+    repo_part = folder_name.split('--')[-1] if '--' in folder_name else folder_name
+    for model_id, preset in presets.items():
+        if model_id == candidate or model_id.endswith('/' + repo_part):
+            return dict(preset)
+    return {}
 
 
 def create_embeddings(
@@ -24,7 +48,7 @@ def create_embeddings(
 ) -> Any:
     """
     임베딩 모델 생성 팩토리
-    
+
     Args:
         model_name: 모델 표시 이름 (로깅용)
         model_id_or_path: HuggingFace 모델 ID 또는 로컬 경로
@@ -32,10 +56,10 @@ def create_embeddings(
         normalize: L2 정규화 여부, None이면 AppConfig 사용
         offline_mode: 오프라인 모드, None이면 AppConfig 사용
         local_model_path: 로컬 모델 경로 override
-        
+
     Returns:
         임베딩 모델 인스턴스 (HuggingFaceEmbeddings 또는 OnnxEmbeddings)
-        
+
     Raises:
         ModelLoadError: 모든 백엔드에서 로드 실패
         ModelOfflineError: 오프라인 모드에서 로컬 모델 없음
@@ -45,22 +69,34 @@ def create_embeddings(
     resolved_normalize = normalize if normalize is not None else bool(getattr(AppConfig, 'EMBED_NORMALIZE', True))
     is_offline = offline_mode if offline_mode is not None else bool(AppConfig.OFFLINE_MODE)
     model_path_override = local_model_path if local_model_path is not None else str(AppConfig.LOCAL_MODEL_PATH)
-    
+
+    # 모델 프리셋 조회 (E5 prefix, 디코더형 torch 강제 등)
+    preset = get_model_preset(model_id_or_path)
+    query_prefix = str(preset.get('query_prefix', '') or '')
+    passage_prefix = str(preset.get('passage_prefix', '') or '')
+    forced_backend = str(preset.get('force_backend', '') or '')
+    if forced_backend and forced_backend != resolved_backend:
+        logger.warning(
+            f"모델 프리셋에 따라 백엔드 강제 변경: {resolved_backend} -> {forced_backend} "
+            f"(model={model_name})"
+        )
+        resolved_backend = forced_backend
+
     # 프로젝트 models 폴더 경로
     project_models_dir = os.path.join(get_app_directory(), 'models')
     os.makedirs(project_models_dir, exist_ok=True)
-    
+
     # HuggingFace 캐시 디렉토리 설정
     os.environ['HF_HOME'] = project_models_dir
     os.environ['HUGGINGFACE_HUB_CACHE'] = project_models_dir
     os.environ['TRANSFORMERS_CACHE'] = project_models_dir
-    
+
     # 로컬 모델 경로 결정
     local_model_dir = model_path_override or os.path.join(
-        project_models_dir, 
+        project_models_dir,
         model_id_or_path.replace('/', '--')
     )
-    
+
     # 로컬 모델 존재 확인
     has_local_model = os.path.exists(local_model_dir) and os.path.isdir(local_model_dir)
     if has_local_model:
@@ -70,7 +106,7 @@ def create_embeddings(
             os.path.exists(os.path.join(local_model_dir, 'model.safetensors'))
         )
         has_local_model = has_model_files
-    
+
     # 최종 모델 경로 결정
     if has_local_model:
         load_path = local_model_dir
@@ -79,9 +115,9 @@ def create_embeddings(
         raise ModelOfflineError(local_model_dir)
     else:
         load_path = model_id_or_path
-    
+
     logger.info(f"임베딩 생성 시작: backend={resolved_backend}, model={model_name}, normalize={resolved_normalize}")
-    
+
     # 백엔드 선택
     if resolved_backend.startswith('onnx'):
         return _create_onnx_with_fallback(
@@ -90,7 +126,9 @@ def create_embeddings(
             backend=resolved_backend,
             normalize=resolved_normalize,
             is_offline=is_offline,
-            cache_folder=project_models_dir
+            cache_folder=project_models_dir,
+            query_prefix=query_prefix,
+            passage_prefix=passage_prefix
         )
     else:
         # torch 백엔드
@@ -99,7 +137,9 @@ def create_embeddings(
             load_path=load_path,
             normalize=resolved_normalize,
             is_offline=is_offline,
-            cache_folder=project_models_dir
+            cache_folder=project_models_dir,
+            query_prefix=query_prefix,
+            passage_prefix=passage_prefix
         )
 
 
@@ -108,16 +148,20 @@ def _create_torch_embeddings(
     load_path: str,
     normalize: bool,
     is_offline: bool,
-    cache_folder: str
+    cache_folder: str,
+    query_prefix: str = "",
+    passage_prefix: str = ""
 ) -> Any:
     """Torch 백엔드로 임베딩 생성"""
     from app.services.embeddings_backends.torch_backend import create_torch_embeddings
-    
+
     return create_torch_embeddings(
         model_path_or_id=load_path,
         normalize=normalize,
         offline_mode=is_offline,
-        cache_folder=cache_folder
+        cache_folder=cache_folder,
+        query_prefix=query_prefix,
+        passage_prefix=passage_prefix
     )
 
 
@@ -127,11 +171,13 @@ def _create_onnx_with_fallback(
     backend: str,
     normalize: bool,
     is_offline: bool,
-    cache_folder: str
+    cache_folder: str,
+    query_prefix: str = "",
+    passage_prefix: str = ""
 ) -> Any:
     """
     ONNX 백엔드로 임베딩 생성 (실패 시 torch로 fallback)
-    
+
     Args:
         model_name: 모델 표시 이름
         model_path: 모델 경로
@@ -139,7 +185,9 @@ def _create_onnx_with_fallback(
         normalize: L2 정규화
         is_offline: 오프라인 모드
         cache_folder: 캐시 폴더
-        
+        query_prefix: 쿼리 임베딩 접두사 (E5 계열)
+        passage_prefix: 문서 임베딩 접두사 (E5 계열)
+
     Returns:
         OnnxEmbeddings 또는 HuggingFaceEmbeddings (fallback)
     """
@@ -150,9 +198,9 @@ def _create_onnx_with_fallback(
     else:
         onnx_file = 'model.onnx'
         fallback_onnx = ""
-    
+
     onnx_path = os.path.join(model_path, onnx_file)
-    
+
     # int8 파일이 없으면 fp32로 fallback
     if backend == 'onnx_int8' and not os.path.exists(onnx_path):
         fallback_path = os.path.join(model_path, fallback_onnx)
@@ -160,7 +208,7 @@ def _create_onnx_with_fallback(
             logger.warning(f"ONNX int8 파일 없음, fp32로 fallback: {fallback_path}")
             onnx_file = fallback_onnx
             onnx_path = fallback_path
-    
+
     # ONNX 파일 존재 확인
     if not os.path.exists(onnx_path):
         logger.warning(f"ONNX 파일 없음 ({onnx_path}), torch 백엔드로 fallback")
@@ -169,37 +217,43 @@ def _create_onnx_with_fallback(
             load_path=model_path,
             normalize=normalize,
             is_offline=is_offline,
-            cache_folder=cache_folder
+            cache_folder=cache_folder,
+            query_prefix=query_prefix,
+            passage_prefix=passage_prefix
         )
-    
+
     # ONNX 백엔드 시도
     try:
         from app.services.embeddings_backends.onnx_backend import create_onnx_embeddings
-        
+
         embeddings = create_onnx_embeddings(
             model_path=model_path,
             onnx_file=onnx_file,
             normalize=normalize,
-            offline_mode=is_offline
+            offline_mode=is_offline,
+            query_prefix=query_prefix,
+            passage_prefix=passage_prefix
         )
-        
+
         logger.info(f"ONNX 백엔드 로드 성공: {onnx_file}")
         return embeddings
-        
+
     except ImportError as e:
         logger.warning(f"onnxruntime 패키지 없음, torch 백엔드로 fallback: {e}")
     except ModelLoadError as e:
         logger.warning(f"ONNX 백엔드 로드 실패, torch 백엔드로 fallback: {e}")
     except Exception as e:
         logger.warning(f"ONNX 백엔드 예상치 못한 오류, torch 백엔드로 fallback: {e}")
-    
+
     # Torch fallback
     return _create_torch_embeddings(
         model_name=model_name,
         load_path=model_path,
         normalize=normalize,
         is_offline=is_offline,
-        cache_folder=cache_folder
+        cache_folder=cache_folder,
+        query_prefix=query_prefix,
+        passage_prefix=passage_prefix
     )
 
 
@@ -210,12 +264,12 @@ def validate_embeddings_quality(
 ) -> dict:
     """
     Torch와 ONNX 임베딩 품질 비교 검증 (개발 모드용)
-    
+
     Args:
         torch_embeddings: Torch 임베딩 모델
         onnx_embeddings: ONNX 임베딩 모델
         test_sentences: 테스트 문장 리스트 (None이면 기본값 사용)
-        
+
     Returns:
         {
             'avg_similarity': float,
@@ -226,7 +280,7 @@ def validate_embeddings_quality(
         }
     """
     import numpy as np
-    
+
     if test_sentences is None:
         test_sentences = [
             "이 문서는 사내 규정에 대한 내용입니다.",
@@ -240,30 +294,30 @@ def validate_embeddings_quality(
             "재택근무는 주 2회까지 가능합니다.",
             "성과 평가는 분기별로 진행됩니다."
         ]
-    
+
     try:
         # 임베딩 생성
         torch_vecs = np.array(torch_embeddings.embed_documents(test_sentences))
         onnx_vecs = np.array(onnx_embeddings.embed_documents(test_sentences))
-        
+
         # 코사인 유사도 계산
         similarities = []
         for i in range(len(test_sentences)):
             torch_vec = torch_vecs[i]
             onnx_vec = onnx_vecs[i]
-            
+
             # L2 정규화된 벡터의 코사인 유사도 = dot product
             sim = np.dot(torch_vec, onnx_vec)
             similarities.append(sim)
-        
+
         avg_sim = float(np.mean(similarities))
         min_sim = float(np.min(similarities))
         max_sim = float(np.max(similarities))
-        
+
         # 기준: fp32는 0.99 이상, int8은 0.985 이상
         threshold = 0.99
         passed = avg_sim >= threshold
-        
+
         result = {
             'avg_similarity': round(avg_sim, 4),
             'min_similarity': round(min_sim, 4),
@@ -271,14 +325,14 @@ def validate_embeddings_quality(
             'passed': passed,
             'threshold': threshold
         }
-        
+
         if passed:
             logger.info(f"✅ 임베딩 품질 검증 통과: avg={avg_sim:.4f}, min={min_sim:.4f}")
         else:
             logger.warning(f"⚠️ 임베딩 품질 미달: avg={avg_sim:.4f} < {threshold}")
-        
+
         return result
-        
+
     except Exception as e:
         logger.error(f"임베딩 품질 검증 실패: {e}")
         return {

@@ -287,7 +287,7 @@ def _lazy_import_langchain():
 # settings.json
 {
     "offline_mode": true,
-    "local_model_path": "./models/snunlp--KR-SBERT-V40K-klueNLI-augSTS"
+    "local_model_path": "./models/dragonkue--multilingual-e5-small-ko"
 }
 
 # 환경 변수
@@ -433,11 +433,13 @@ class AppConfig:
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
     
     # AI 모델
-    DEFAULT_MODEL = "SNU SBERT (고성능)"
+    DEFAULT_MODEL = "E5-Small-KO (경량·기본)"  # 구 "SNU SBERT (고성능)"
     AVAILABLE_MODELS = {
-        "SNU SBERT (고성능)": "snunlp/KR-SBERT-V40K-klueNLI-augSTS",
-        "BM-K Simal (균형)": "BM-K/ko-simal-roberta-base",
-        "JHGan SBERT (빠름)": "jhgan/ko-sbert-nli"
+        "E5-Small-KO (경량·기본)": "dragonkue/multilingual-e5-small-ko",
+        "E5-Small-Multi (경량·다국어)": "intfloat/multilingual-e5-small",
+        "BGE-M3 (고품질·8192)": "BAAI/bge-m3",
+        "KURE-v1 (한국어 최고)": "nlpai-lab/KURE-v1",
+        "Qwen3-0.6B (최신·고성능)": "Qwen/Qwen3-Embedding-0.6B"
     }
     
     # 오프라인
@@ -565,3 +567,16 @@ class AppConfig:
 - `internal_regulations_lite.spec`를 포함한 전체 `.spec`는 재점검했으며, 현재 코드 변경 기준 추가 packaging 수정은 불필요했다.
 - 현재 검증 기준:
   - `python -m pytest -q` -> `70 passed`
+
+### Maintenance Addendum (2026-09-26)
+- 임베딩 모델 전면 교체(2021~22년식 SBERT 3종 -> E5-Small-KO 기본 등 5종).
+- 모델별 프리셋 `AppConfig.EMBED_MODEL_PRESETS` 추가(E5 query/passage prefix, Qwen3 torch 강제).
+- `scripts/export_onnx.py` 신규: `model.onnx`/`model.int8.onnx` 생성 + 충실도 검증 (기본 백엔드 onnx_fp32가 실제 ONNX 없이 torch로 떨어지던 문제 해소).
+- ONNX `_encode`는 `EMBED_BATCH_SIZE`(기본 32) 단위 배치 처리로 대량 인덱싱 피크 메모리 억제.
+- `download_models.py`의 모델 목록은 `AppConfig` 단일 소스.
+- 현재 검증 기준:
+  - `python -m pytest -q` -> `92 passed`
+  - `pyright` 변경 파일 0 errors
+  - 레거시 모놀리스 `server.py`/`server_backup.py` 삭제, `server_gui.py`의 잔존 fallback import를 `app.services.search`로 전환, `pyrightconfig.json`에서 삭제 파일 제거
+  - `server.spec`은 삭제된 `server.py` 전용이었으므로 함께 삭제함 (콘솔 빌드는 `regulation_search.spec`가 커버, `run.py` 재작성 대신 중복 제거 선택)
+  - `requirements.txt` 하한을 2026-09-26 설치·테스트 검증 버전으로 상향 (torch 2.14, transformers 5.17, ST 6.1, Flask 3.1.3 등, 미설치 패키지는 기존 하한 유지)
