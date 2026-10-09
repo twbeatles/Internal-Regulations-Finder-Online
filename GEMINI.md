@@ -6,8 +6,8 @@
 
 | 항목 | 내용 |
 |------|------|
-| **프로젝트** | 사내 규정 검색기 v2.8.3 |
-| **목적** | AI 기반 하이브리드 검색 (Vector + BM25) |
+| **프로젝트** | 사내 규정 검색기 v3.0 |
+| **목적** | RAG 질의응답 + 하이브리드 검색 (Vector + BM25) |
 | **언어** | Python 3.10+ (3.14 호환) |
 | **프레임워크** | Flask + PyTorch + LangChain + FAISS |
 | **DB** | SQLite (WAL 모드) |
@@ -30,24 +30,29 @@ Internal-Regulations-Finder-Online-main/
 │   ├── utils.py            # 유틸리티 (TaskResult, FileInfo, MemoryMonitor)
 │   ├── routes/             # API 라우트
 │   │   ├── api_search.py   # 검색 API (/api/search)
-│   │   ├── api_files.py    # 파일/태그/개정 관리 API
+│   │   ├── api_files.py    # 파일 CRUD/업로드
+│   │   ├── api_tags.py     # 태그 API
+│   │   ├── api_revisions.py # 개정/비교 API
 │   │   ├── api_system.py   # 시스템/동기화 API
 │   │   └── main_routes.py  # 메인 페이지 라우트
+│   ├── mcp/                # MCP 도구 (선택, admin_token 필수 재인덱스)
 │   └── services/           # 비즈니스 로직 서비스
-│       ├── search.py       # 하이브리드 검색 엔진 (RegulationQASystem)
-│       ├── document.py     # 문서 추출/파싱/분할/비교
+│       ├── search/         # 하이브리드 검색 패키지
+│       ├── document/       # 문서 처리 패키지
+│       ├── files/          # 경로 해석·검증·미리보기·삭제 정책
 │       ├── parsers/        # HWP/HWPX 전용 어댑터 + 결과 모델
 │       ├── db.py           # SQLite 싱글톤 DB 관리
 │       ├── file_manager.py # RevisionTracker, FolderWatcher
 │       ├── metadata.py     # TagManager
-│       └── embeddings_backends/  # 임베딩 백엔드 (v2.6 신규)
-│           ├── __init__.py       # create_embeddings export
-│           ├── factory.py        # 백엔드 선택 팩토리
-│           ├── torch_backend.py  # PyTorch/HuggingFace 백엔드
-│           └── onnx_backend.py   # ONNX Runtime 백엔드
+│       └── embeddings_backends/
+├── rag/                    # RAG v3 (LLM, pipeline, api_chat)
+├── PROJECT_AUDIT.md        # 기능 감사 + Remediation Log
 ├── static/                 # 프론트엔드 정적 파일
-│   ├── app.js              # SPA 스타일 클라이언트 (v1.7, 3339 lines 기준)
-│   ├── style.css           # CSS 스타일 (다크/라이트 테마)
+│   ├── js/bootstrap/main.js # ESM 엔트리
+│   ├── js/legacy/app.js    # 레거시 UI 번들
+│   ├── js/rag/             # RAG 채팅 모듈
+│   ├── css/                # 분할 CSS
+│   ├── style.css           # @import 허브
 │   └── sw.js               # PWA 서비스 워커
 ├── templates/              # HTML 템플릿
 │   ├── index.html          # 메인 페이지
@@ -64,7 +69,7 @@ Internal-Regulations-Finder-Online-main/
 
 ## 🔑 Core Components
 
-### 1. Search Engine (`app/services/search.py`)
+### 1. Search Engine (`app/services/search/` 패키지)
 
 **핵심 클래스**:
 | 클래스 | 역할 |
@@ -91,7 +96,7 @@ qa_system.search(query, k=5, hybrid=True)
 qa_system.process_single_file(file_path)  # 단일 파일 즉시 인덱싱
 ```
 
-### 2. Document Processing (`app/services/document.py`)
+### 2. Document Processing (`app/services/document/` 패키지)
 
 | 클래스 | 역할 |
 |--------|------|
@@ -480,3 +485,52 @@ Default benchmark scenario: warmup 30, measure 200, concurrency 1/5/10.
 - All `.spec` files, including `internal_regulations_lite.spec`, were re-validated; no extra packaging change was required for the 2026-04-16 backend/frontend fixes.
 - Current branch verification:
   - `python -m pytest -q` -> `70 passed`
+
+<!-- SPECKIT-AGENT-GUIDE:START -->
+
+## Spec Kit / Spec-Driven Development (AI 에이전트 필독)
+
+> 이 블록은 GitHub Spec Kit 활성화 및 기능 명세 작업 결과를 AI 에이전트가 바로 쓰도록 정리한 안내입니다.
+> 수정 시 마커 주석을 유지하세요. 스크립트/후속 세션이 이 구간을 갱신합니다.
+
+### 이 저장소 상태
+
+- **프로젝트**: `Internal-Regulations-Finder-Online`
+- **Spec Kit 초기화**: `.specify/ 있음`
+- **에이전트 스킬**: Grok=True, Claude=True, Codex/Agy(.agents)=True
+- **활성 기능**: 아직 `specs/` 기능 명세 없음 — `.specify/` 만 준비된 상태
+
+### 에이전트가 먼저 읽을 파일
+
+1. `.specify/` 및 `.grok/skills` / `.claude/skills` / `.agents/skills` 의 `speckit-*`
+2. 기능 작업 시작 시 `/speckit-specify` 로 `specs/00N-...` 생성
+
+### 권장 워크플로 (스킬 / 슬래시 커맨드)
+
+| 단계 | 커맨드 (Grok/Claude 등) | 산출 |
+|------|-------------------------|------|
+| 원칙 | `/speckit-constitution` | `.specify/memory/constitution.md` |
+| 명세 | `/speckit-specify` | `specs/<id>/spec.md` |
+| 계획 | `/speckit-plan` | `plan.md`, `research.md`, `data-model.md`, `contracts/`, `quickstart.md` |
+| 작업 | `/speckit-tasks` | `tasks.md` |
+| 구현 | `/speckit-implement` | 코드 (tasks 순서) |
+| 갭점검 | `/speckit-converge` | `tasks.md` 에 Phase Convergence **append-only** |
+
+- Codex skills 모드: `$speckit-specify` 형태일 수 있음
+- 스킬 파일: `.grok/skills/speckit-*/SKILL.md`, `.claude/skills/speckit-*/SKILL.md`
+
+### 작업 규칙 (에이전트)
+
+1. **새 기능/큰 변경 전** 활성 `spec.md`·`tasks.md` 를 읽고, 없으면 specify→plan→tasks 순으로 만든다.
+2. **구현은 tasks.md 체크리스트**를 따른다. 완료 시 `- [ ]` → `- [x]`.
+3. **`/speckit-converge` 는 tasks.md 를 rewrite 하지 않는다** — 잔여 갭만 하단 Phase 로 append.
+4. brownfield 프로젝트는 상당 기능이 이미 있을 수 있다. 중복 구현 전에 코드·`[x]` 태스크를 확인한다.
+5. 웹/데스크톱 패리티 등 **out-of-scope Assumptions** 는 새 feature 로 분리하는 것을 선호한다.
+6. 기본 integration 은 **grok** 이며, 동일 레포에 claude / codex / agy 스킬도 multi-install 되어 있을 수 있다.
+
+### 관련 링크
+
+- Spec Kit: https://github.com/github/spec-kit
+- 로컬 CLI: `specify` (uv tool, 버전은 `specify version`)
+
+<!-- SPECKIT-AGENT-GUIDE:END -->

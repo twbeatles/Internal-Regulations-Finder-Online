@@ -1,0 +1,33 @@
+{
+  "defaults": {
+    "k": 5,
+    "hybrid": true
+  },
+  "queries": [
+    {
+      "query": "제 27 조",
+      "expected": {
+        "source_contains": "인사"
+      }
+    },
+    {
+      "query": "승진 최저 소요 연수",
+      "expected": {
+        "snippet_contains": "승진"
+      }
+    },
+    {
+      "query": "연차 휴가",
+      "expected": {
+        "snippet_contains": "휴가"
+      }
+    },
+    {
+      "query": "3 천만원",
+      "category": "money",
+      "expected": {
+        "snippet_contains": "만원"
+      }
+    }
+  ]
+}

@@ -1,145 +1,138 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-사내 규정 검색기 v2.6 - 초경량 GUI 빌드 Spec
+사내 규정 검색기 - Ultra Lite GUI 빌드 (PyQt6 시스템 트레이)
 빌드: pyinstaller regulation_search_ultra_lite_gui.spec
 정합성 점검(2026-03-01): config 전체 포함 대신 settings.example.json만 포함
 정합성 점검(2026-03-16): HWP/HWPX 파서 서브모듈 hiddenimports 보강
+정합성 점검(2026-07-15): files.path_validation 등 hardening 서브모듈 명시
 
 특징:
 - GUI 모드 (콘솔 창 없음)
+- 시스템 트레이 아이콘 지원
 - AI/ML 완전 제외 (BM25 텍스트 검색만)
-- 최소 필수 라이브러리만 포함
-- UPX 최대 압축
-
-예상 크기: 60-100MB
+- UPX 미사용 (GUI 바이너리 손상 방지)
+- 목표 크기: 80-100MB
 """
 
 import os
 import sys
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files, collect_dynamic_libs
+from PyInstaller.utils.hooks import copy_metadata
 
 block_cipher = None
 project_dir = os.path.dirname(os.path.abspath(SPEC))
 
 # ============================================================================
-# PyQt6 완전 수집 (GUI 필수)
-# ============================================================================
-pyqt_binaries = []
-pyqt_datas = []
-pyqt_hiddenimports = []
-
-try:
-    pyqt_binaries = collect_dynamic_libs('PyQt6')
-    print(f"[INFO] PyQt6 바이너리: {len(pyqt_binaries)}개")
-except Exception as e:
-    print(f"[WARNING] PyQt6 바이너리 수집 실패: {e}")
-
-try:
-    pyqt_datas = collect_data_files('PyQt6')
-    print(f"[INFO] PyQt6 데이터: {len(pyqt_datas)}개")
-except Exception as e:
-    print(f"[WARNING] PyQt6 데이터 수집 실패: {e}")
-
-try:
-    pyqt_hiddenimports = collect_submodules('PyQt6')
-    print(f"[INFO] PyQt6 서브모듈: {len(pyqt_hiddenimports)}개")
-except Exception as e:
-    print(f"[WARNING] PyQt6 서브모듈 수집 실패: {e}")
-
-# ============================================================================
-# 데이터 파일
+# 데이터 파일 (최소화)
 # ============================================================================
 datas = [
     (os.path.join(project_dir, 'templates'), 'templates'),
     (os.path.join(project_dir, 'static'), 'static'),
 ]
 
-# PyQt6 데이터 추가
-datas += pyqt_datas
-
-# config 샘플 파일만 포함 (민감정보/런타임 데이터 제외)
+# settings.example.json만 포함
 settings_example = os.path.join(project_dir, 'config', 'settings.example.json')
 if os.path.exists(settings_example):
     datas.append((settings_example, 'config'))
 
+# PyQt6 플러그인 (플랫폼 플러그인 필수)
+try:
+    import PyQt6
+    pyqt_dir = os.path.dirname(PyQt6.__file__)
+    plugins_dir = os.path.join(pyqt_dir, 'Qt6', 'plugins')
+    
+    # platforms 플러그인만 포함 (최소화)
+    platforms_dir = os.path.join(plugins_dir, 'platforms')
+    if os.path.exists(platforms_dir):
+        datas.append((platforms_dir, 'PyQt6/Qt6/plugins/platforms'))
+        print(f"[GUI] PyQt6 platforms 플러그인 추가: {platforms_dir}")
+        
+    # styles 플러그인 추가 (네이티브 룩앤필)
+    styles_dir = os.path.join(plugins_dir, 'styles')
+    if os.path.exists(styles_dir):
+        datas.append((styles_dir, 'PyQt6/Qt6/plugins/styles'))
+except ImportError:
+    print("[GUI] 경고: PyQt6을 찾을 수 없습니다.")
+
 # ============================================================================
-# Hidden Imports - 최소 필수만
+# PyQt6 바이너리 수집
+# ============================================================================
+pyqt_binaries = []
+pyqt_hiddenimports = [
+    'PyQt6',
+    'PyQt6.QtCore',
+    'PyQt6.QtGui',
+    'PyQt6.QtWidgets',
+    'PyQt6.sip',
+]
+
+# ============================================================================
+# Hidden Imports (필수 패키지만)
 # ============================================================================
 hiddenimports = [
-    # Flask 코어
-    # Flask 코어
+    # Flask 핵심
     'flask',
-    'flask_compress',  # v2.6.1 compression
     'flask.json',
     'flask.json.provider',
     'flask_cors',
+    'flask_compress',
     'werkzeug',
     'werkzeug.serving',
+    'werkzeug.routing',
     'jinja2',
+    'jinja2.ext',
     'markupsafe',
     
-    # WSGI
+    # 웹 서버
     'waitress',
     'waitress.server',
     
-    # DB & 스레딩
+    # 표준 라이브러리
     'sqlite3',
     'threading',
     'queue',
     'concurrent.futures',
+    'uuid',
+    'datetime',
+    'logging',
+    'logging.handlers',
+    'hashlib',
+    'json',
+    're',
+    'os',
+    'sys',
+    'pathlib',
+    'shutil',
+    'tempfile',
+    'webbrowser',
+    'subprocess',
     
-    # 문서 처리 (기본)
+    # 기본 문서 파서 (AI 제외)
     'docx',
     'pypdf',
     'openpyxl',
     'olefile',
-    'lxml',
-    'lxml.etree',
     
-    # 시스템
+    # 시스템 유틸리티
     'psutil',
     
-    # 인코딩 (한글 지원)
-    'encodings.utf_8',
-    'encodings.cp949',
-    'encodings.euc_kr',
-    'encodings.utf_16',
-    
-    # PyQt6 (GUI 필수)
-    'PyQt6',
-    'PyQt6.QtWidgets',
-    'PyQt6.QtCore',
-    'PyQt6.QtGui',
-    'PyQt6.sip',
-    
-    # multiprocessing (누락 방지)
-    'multiprocessing',
-    'multiprocessing.Value',
-    
-    # collections.abc (누락 방지)
-    'collections.abc',
-    
-    # App 모듈
-    'app',
-    'app.config',
-    'app.constants',
-    'app.exceptions',
-    'app.utils',
-    'app.routes',
-    'app.routes.main_routes',
-    'app.routes.api_search',
-    'app.routes.api_files',
-    'app.routes.api_system',
-    'app.services',
-    'app.services.search',
-    'app.services.document',
-    'app.services.db',
-    'app.services.file_manager',
-    'app.services.metadata',
-    'app.services.parsers',
+    # HWP/HWPX 파서 서브모듈
     'app.services.parsers.hwp_adapter',
     'app.services.parsers.hwpx_adapter',
     'app.services.parsers.hwp_models',
+    'app.services.search.qa_facade',
+    'app.services.search.hybrid_search',
+    'app.services.search.index',
+    'app.routes.files_request',
+    'app.routes.api_revisions',
+    'app.routes.api_tags',
+    'app.services.files',
+    'app.services.files.path_resolver',
+    'app.services.files.path_validation',
+    'app.services.files.delete_policy',
+    'app.services.files.lock',
+    'app.services.files.preview_service',
+    'app.services.settings_store',
+    'app.auth',
 ]
 
 # PyQt6 서브모듈 추가
@@ -279,6 +272,21 @@ a.datas = [
     if not any(ex.lower() in d[0].lower() for ex in excluded_datas)
 ]
 print(f"[Ultra Lite] 필터링 후 데이터 수: {len(a.datas)}")
+
+# .dist-info 일괄 제외로 날아간 실행 필수 메타데이터 복원
+# (werkzeug serving이 importlib.metadata.version() 호출)
+for _pkg in ('werkzeug', 'flask'):
+    try:
+        for _src, _dest in copy_metadata(_pkg):
+            if os.path.isdir(_src):
+                for _root, _, _files in os.walk(_src):
+                    for _fn in _files:
+                        _full = os.path.join(_root, _fn)
+                        a.datas.append((os.path.join(_dest, os.path.relpath(_full, _src)), _full, 'DATA'))
+            else:
+                a.datas.append((_dest, _src, 'DATA'))
+    except Exception:
+        pass
 
 # ============================================================================
 # PYZ

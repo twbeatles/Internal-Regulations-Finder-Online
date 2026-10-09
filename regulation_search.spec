@@ -84,6 +84,16 @@ hiddenimports = [
 ]
 
 hiddenimports += collect_submodules("app")
+# === RAG v3 (2026-07) ===
+try:
+    from PyInstaller.utils.hooks import collect_submodules as _csm
+    hiddenimports += _csm('rag')
+except Exception:
+    pass
+for _m in ('httpx', 'langgraph', 'langgraph.graph'):
+    if _m not in hiddenimports:
+        hiddenimports.append(_m)
+
 hiddenimports += collect_submodules("app.routes")
 hiddenimports += collect_submodules("app.services")
 hiddenimports += collect_submodules("app.services.embeddings_backends")

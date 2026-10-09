@@ -93,6 +93,23 @@ class DBManager:
                 c.execute('CREATE INDEX IF NOT EXISTS idx_history_query_time ON search_history(query, timestamp DESC)')
                 # timestamp 단독 인덱스: 중복 체크 최적화 (SearchHistory.add)
                 c.execute('CREATE INDEX IF NOT EXISTS idx_history_timestamp ON search_history(timestamp)')
+
+                # RAG v3 대화
+                c.execute('''CREATE TABLE IF NOT EXISTS conversations (
+                    id TEXT PRIMARY KEY,
+                    title TEXT,
+                    created_at REAL,
+                    updated_at REAL
+                )''')
+                c.execute('''CREATE TABLE IF NOT EXISTS messages (
+                    id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT,
+                    citations_json TEXT,
+                    created_at REAL
+                )''')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)')
                 
                 conn.commit()
         except Exception as e:

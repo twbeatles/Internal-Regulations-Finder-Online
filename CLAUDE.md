@@ -4,10 +4,10 @@
 
 ## 📋 프로젝트 개요
 
-**프로젝트명**: 사내 규정 검색기 v2.8.3  
-**목적**: AI 기반 하이브리드 검색 시스템 (Vector + BM25)으로 사내 규정 문서를 검색  
-**기술 스택**: Flask + PyTorch + LangChain + FAISS + SQLite  
-**실행 방식**: 웹 서버 (콘솔 또는 GUI/시스템 트레이)
+**프로젝트명**: 사내 규정 검색기 v3.0  
+**목적**: RAG 질의응답 + 레거시 하이브리드 검색(Vector + BM25)으로 사내 규정 문서 검색  
+**기술 스택**: Flask + PyTorch + LangChain + FAISS + SQLite + RAG(Ollama/클라우드 LLM)  
+**실행 방식**: 웹 서버 (`run.py` 콘솔 / `server_gui.py` PyQt6 GUI) — `server.py` 제거됨
 
 ---
 
@@ -16,7 +16,8 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                         Client (Browser)                     │
-│  static/app.js - SPA 스타일 프론트엔드 (v1.7)                │
+│  static/js/bootstrap/main.js (ESM) + legacy/app.js           │
+│  RAG: static/js/rag/* — 레거시: search-section UI            │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -35,10 +36,13 @@
           ▼                   ▼                   ▼
 ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
 │    Routes       │ │    Services     │ │    Database     │
-│ api_search.py   │ │ search.py       │ │ db.py (SQLite)  │
-│ api_files.py    │ │ document.py     │ │                 │
-│ api_system.py   │ │ file_manager.py │ │                 │
-│ main_routes.py  │ │ metadata.py     │ │                 │
+│ api_search.py   │ │ search/ (pkg)   │ │ db.py (SQLite)  │
+│ api_files.py    │ │ document/ (pkg) │ │                 │
+│ api_tags.py     │ │ files/ (pkg)    │ │                 │
+│ api_revisions.py│ │ file_manager.py │ │                 │
+│ rag/api_chat.py │ │ rag/ pipeline   │ │                 │
+│ api_system.py   │ │ metadata.py     │ │                 │
+│ main_routes.py  │ │                 │ │                 │
 └─────────────────┘ └─────────────────┘ └─────────────────┘
 ```
 
@@ -46,7 +50,7 @@
 
 ## 🔑 핵심 컴포넌트 상세
 
-### 1. 검색 엔진 (`app/services/search.py`)
+### 1. 검색 엔진 (`app/services/search/` 패키지)
 
 | 클래스 | 역할 | 주요 메서드 |
 |--------|------|-------------|
@@ -70,7 +74,7 @@ VECTOR_WEIGHT = 0.7  # 의미 기반 검색 (FAISS)
 BM25_WEIGHT = 0.3    # 키워드 기반 검색 (BM25Light)
 ```
 
-### 2. 문서 처리 (`app/services/document.py`)
+### 2. 문서 처리 (`app/services/document/` 패키지)
 
 | 클래스 | 역할 | 주요 메서드 |
 |--------|------|-------------|
@@ -165,8 +169,8 @@ RegSearchError                   # 기본 예외
 │   │   ├── api_system.py   # /api/status, /api/sync, /api/models
 │   │   └── main_routes.py  # GET /, /admin
 │   └── services/
-│       ├── search.py       # RegulationQASystem, BM25Light, SearchCache
-│       ├── document.py     # DocumentExtractor, ArticleParser, DocumentSplitter
+│       ├── search/         # RegulationQASystem, BM25Light, SearchCache (패키지)
+│       ├── document/       # DocumentExtractor, ArticleParser, DocumentSplitter (패키지)
 │       ├── parsers/        # HWP/HWPX 어댑터 + 공통 추출 결과 모델
 │       ├── db.py           # DBManager 싱글톤
 │       ├── file_manager.py # RevisionTracker, FolderWatcher
@@ -565,18 +569,109 @@ class AppConfig:
 - 리비전 버전 계산은 현재 `file_id`와 legacy filename 키를 함께 본다.
 - `ReaderMode` 원문 미리보기는 가능하면 `file_id` 기반 API(`/api/files/by-id/.../preview`)를 우선 사용한다.
 - `internal_regulations_lite.spec`를 포함한 전체 `.spec`는 재점검했으며, 현재 코드 변경 기준 추가 packaging 수정은 불필요했다.
-- 현재 검증 기준:
-  - `python -m pytest -q` -> `70 passed`
+- 현재 검증 기준 (2026-04-16): `python -m pytest -q` -> `70 passed`
+
+### Maintenance Addendum (2026-07-08) — v3.0 RAG + SOLID 리팩토링
+
+#### 백엔드 구조
+- `app/services/search.py` 삭제 → `app/services/search/` 패키지 (`qa_system`, `hybrid_search`, `bm25`, `cache`, `index/` 등)
+- `app/services/document.py` 삭제 → `app/services/document/` 패키지
+- `app/services/files/` 신규 — 경로 해석·미리보기·삭제 정책
+- `app/routes/api_tags.py`, `api_revisions.py` 분리 / `files_request.py` 공통 헬퍼
+- `server.py`, `server_backup.py` 삭제 — 엔트리포인트는 `run.py` / `server_gui.py`
+- `RegulationQAFacade` (`qa_facade.py`) — 공개 API 파사드
+
+#### RAG v3
+- `rag/` 패키지: LLM(Ollama/OpenAI/Anthropic/Gemini), pipeline, `/api/rag/chat` SSE
+- Retrieval은 `qa_system.search()` 재사용 (레거시 엔진이 RAG 기반)
+- `settings.json` → `search_mode`: `rag` | `legacy`, `rag` 섹션 LLM 설정
+
+#### 프론트엔드
+- ESM: `static/js/bootstrap/main.js`, `static/js/legacy/app.js`, `static/js/rag/*`
+- CSS: `static/css/{tokens,rag,search,admin}.css` + `style.css` @import
+- `static/app.js` — deprecated shim (모듈 부트스트랩 안내)
+
+#### 빌드 (spec)
+- `server.spec` Analysis 엔트리: `run.py`
+- AI 포함 spec: `collect_submodules('rag')`, `httpx`, `langgraph` hiddenimports 추가
+- Lite spec: `app.services.files`, `api_tags`, `api_revisions` 경로 추가
+
+#### 검증
+- `python -m pytest -q` -> **104 passed** (2026-07-15, RAG·감사 hardening 포함)
+
+### Maintenance Addendum (2026-07-15) — 감사 hardening
+
+- 문서: `PROJECT_AUDIT.md` (이슈 + Remediation Log)
+- 인덱스: `initialize` 단일 비행, 검색 시 `_lock`, `BLOCK_SEARCH_DURING_INDEXING`
+- 보안: 관리자 로그인 rate limit, MCP `admin_token` 필수 재인덱스, 대화 세션 스코프
+- RAG: 메시지/history 상한, SSE `replace`, LLM health TTL 캐시
+- 업로드: ZIP 실제 해제 바이트 제한, `validate_folder_path` (init/sync 공용)
+- 캐시: FAISS/docs 무결성 메타 검증
+- 테스트: `tests/test_audit_hardening.py`, `tests/conftest.py`
+- Lite spec: `app.services.files.path_validation` 등 서브모듈 명시
+- 설정 샘플: `config/settings.example.json` MCP 토큰 안내 (`_comments`)
+
 
 ### Maintenance Addendum (2026-09-26)
 - 임베딩 모델 전면 교체(2021~22년식 SBERT 3종 -> E5-Small-KO 기본 등 5종).
-- 모델별 프리셋 `AppConfig.EMBED_MODEL_PRESETS` 추가(E5 query/passage prefix, Qwen3 torch 강제).
-- `scripts/export_onnx.py` 신규: `model.onnx`/`model.int8.onnx` 생성 + 충실도 검증 (기본 백엔드 onnx_fp32가 실제 ONNX 없이 torch로 떨어지던 문제 해소).
-- ONNX `_encode`는 `EMBED_BATCH_SIZE`(기본 32) 단위 배치 처리로 대량 인덱싱 피크 메모리 억제.
-- `download_models.py`의 모델 목록은 `AppConfig` 단일 소스.
+- 모델별 프리셋 AppConfig.EMBED_MODEL_PRESETS 추가(E5 query/passage prefix, Qwen3 torch 강제).
+- scripts/export_onnx.py 신규: model.onnx/model.int8.onnx 생성 + 충실도 검증 (기본 백엔드 onnx_fp32가 실제 ONNX 없이 torch로 떨어지던 문제 해소).
+- ONNX _encode는 EMBED_BATCH_SIZE(기본 32) 단위 배치 처리로 대량 인덱싱 피크 메모리 억제.
+- download_models.py의 모델 목록은 AppConfig 단일 소스.
 - 현재 검증 기준:
-  - `python -m pytest -q` -> `92 passed`
-  - `pyright` 변경 파일 0 errors
-  - 레거시 모놀리스 `server.py`/`server_backup.py` 삭제, `server_gui.py`의 잔존 fallback import를 `app.services.search`로 전환, `pyrightconfig.json`에서 삭제 파일 제거
-  - `server.spec`은 삭제된 `server.py` 전용이었으므로 함께 삭제함 (콘솔 빌드는 `regulation_search.spec`가 커버, `run.py` 재작성 대신 중복 제거 선택)
-  - `requirements.txt` 하한을 2026-09-26 설치·테스트 검증 버전으로 상향 (torch 2.14, transformers 5.17, ST 6.1, Flask 3.1.3 등, 미설치 패키지는 기존 하한 유지)
+  - python -m pytest -q -> 92 passed
+  - pyright 변경 파일 0 errors
+  - 레거시 모놀리스 server.py/server_backup.py 삭제, server_gui.py의 잔존 fallback import를 pp.services.search로 전환, pyrightconfig.json에서 삭제 파일 제거
+  - server.spec은 
+un.py 엔트리포인트 기반 콘솔 서버 빌드용으로 유지
+  - 
+equirements.txt 하한을 2026-09-26 설치·테스트 검증 버전으로 상향 (torch 2.14, transformers 5.17, ST 6.1, Flask 3.1.3 등)
+
+<!-- SPECKIT-AGENT-GUIDE:START -->
+
+## Spec Kit / Spec-Driven Development (AI 에이전트 필독)
+
+> 이 블록은 GitHub Spec Kit 활성화 및 기능 명세 작업 결과를 AI 에이전트가 바로 쓰도록 정리한 안내입니다.
+> 수정 시 마커 주석을 유지하세요. 스크립트/후속 세션이 이 구간을 갱신합니다.
+
+### 이 저장소 상태
+
+- **프로젝트**: `Internal-Regulations-Finder-Online`
+- **Spec Kit 초기화**: `.specify/ 있음`
+- **에이전트 스킬**: Grok=True, Claude=True, Codex/Agy(.agents)=True
+- **활성 기능**: 아직 `specs/` 기능 명세 없음 — `.specify/` 만 준비된 상태
+
+### 에이전트가 먼저 읽을 파일
+
+1. `.specify/` 및 `.grok/skills` / `.claude/skills` / `.agents/skills` 의 `speckit-*`
+2. 기능 작업 시작 시 `/speckit-specify` 로 `specs/00N-...` 생성
+
+### 권장 워크플로 (스킬 / 슬래시 커맨드)
+
+| 단계 | 커맨드 (Grok/Claude 등) | 산출 |
+|------|-------------------------|------|
+| 원칙 | `/speckit-constitution` | `.specify/memory/constitution.md` |
+| 명세 | `/speckit-specify` | `specs/<id>/spec.md` |
+| 계획 | `/speckit-plan` | `plan.md`, `research.md`, `data-model.md`, `contracts/`, `quickstart.md` |
+| 작업 | `/speckit-tasks` | `tasks.md` |
+| 구현 | `/speckit-implement` | 코드 (tasks 순서) |
+| 갭점검 | `/speckit-converge` | `tasks.md` 에 Phase Convergence **append-only** |
+
+- Codex skills 모드: `$speckit-specify` 형태일 수 있음
+- 스킬 파일: `.grok/skills/speckit-*/SKILL.md`, `.claude/skills/speckit-*/SKILL.md`
+
+### 작업 규칙 (에이전트)
+
+1. **새 기능/큰 변경 전** 활성 `spec.md`·`tasks.md` 를 읽고, 없으면 specify→plan→tasks 순으로 만든다.
+2. **구현은 tasks.md 체크리스트**를 따른다. 완료 시 `- [ ]` → `- [x]`.
+3. **`/speckit-converge` 는 tasks.md 를 rewrite 하지 않는다** — 잔여 갭만 하단 Phase 로 append.
+4. brownfield 프로젝트는 상당 기능이 이미 있을 수 있다. 중복 구현 전에 코드·`[x]` 태스크를 확인한다.
+5. 웹/데스크톱 패리티 등 **out-of-scope Assumptions** 는 새 feature 로 분리하는 것을 선호한다.
+6. 기본 integration 은 **grok** 이며, 동일 레포에 claude / codex / agy 스킬도 multi-install 되어 있을 수 있다.
+
+### 관련 링크
+
+- Spec Kit: https://github.com/github/spec-kit
+- 로컬 CLI: `specify` (uv tool, 버전은 `specify version`)
+
+<!-- SPECKIT-AGENT-GUIDE:END -->

@@ -4,6 +4,7 @@
 빌드: pyinstaller regulation_search_gui.spec --clean
 정합성 점검(2026-03-01): config 전체 포함 대신 settings.example.json만 포함
 정합성 점검(2026-03-09): optional import hiddenimports 경로 동기화
+정합성 점검(2026-07-15): app/rag collect_submodules로 path_validation·hardening 포함
 
 특징:
 - GUI 모드 (콘솔 창 없음)
@@ -196,6 +197,16 @@ hiddenimports = [
 
 # app 패키지 전체
 hiddenimports += collect_submodules('app')
+# === RAG v3 (2026-07) ===
+try:
+    from PyInstaller.utils.hooks import collect_submodules as _csm
+    hiddenimports += _csm('rag')
+except Exception:
+    pass
+for _m in ('httpx', 'langgraph', 'langgraph.graph', 'mcp', 'mcp.server.fastmcp'):
+    if _m not in hiddenimports:
+        hiddenimports.append(_m)
+
 hiddenimports += collect_submodules('app.routes')
 hiddenimports += collect_submodules('app.services')
 hiddenimports += collect_submodules('app.services.embeddings_backends')

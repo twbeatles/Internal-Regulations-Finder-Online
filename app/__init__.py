@@ -143,7 +143,8 @@ def create_app() -> Flask:
     def server_error(e):
         logger.error(f"서버 내부 오류: {e}")
         if request.path.startswith('/api/'):
-            return jsonify({'success': False, 'message': '서버 내부 오류가 발생했습니다', 'error': str(e)}), 500
+            # 내부 예외 문자열은 클라이언트에 노출하지 않음
+            return jsonify({'success': False, 'message': '서버 내부 오류가 발생했습니다'}), 500
         return "서버 오류발생", 500
 
     # Blueprint 등록 (Lazy Import to avoid circular refs)
@@ -151,12 +152,18 @@ def create_app() -> Flask:
         from app.routes.main_routes import main_bp
         from app.routes.api_search import search_bp
         from app.routes.api_files import files_bp
+        from app.routes.api_tags import tags_bp
+        from app.routes.api_revisions import revisions_bp
         from app.routes.api_system import system_bp
+        from rag.routes import create_rag_blueprint
 
         app.register_blueprint(main_bp)
         app.register_blueprint(search_bp, url_prefix='/api')
         app.register_blueprint(files_bp, url_prefix='/api')
+        app.register_blueprint(tags_bp, url_prefix='/api')
+        app.register_blueprint(revisions_bp, url_prefix='/api')
         app.register_blueprint(system_bp, url_prefix='/api')
+        app.register_blueprint(create_rag_blueprint(), url_prefix='/api')
     except ImportError as e:
         logger.warning(f"블루프린트 등록 중 오류 (아직 파일이 없을 수 있음): {e}")
 

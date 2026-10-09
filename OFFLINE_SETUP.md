@@ -1,6 +1,7 @@
 # 🔒 폐쇄망 환경 설정 가이드
 
-> 사내 규정 검색기 v2.2 - 인터넷 연결 없이 운영하기
+> 사내 규정 검색기 v3.0 - 인터넷 연결 없이 운영하기  
+> (임베딩 오프라인 + 선택적으로 Ollama 로컬 LLM; 클라우드 LLM 폴백은 폐쇄망에서 비활성 권장)
 
 ## 📋 개요
 
@@ -43,6 +44,12 @@ python download_static.py
 ```bash
 python run.py
 ```
+
+### RAG (v3) 오프라인 참고
+
+- RAG 채팅은 **로컬 Ollama** (`rag.llm.base_url`, 기본 `http://127.0.0.1:11434`) 또는 폐쇄망 내 LLM 게이트웨이가 필요합니다.
+- LLM 없이도 **retrieval-only** 모드로 발췌+인용만 제공됩니다 (`search_mode: rag` 유지 가능).
+- 레거시 키워드 검색은 LLM 없이 BM25/벡터만으로 동작합니다 (`search_mode: legacy`).
 
 ### 문서 포맷 참고
 

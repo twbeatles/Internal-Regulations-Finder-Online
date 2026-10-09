@@ -1,19 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-사내 규정 검색기 v2.3 - 초경량 빌드 Spec (Ultra Lite)
+사내 규정 검색기 - Ultra Lite 콘솔 빌드 (최소 크기)
 빌드: pyinstaller regulation_search_ultra_lite.spec
 정합성 점검(2026-03-01): config 전체 포함 대신 settings.example.json만 포함
 정합성 점검(2026-03-16): HWP/HWPX 파서 서브모듈 hiddenimports 보강
+정합성 점검(2026-07-15): files.path_validation 등 hardening 서브모듈 명시
 
 목표 크기: 60-80MB
 - AI/ML 완전 제외 (BM25 텍스트 검색만)
-- 최소 필수 라이브러리만 포함
+- GUI 제외 (콘솔 전용)
+- 가상환경 독립적 (글로벌 패키지 오염 차단)
+- 불필요한 바이너리/데이터 적극 제거
 - UPX 최대 압축
 
 사용법:
 1. pip install -r requirements_lite.txt
 2. pyinstaller regulation_search_ultra_lite.spec
-3. dist/사내규정검색기_Lite/ 폴더에 실행 파일 생성
+3. dist/사내규정검색기_Lite/ 폴더 배포 및 실행
 """
 
 import os
@@ -24,81 +27,84 @@ block_cipher = None
 project_dir = os.path.dirname(os.path.abspath(SPEC))
 
 # ============================================================================
-# 데이터 파일 (필수만)
+# 데이터 파일 (최소화)
 # ============================================================================
 datas = [
     (os.path.join(project_dir, 'templates'), 'templates'),
     (os.path.join(project_dir, 'static'), 'static'),
 ]
 
-# config 샘플 파일만 포함 (민감정보/런타임 데이터 제외)
+# settings.example.json만 포함 (불필요한 config 파일 제외)
 settings_example = os.path.join(project_dir, 'config', 'settings.example.json')
 if os.path.exists(settings_example):
     datas.append((settings_example, 'config'))
 
 # ============================================================================
-# Hidden Imports - 최소 필수만
+# Hidden Imports (필수 패키지만)
 # ============================================================================
 hiddenimports = [
-    # Flask 코어
+    # Flask 핵심
     'flask',
-    'flask_compress',
     'flask.json',
     'flask.json.provider',
     'flask_cors',
+    'flask_compress',
     'werkzeug',
     'werkzeug.serving',
+    'werkzeug.routing',
     'jinja2',
+    'jinja2.ext',
     'markupsafe',
     
-    # WSGI
+    # 웹 서버
     'waitress',
     'waitress.server',
     
-    # DB & 스레딩
+    # 표준 라이브러리
     'sqlite3',
     'threading',
     'queue',
     'concurrent.futures',
+    'uuid',
+    'datetime',
+    'logging',
+    'logging.handlers',
+    'hashlib',
+    'json',
+    're',
+    'os',
+    'sys',
+    'pathlib',
+    'shutil',
+    'tempfile',
     
-    # 문서 처리 (기본)
+    # 기본 문서 파서 (AI 제외)
     'docx',
     'pypdf',
     'openpyxl',
     'olefile',
-    'lxml',
-    'lxml.etree',
     
-    # 시스템
+    # 시스템 유틸리티
     'psutil',
     
-    # 인코딩 (한글 지원)
-    'encodings.utf_8',
-    'encodings.cp949',
-    'encodings.euc_kr',
-    'encodings.utf_16',
-    
-    # App 모듈
-    'app',
-    'app.config',
-    'app.constants',
-    'app.exceptions',
-    'app.utils',
-    'app.routes',
-    'app.routes.main_routes',
-    'app.routes.api_search',
-    'app.routes.api_files',
-    'app.routes.api_system',
-    'app.services',
-    'app.services.search',
-    'app.services.document',
-    'app.services.db',
-    'app.services.file_manager',
-    'app.services.metadata',
-    'app.services.parsers',
+    # HWP/HWPX 파서 서브모듈
     'app.services.parsers.hwp_adapter',
     'app.services.parsers.hwpx_adapter',
     'app.services.parsers.hwp_models',
+    'app.services.search.qa_facade',
+    'app.services.search.hybrid_search',
+    'app.services.search.index',
+    'app.routes.files_request',
+    'app.routes.api_revisions',
+    'app.routes.api_tags',
+    'app.services.files',
+    'app.services.files.path_resolver',
+    'app.services.files.path_validation',
+    'app.services.files.delete_policy',
+    'app.services.files.lock',
+    'app.services.files.preview_service',
+    'app.services.settings_store',
+    'app.auth',
 ]
 
 # ============================================================================
@@ -116,7 +122,7 @@ excludes = [
     'accelerate', 'safetensors', 'tokenizers',
     'optimum', 'onnx', 'onnxruntime',
     
-    # === GUI 프레임워크 (콘솔 빌드용) ===
+    # === GUI 프레임워크 전체 제외 ===
     'tkinter', 'tk', '_tkinter',
     'PyQt5', 'PyQt6', 'PySide2', 'PySide6',
     'wx', 'wxPython',
@@ -132,20 +138,17 @@ excludes = [
     'setuptools', 'pip', 'wheel',
     
     # === 이미지/비디오 ===
-    'cv2', 'opencv', 'PIL.ImageTk',
+    'cv2', 'opencv', 'PIL', 'Pillow',
     'pytesseract', 'pdf2image',
     'imageio', 'moviepy',
     
-    # === 네트워크 (불필요) ===
+    # === 네트워크 ===
     'scrapy', 'selenium', 'requests_html',
     'aiohttp', 'httpx',
     
     # === 기타 ===
     'email.test', 'test', 'tests', 'lib2to3',
     'sympy', 'numba', 'numexpr',
-    'multiprocessing.popen_spawn_win32',
-    'multiprocessing.popen_fork',
-    'multiprocessing.popen_forkserver',
 ]
 
 # ============================================================================
@@ -193,7 +196,7 @@ excluded_binaries = [
     
     # Qt (GUI)
     'qt5', 'qt6', 'pyqt', 'pyside',
-    'libqt', 'Qt5', 'Qt6',
+    'Qt5', 'Qt6',
     
     # TensorFlow
     'tensorflow', 'libtensorflow',
@@ -207,9 +210,6 @@ excluded_binaries = [
     # Transformers
     'transformers', 'tokenizers', 'sentencepiece',
     
-    # 기타 대용량
-    'triton', 'nvtx', 'magma',
-    
     # 디버그
     '.pdb', '_d.dll', '_d.pyd',
 ]
@@ -222,25 +222,16 @@ a.binaries = [
 print(f"[Ultra Lite] 필터링 후 바이너리 수: {len(a.binaries)}")
 
 # ============================================================================
-# 데이터 필터링 (캐시, 테스트, 문서 제거)
+# 데이터 필터링
 # ============================================================================
 excluded_datas = [
-    # GUI
     'tcl', 'tk',
-    
-    # 시각화
     'matplotlib', 'mpl-data',
-    
-    # AI/ML
     'torch', 'transformers', 'huggingface',
     'sentence_transformers', 'faiss',
-    
-    # 테스트/문서
     'share/jupyter', 'share/doc',
     'include/', '.dist-info',
     '__pycache__', 'tests/', 'test/',
-    
-    # 로케일 (용량 절감)
     'share/locale',
 ]
 

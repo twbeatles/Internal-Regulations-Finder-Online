@@ -2,6 +2,7 @@
   "pythonVersion": "3.10",
   "include": [
     "app",
+    "rag",
     "tests",
     "run.py",
     "server_gui.py",
@@ -11,6 +12,12 @@
   ],
   "exclude": [
     "**/__pycache__",
-    ".pytest_cache"
+    ".pytest_cache",
+    "build",
+    "dist",
+    "node_modules",
+    "models",
+    "terminals",
+    ".codegraph"
   ]
 }

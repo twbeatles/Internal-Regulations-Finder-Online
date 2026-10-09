@@ -48,6 +48,7 @@ def test_extract_with_details_routes_hwp_and_hwpx(tmp_path, monkeypatch) -> None
         calls.append("hwpx")
         return ExtractedDocument(text="hwpx body")
 
+    monkeypatch.setattr(DocumentExtractor, "_try_kordoc_extract", lambda self, path: None)
     monkeypatch.setattr(DocumentExtractor, "_extract_hwp_document", fake_hwp)
     monkeypatch.setattr(DocumentExtractor, "_extract_hwpx_document", fake_hwpx)
 
@@ -96,12 +97,13 @@ def test_hwpx_parse_failure_is_captured(tmp_path) -> None:
     assert "HWPX ZIP 오류" in result.error
 
 
-def test_hwpx_extracts_text_tables_and_metadata(tmp_path) -> None:
+def test_hwpx_extracts_text_tables_and_metadata(tmp_path, monkeypatch) -> None:
     from app.services.document import DocumentExtractor
 
     target = tmp_path / "normal.hwpx"
     _write_hwpx(target)
 
+    monkeypatch.setattr(DocumentExtractor, "_try_kordoc_extract", lambda self, path: None)
     result = DocumentExtractor().extract_with_details(str(target))
 
     assert result.error is None
@@ -169,7 +171,7 @@ def test_process_single_file_preserves_parser_details_in_chunk_meta(tmp_path, mo
 
 def test_preview_route_returns_parser_metadata_and_diagnostics(tmp_path, monkeypatch) -> None:
     from app import create_app
-    from app.routes import api_files as api_files_module
+    from app.services.files import preview_service
     from app.services.parsers.hwp_models import ExtractedDocument
     from app.services.search import qa_system
     from app.utils import FileInfo, FileUtils
@@ -185,7 +187,7 @@ def test_preview_route_returns_parser_metadata_and_diagnostics(tmp_path, monkeyp
         raising=False,
     )
     monkeypatch.setattr(
-        api_files_module._preview_extractor,
+        preview_service.extractor,
         "extract_with_details",
         lambda path: ExtractedDocument(
             text="미리보기 본문",

@@ -27,6 +27,7 @@ def _env_list(name: str, default_csv: str) -> list[str]:
         return [v for v in values if v]
     return [part.strip() for part in str(raw).split(",") if part.strip()]
 
+
 class AppConfig:
     APP_NAME: ClassVar[str] = "사내 규정 검색기"
     APP_VERSION: ClassVar[str] = "2.6.1"  # v2.6.1 성능 최적화 리팩토링
@@ -54,7 +55,6 @@ class AppConfig:
     EMBED_BACKEND: ClassVar[str] = "onnx_fp32"  # "torch" | "onnx_fp32" | "onnx_int8"
     EMBED_NORMALIZE: ClassVar[bool] = True   # L2 정규화 여부
     EMBED_BATCH_SIZE: ClassVar[int] = _env_int("EMBED_BATCH_SIZE", 32)  # ONNX 배치 인코딩 크기 (대량 인덱싱 피크 메모리 억제)
-
 
     # AI 모델 설정 (2026-09 전면 개편: 2021~2022년식 SBERT 3종 교체)
     # 선정 기준: 한국어 검색 품질(Ko-MTEB/MIRACL-ko) + CPU/ONNX 경량 실행 + 라이선스
@@ -121,6 +121,21 @@ class AppConfig:
     SEARCH_CACHE_SIZE: ClassVar[int] = 1000 # 캐시 크기 대폭 증가 (자주 조회되는 검색어 부하 감소)
     MAX_CONCURRENT_SEARCHES: ClassVar[int] = 10 # 동시 검색 실행 제한 (AI 모델 CPU 과부하 방지)
     RATE_LIMIT_PER_MINUTE: ClassVar[int] = 300 # 사용자당 분당 요청 제한 완화
+    RAG_RATE_LIMIT_PER_MINUTE: ClassVar[int] = _env_int("RAG_RATE_LIMIT_PER_MINUTE", 60)
+    # 관리자 로그인 실패 포함 요청 제한 (브루트포스 완화)
+    ADMIN_AUTH_RATE_LIMIT_PER_MINUTE: ClassVar[int] = _env_int("ADMIN_AUTH_RATE_LIMIT_PER_MINUTE", 20)
+
+    # 검색/RAG 입력 상한 (DoS·비용 완화)
+    MAX_SEARCH_QUERY_LENGTH: ClassVar[int] = _env_int("MAX_SEARCH_QUERY_LENGTH", 500)
+    MAX_RAG_MESSAGE_LENGTH: ClassVar[int] = _env_int("MAX_RAG_MESSAGE_LENGTH", 4000)
+    MAX_RAG_HISTORY_ITEMS: ClassVar[int] = _env_int("MAX_RAG_HISTORY_ITEMS", 6)
+    MAX_RAG_HISTORY_ITEM_LENGTH: ClassVar[int] = _env_int("MAX_RAG_HISTORY_ITEM_LENGTH", 2000)
+
+    # 인덱싱 중 검색 차단 (True: 503성 실패 메시지, False: 락 대기)
+    BLOCK_SEARCH_DURING_INDEXING: ClassVar[bool] = _env_bool("BLOCK_SEARCH_DURING_INDEXING", True)
+
+    # LLM health 체크 TTL (초)
+    LLM_HEALTH_CACHE_TTL: ClassVar[int] = _env_int("LLM_HEALTH_CACHE_TTL", 30)
 
     # ========================================================================
     # 성능 최적화 설정 (v2.6.1)

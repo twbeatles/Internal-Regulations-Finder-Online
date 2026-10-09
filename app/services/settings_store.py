@@ -54,6 +54,8 @@ class SettingsStore:
             os.makedirs(self._paths.config_dir, exist_ok=True)
             if os.path.exists(self._paths.settings_json):
                 return
+            from rag.config import DEFAULT_RAG_SETTINGS
+
             default_settings: Dict[str, Any] = {
                 "folder": "",
                 "offline_mode": False,
@@ -62,6 +64,8 @@ class SettingsStore:
                 "server_port": 8080,
                 "embed_backend": "torch",
                 "embed_normalize": True,
+                "search_mode": "rag",
+                "rag": DEFAULT_RAG_SETTINGS,
             }
             try:
                 with open(self._paths.settings_json, "w", encoding="utf-8") as f:

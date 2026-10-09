@@ -4,12 +4,30 @@ import os
 
 from flask import Blueprint, jsonify, request, session
 from app.config import AppConfig
-from app.services.search import qa_system
+from app.constants import ErrorMessages, HttpStatus
+from app.services.search import RateLimiter, qa_system
+from app.services.files.path_validation import validate_folder_path
 from app.utils import logger, get_app_directory
 from app.auth import admin_required
 from app.services.settings_store import get_settings_store, verify_admin_password
 
 system_bp = Blueprint('system', __name__)
+
+# 관리자 로그인 전용 rate limiter (검색 limiter와 분리)
+_admin_auth_limiter = RateLimiter(
+    requests_per_minute=getattr(AppConfig, "ADMIN_AUTH_RATE_LIMIT_PER_MINUTE", 10)
+)
+
+
+def _admin_auth_allowed() -> bool:
+    """브루트포스 완화 — 분당 시도 상한 (성공/실패 모두 카운트)."""
+    client_ip = request.remote_addr or "unknown"
+    return _admin_auth_limiter.is_allowed(client_ip)
+
+
+def _reset_admin_auth_limiter_for_tests() -> None:
+    """pytest 등에서 공유 리미터 상태 초기화."""
+    _admin_auth_limiter.reset()
 
 
 def _to_bool(value, default=False):
@@ -93,6 +111,13 @@ def set_model():
 @system_bp.route('/verify_password', methods=['POST'])
 def verify_password():
     """관리자 비밀번호 확인"""
+    if not _admin_auth_allowed():
+        return jsonify({
+            'success': False,
+            'message': ErrorMessages.AUTH_RATE_LIMITED,
+            'error_code': 'AUTH_RATE_LIMITED',
+        }), HttpStatus.TOO_MANY_REQUESTS
+
     data = request.json or {}
     password = data.get('password', '')
     if not password:
@@ -127,13 +152,14 @@ def status():
 @admin_required
 def init_server():
     """검색 경로 초기화 및 인덱싱 시작"""
-    data = request.json
-    folder_path = data.get('folder_path')
-    if not folder_path or not os.path.exists(folder_path):
-        return jsonify({'success': False, 'message': '유효하지 않은 경로입니다'})
-        
+    data = request.json or {}
+    folder_path, err = validate_folder_path(data.get('folder_path') or data.get('folder') or '')
+    if err or not folder_path:
+        return jsonify({'success': False, 'message': err or ErrorMessages.FOLDER_INVALID}), 400
+
     res = qa_system.initialize(folder_path, force_reindex=data.get('reindex', False))
-    return jsonify(res.to_dict())
+    status = 200 if res.success else 409
+    return jsonify(res.to_dict()), status
 
 @system_bp.route('/stats', methods=['GET'])
 def stats():
@@ -231,42 +257,21 @@ def sync_start():
     """
     try:
         data = request.json or {}
-        folder_path = data.get('folder')
-        
-        if not folder_path:
-            return jsonify({'success': False, 'message': '폴더 경로가 필요합니다'}), 400
-        
-        # Path Traversal 공격 방지: 경로 정규화 및 검증
-        try:
-            # 경로 정규화 (.. 등 해석)
-            normalized_path = os.path.normpath(os.path.realpath(folder_path))
-            
-            # 위험한 경로 패턴 차단
-            dangerous_patterns = ['..', '//']
-            if any(p in folder_path for p in dangerous_patterns):
-                logger.warning(f"의심스러운 경로 패턴 감지: {folder_path}")
-                return jsonify({'success': False, 'message': '유효하지 않은 경로 형식입니다'}), 400
-            
-            folder_path = normalized_path
-        except (ValueError, OSError) as e:
-            logger.warning(f"경로 정규화 실패: {folder_path} - {e}")
-            return jsonify({'success': False, 'message': '유효하지 않은 경로입니다'}), 400
-        
-        if not os.path.exists(folder_path):
-            return jsonify({'success': False, 'message': f'폴더를 찾을 수 없습니다: {folder_path}'}), 404
-        
-        if not os.path.isdir(folder_path):
-            return jsonify({'success': False, 'message': f'디렉토리가 아닙니다: {folder_path}'}), 400
+        folder_path, err = validate_folder_path(data.get('folder') or '')
+        if err or not folder_path:
+            status = 404 if err and '찾을 수 없습니다' in err else 400
+            return jsonify({'success': False, 'message': err or ErrorMessages.FOLDER_INVALID}), status
         
         logger.info(f"동기화 시작: {folder_path}")
         res = qa_system.initialize(folder_path, force_reindex=data.get('force', False))
-        return jsonify(res.to_dict())
+        status = 200 if res.success else 409
+        return jsonify(res.to_dict()), status
         
     except json.JSONDecodeError:
         return jsonify({'success': False, 'message': '잘못된 JSON 형식입니다'}), 400
     except Exception as e:
         logger.error(f"동기화 시작 오류: {e}")
-        return jsonify({'success': False, 'message': f'동기화 오류: {str(e)}'}), 500
+        return jsonify({'success': False, 'message': '동기화 중 오류가 발생했습니다'}), 500
 
 @system_bp.route('/sync/stop', methods=['POST'])
 @admin_required
@@ -319,6 +324,13 @@ def admin_auth():
 
     `/verify_password`와 동일한 로직을 사용합니다.
     """
+    if not _admin_auth_allowed():
+        return jsonify({
+            'success': False,
+            'message': ErrorMessages.AUTH_RATE_LIMITED,
+            'error_code': 'AUTH_RATE_LIMITED',
+        }), HttpStatus.TOO_MANY_REQUESTS
+
     data = request.json or {}
     password = data.get('password', '')
 

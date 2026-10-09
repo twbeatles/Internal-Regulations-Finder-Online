@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP 연결 안내</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <main class="main-content" style="max-width:720px;margin:2rem auto;padding:1rem;">
+        <h1>MCP 연결 안내</h1>
+        <p>Cursor 또는 Claude Desktop에서 사내 규정 검색 MCP 도구를 사용할 수 있습니다.</p>
+        {% if mcp_enabled %}
+        <p><strong>엔드포인트:</strong> <code>{{ mcp_url }}</code></p>
+        <pre>{
+  "mcpServers": {
+    "internal-regulations": {
+      "url": "{{ mcp_url }}"
+    }
+  }
+}</pre>
+        {% else %}
+        <p><code>config/settings.json</code>에서 <code>mcp.enabled</code>를 <code>true</code>로 설정한 뒤 서버를 재시작하세요.</p>
+        {% endif %}
+        <p><a href="/">메인으로</a> · <a href="/admin">관리자</a></p>
+    </main>
+</body>
+</html>

@@ -5,5 +5,44 @@
   "admin_password_hash": "",
   "server_port": 8080,
   "embed_backend": "torch",
-  "embed_normalize": true
+  "embed_normalize": true,
+  "search_mode": "rag",
+  "rag": {
+    "llm": {
+      "provider": "ollama",
+      "model": "exaone3.5:7.8b",
+      "base_url": "http://127.0.0.1:11434",
+      "temperature": 0.1,
+      "max_tokens": 2048
+    },
+    "llm_fallback": {
+      "enabled": false,
+      "provider": "openai",
+      "model": "gpt-4o-mini"
+    },
+    "retrieval": {
+      "top_k": 8,
+      "rerank_top_k": 4,
+      "hybrid": true,
+      "hyde": true,
+      "article_fast_path": true
+    },
+    "guardrails": {
+      "require_citation": true,
+      "min_confidence": 0.35,
+      "disclaimer": "본 답변은 사내 규정 참고용이며 법적 효력이 없습니다."
+    }
+  },
+  "mcp": {
+    "enabled": false,
+    "host": "127.0.0.1",
+    "port": 8081,
+    "transport": "sse",
+    "admin_token": ""
+  },
+  "_comments": {
+    "mcp.admin_token": "regulations.reindex 호출 시 필수. 비어 있으면 재인덱스 도구가 거부됩니다.",
+    "search_mode": "rag | legacy",
+    "embed_backend": "torch | onnx_fp32 | onnx_int8"
+  }
 }
