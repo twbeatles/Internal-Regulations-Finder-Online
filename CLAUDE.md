@@ -627,6 +627,17 @@ un.py 엔트리포인트 기반 콘솔 서버 빌드용으로 유지
   - 
 equirements.txt 하한을 2026-09-26 설치·테스트 검증 버전으로 상향 (torch 2.14, transformers 5.17, ST 6.1, Flask 3.1.3 등)
 
+### Maintenance Addendum (2026-10-13) — 의존성 전면 업그레이드
+- requirements.txt 하한 13건 상향: flask-cors 4.0.0→6.0.0, waitress 2.1.0→3.0.0, langchain 0.3.0→1.4.0, langchain-core 1.6.4→1.6.10, text-splitters 1.1.2→1.1.3, huggingface 1.2.2→1.2.3, transformers 5.17.0→5.19.0, pypdf 6.19.0→6.20.1, pydantic 2.13.5→2.14.1, numpy 2.5.3→2.5.4, httpx 0.27.0→0.28.1, langgraph 0.2.0→1.0.0, mcp 1.27.0→2.3.0.
+- 코드 직접 사용처가 전무한 huggingface-hub 핀 삭제 (transformers/ST가 각자 요구 범위로 해결).
+- requirements_lite.txt 하한 10건 동기화 (flask 3.1.3, cors 6.0.0, compress 1.25, waitress 3.0.0, docx 1.2.0, pypdf 6.20.1, openpyxl 3.1.5, olefile 0.47, lxml 6.1.3, psutil 7.2.2).
+- langchain 1.x / langgraph 1.x는 지연 임포트+폴백 구조라 기존 경로 그대로 동작 (langchain_lazy.py, rag/pipeline/agentic.py).
+- 프로젝트 내 .venv 도입 (uv 관리, .gitignore済) — 시스템 인터프리터 오염 방지. scripts/check_utf8.py 제외 목록에 .venv 추가.
+- Python 3.15 휠 미제공으로 설치 불가·하한 유지: torch, faiss-cpu, onnxruntime, watchdog, flask-compress(brotli), pyyaml 계열. Node kordoc는 ^2.3.0 유지 (node_modules 미설치, 4.x parse() 규격 미검증).
+- 현재 검증 기준:
+  - python -m pytest -q → 126 passed (시스템 + .venv 동일)
+  - pyright 변경 파일 0 errors, *.spec py_compile 정상, ruff 711건은 변경 전후 동일(기존 이슈)
+
 <!-- SPECKIT-AGENT-GUIDE:START -->
 
 ## Spec Kit / Spec-Driven Development (AI 에이전트 필독)

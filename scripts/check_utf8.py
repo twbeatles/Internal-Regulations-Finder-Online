@@ -17,6 +17,7 @@ TEXT_SUFFIXES = {
 EXCLUDED_PARTS = {
     "__pycache__",
     ".git",
+    ".venv",
     ".pytest_cache",
     "build",
     "dist",
