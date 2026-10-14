@@ -10,7 +10,7 @@
 - GUI 모드 (콘솔 창 없음)
 - AI/Vector 검색 포함
 - Python encodings 모듈 완전 포함
-- PyQt6 GUI 지원
+- PySide6 GUI 지원
 - 임베딩 백엔드 (torch/onnx) 지원
 
 예상 크기: 500-800MB (AI 포함)
@@ -33,15 +33,15 @@ try:
 except Exception as e:
     print(f"[WARNING] torch 수집 실패: {e}")
 
-# PyQt6 바이너리
-pyqt_binaries = []
+# PySide6 바이너리
+pyside_binaries = []
 try:
-    pyqt_binaries = collect_dynamic_libs('PyQt6')
-    print(f"[INFO] PyQt6 라이브러리: {len(pyqt_binaries)}개")
+    pyside_binaries = collect_dynamic_libs('PySide6')
+    print(f"[INFO] PySide6 라이브러리: {len(pyside_binaries)}개")
 except Exception as e:
-    print(f"[WARNING] PyQt6 수집 실패: {e}")
+    print(f"[WARNING] PySide6 수집 실패: {e}")
 
-all_binaries = torch_binaries + pyqt_binaries
+all_binaries = torch_binaries + pyside_binaries
 
 # ============================================================================
 # 데이터 파일
@@ -62,9 +62,9 @@ if os.path.exists(models_dir):
     datas.append((models_dir, 'models'))
     print(f"[INFO] models 폴더 포함: {models_dir}")
 
-# PyQt6 데이터
+# PySide6 데이터
 try:
-    datas += collect_data_files('PyQt6')
+    datas += collect_data_files('PySide6')
 except Exception:
     pass
 
@@ -113,12 +113,12 @@ hiddenimports = [
     'encodings.utf_8_sig',
     'codecs',
     
-    # === PyQt6 (GUI) ===
-    'PyQt6',
-    'PyQt6.QtWidgets',
-    'PyQt6.QtCore',
-    'PyQt6.QtGui',
-    'PyQt6.sip',
+    # === PySide6 (GUI) ===
+    'PySide6',
+    'PySide6.QtWidgets',
+    'PySide6.QtCore',
+    'PySide6.QtGui',
+    'shiboken6',
     
     # === Flask 코어 ===
     'flask',
@@ -220,7 +220,7 @@ hiddenimports += collect_submodules('encodings')
 excludes = [
     # 다른 GUI 프레임워크만 제외
     'tkinter', 'tk', '_tkinter',
-    'PyQt5', 'PySide2', 'PySide6',
+    'PyQt5', 'PyQt6', 'PySide2',
     'wx', 'wxPython',
     
     # 불필요한 대형 패키지

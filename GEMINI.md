@@ -20,7 +20,7 @@
 ```
 Internal-Regulations-Finder-Online-main/
 ├── run.py                  # 콘솔 서버 엔트리포인트
-├── server_gui.py           # GUI 서버 (PyQt6, 시스템 트레이)
+├── server_gui.py           # GUI 서버 (PySide6, 시스템 트레이)
 ├── download_models.py      # 오프라인용 모델 다운로드
 ├── app/                    # Flask 앱 패키지
 │   ├── __init__.py         # 앱 팩토리 (create_app)

@@ -7,7 +7,7 @@
 **프로젝트명**: 사내 규정 검색기 v3.0  
 **목적**: RAG 질의응답 + 레거시 하이브리드 검색(Vector + BM25)으로 사내 규정 문서 검색  
 **기술 스택**: Flask + PyTorch + LangChain + FAISS + SQLite + RAG(Ollama/클라우드 LLM)  
-**실행 방식**: 웹 서버 (`run.py` 콘솔 / `server_gui.py` PyQt6 GUI) — `server.py` 제거됨
+**실행 방식**: 웹 서버 (`run.py` 콘솔 / `server_gui.py` PySide6 GUI) — `server.py` 제거됨
 
 ---
 
@@ -23,7 +23,7 @@
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                      Flask Server                            │
-│  run.py (콘솔) / server_gui.py (PyQt6 GUI)                   │
+│  run.py (콘솔) / server_gui.py (PySide6 GUI)                   │
 ├─────────────────────────────────────────────────────────────┤
 │  app/__init__.py        - Flask 앱 팩토리                    │
 │  app/config.py          - 설정 (모델, 청킹, 동시성)          │
@@ -154,7 +154,7 @@ RegSearchError                   # 기본 예외
 
 ```
 ├── run.py                  # 콘솔 엔트리포인트
-├── server_gui.py           # GUI 서버 (PyQt6, 시스템 트레이)
+├── server_gui.py           # GUI 서버 (PySide6, 시스템 트레이)
 ├── download_models.py      # 오프라인용 모델 다운로드
 ├── download_static.py      # 오프라인용 정적 리소스(JS/Font) 다운로드 (v2.6.1)
 ├── app/

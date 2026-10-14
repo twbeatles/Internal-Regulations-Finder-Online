@@ -22,29 +22,29 @@ block_cipher = None
 project_dir = os.path.dirname(os.path.abspath(SPEC))
 
 # ============================================================================
-# PyQt6 수집 (GUI 필수)
+# PySide6 수집 (GUI 필수)
 # ============================================================================
-pyqt_binaries = []
-pyqt_datas = []
-pyqt_hiddenimports = []
+pyside_binaries = []
+pyside_datas = []
+pyside_hiddenimports = []
 
 try:
-    pyqt_binaries = collect_dynamic_libs('PyQt6')
-    print(f"[INFO] PyQt6 바이너리: {len(pyqt_binaries)}개")
+    pyside_binaries = collect_dynamic_libs('PySide6')
+    print(f"[INFO] PySide6 바이너리: {len(pyside_binaries)}개")
 except Exception as e:
-    print(f"[WARNING] PyQt6 바이너리 수집 실패: {e}")
+    print(f"[WARNING] PySide6 바이너리 수집 실패: {e}")
 
 try:
-    pyqt_datas = collect_data_files('PyQt6')
-    print(f"[INFO] PyQt6 데이터: {len(pyqt_datas)}개")
+    pyside_datas = collect_data_files('PySide6')
+    print(f"[INFO] PySide6 데이터: {len(pyside_datas)}개")
 except Exception as e:
-    print(f"[WARNING] PyQt6 데이터 수집 실패: {e}")
+    print(f"[WARNING] PySide6 데이터 수집 실패: {e}")
 
 try:
-    pyqt_hiddenimports = collect_submodules('PyQt6')
-    print(f"[INFO] PyQt6 서브모듈: {len(pyqt_hiddenimports)}개")
+    pyside_hiddenimports = collect_submodules('PySide6')
+    print(f"[INFO] PySide6 서브모듈: {len(pyside_hiddenimports)}개")
 except Exception as e:
-    print(f"[WARNING] PyQt6 서브모듈 수집 실패: {e}")
+    print(f"[WARNING] PySide6 서브모듈 수집 실패: {e}")
 
 # ============================================================================
 # 데이터 파일
@@ -54,8 +54,8 @@ datas = [
     (os.path.join(project_dir, 'static'), 'static'),
 ]
 
-# PyQt6 데이터 추가
-datas += pyqt_datas
+# PySide6 데이터 추가
+datas += pyside_datas
 
 # config 샘플 파일만 포함 (민감정보/런타임 데이터 제외)
 settings_example = os.path.join(project_dir, 'config', 'settings.example.json')
@@ -120,12 +120,12 @@ hiddenimports = [
     'encodings.latin_1',
     'codecs',
     
-    # PyQt6 (GUI 필수)
-    'PyQt6',
-    'PyQt6.QtWidgets',
-    'PyQt6.QtCore',
-    'PyQt6.QtGui',
-    'PyQt6.sip',
+    # PySide6 (GUI 필수)
+    'PySide6',
+    'PySide6.QtWidgets',
+    'PySide6.QtCore',
+    'PySide6.QtGui',
+    'shiboken6',
     
     # collections.abc (누락 방지)
     'collections.abc',
@@ -172,8 +172,8 @@ for _rag_mod in ('httpx', 'langgraph', 'langgraph.graph'):
     if _rag_mod not in hiddenimports:
         hiddenimports.append(_rag_mod)
 
-# PyQt6 서브모듈 추가
-hiddenimports += pyqt_hiddenimports
+# PySide6 서브모듈 추가
+hiddenimports += pyside_hiddenimports
 
 # encodings 전체 (안정성)
 hiddenimports += collect_submodules('encodings')
@@ -193,9 +193,9 @@ excludes = [
     'accelerate', 'safetensors', 'tokenizers',
     'optimum', 'onnx', 'onnxruntime',
     
-    # === GUI 프레임워크 (PyQt6는 유지) ===
+    # === GUI 프레임워크 (PySide6는 유지) ===
     'tkinter', 'tk', '_tkinter',
-    'PyQt5', 'PySide2', 'PySide6',
+    'PyQt5', 'PyQt6', 'PySide2',
     'wx', 'wxPython',
     
     # === 데이터 분석/시각화 ===
@@ -229,7 +229,7 @@ excludes = [
 a = Analysis(
     ['server_gui.py'],
     pathex=[project_dir],
-    binaries=pyqt_binaries,
+    binaries=pyside_binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -272,8 +272,8 @@ excluded_binaries = [
     # OpenCV
     'opencv', 'cv2', 'libopencv',
     
-    # Qt5 (PyQt6만 유지)
-    'qt5', 'Qt5', 'pyside',
+    # Qt5 (PySide6만 유지)
+    'qt5', 'Qt5', 'pyqt',
     
     # LLVM
     'llvm', 'clang', 'libllvm', 'libclang',
@@ -293,7 +293,7 @@ a.binaries = [
 print(f"[Onefile] 필터링 후 바이너리 수: {len(a.binaries)}")
 
 # ============================================================================
-# 데이터 필터링 (PyQt6 locale 등 제거)
+# 데이터 필터링 (PySide6 locale 등 제거)
 # ============================================================================
 excluded_datas = [
     'tcl', 'tk',

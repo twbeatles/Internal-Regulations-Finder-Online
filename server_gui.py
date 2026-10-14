@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-사내 규정 검색기 - 서버 GUI (PyQt6)
+사내 규정 검색기 - 서버 GUI (PySide6)
 시스템 트레이 + Windows 시작 프로그램 등록 지원
 로그 기능 강화 + 관리자 비밀번호 설정
 """
@@ -18,15 +18,15 @@ import logging
 from typing import Any, Optional
 from datetime import datetime
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QSystemTrayIcon, QMenu, QMessageBox,
     QCheckBox, QGroupBox, QTextEdit, QFrame, QLineEdit, QDialog,
     QDialogButtonBox, QFormLayout, QFileDialog, QSplashScreen, QProgressBar,
     QComboBox
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread
-from PyQt6.QtGui import QIcon, QAction, QFont, QColor, QPalette, QCloseEvent, QTextCharFormat, QPixmap
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread
+from PySide6.QtGui import QIcon, QAction, QFont, QColor, QPalette, QCloseEvent, QTextCharFormat, QPixmap
 
 # ============================================================================
 # 지연 로딩 패턴 - 무거운 모듈은 스플래시 후에 로드
@@ -400,7 +400,7 @@ class PortDialog(QDialog):
 # 로그 시그널 핸들러
 # ============================================================================
 class LogSignal(QObject):
-    log_received = pyqtSignal(str, str)  # message, level
+    log_received = Signal(str, str)  # message, level
 
 
 log_signal = LogSignal()
@@ -1052,7 +1052,7 @@ class ServerWindow(QMainWindow):
             self.tray_icon.setIcon(app_icon)
         else:
             # 기본 스타일 아이콘 사용
-            from PyQt6.QtWidgets import QStyle
+            from PySide6.QtWidgets import QStyle
             app_style = QApplication.style()
             default_icon = app_style.standardIcon(QStyle.StandardPixmap.SP_ComputerIcon) if app_style is not None else QIcon()
             self.tray_icon.setIcon(default_icon)
@@ -1518,8 +1518,8 @@ class SplashScreen(QSplashScreen):
 # ============================================================================
 class ModuleLoaderThread(QThread):
     """무거운 모듈을 백그라운드에서 로드하는 스레드"""
-    progress = pyqtSignal(str)  # 상태 메시지
-    finished_loading = pyqtSignal(bool)  # 로드 완료
+    progress = Signal(str)  # 상태 메시지
+    finished_loading = Signal(bool)  # 로드 완료
     
     def run(self):
         try:

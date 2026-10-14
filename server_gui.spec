@@ -40,12 +40,12 @@ hiddenimports = [
     "waitress",
     "waitress.server",
 
-    # PyQt6
-    "PyQt6",
-    "PyQt6.QtCore",
-    "PyQt6.QtGui",
-    "PyQt6.QtWidgets",
-    "PyQt6.sip",
+    # PySide6
+    "PySide6",
+    "PySide6.QtCore",
+    "PySide6.QtGui",
+    "PySide6.QtWidgets",
+    "shiboken6",
 
     # AI / search
     "langchain",
@@ -94,7 +94,7 @@ hiddenimports = [
 ]
 
 try:
-    hiddenimports += collect_submodules("PyQt6")
+    hiddenimports += collect_submodules("PySide6")
 except Exception:
     pass
 
@@ -113,8 +113,8 @@ for _rag_mod in ("httpx", "langgraph", "langgraph.graph"):
 excludes = [
     "tkinter",
     "PyQt5",
+    "PyQt6",
     "PySide2",
-    "PySide6",
     "wx",
     "kivy",
     "matplotlib",

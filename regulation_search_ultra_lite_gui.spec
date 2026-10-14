@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-사내 규정 검색기 - Ultra Lite GUI 빌드 (PyQt6 시스템 트레이)
+사내 규정 검색기 - Ultra Lite GUI 빌드 (PySide6 시스템 트레이)
 빌드: pyinstaller regulation_search_ultra_lite_gui.spec
 정합성 점검(2026-03-01): config 전체 포함 대신 settings.example.json만 포함
 정합성 점검(2026-03-16): HWP/HWPX 파서 서브모듈 hiddenimports 보강
@@ -34,35 +34,35 @@ settings_example = os.path.join(project_dir, 'config', 'settings.example.json')
 if os.path.exists(settings_example):
     datas.append((settings_example, 'config'))
 
-# PyQt6 플러그인 (플랫폼 플러그인 필수)
+# PySide6 플러그인 (플랫폼 플러그인 필수)
 try:
-    import PyQt6
-    pyqt_dir = os.path.dirname(PyQt6.__file__)
-    plugins_dir = os.path.join(pyqt_dir, 'Qt6', 'plugins')
+    import PySide6
+    pyside_dir = os.path.dirname(PySide6.__file__)
+    plugins_dir = os.path.join(pyside_dir, 'Qt', 'plugins')
     
     # platforms 플러그인만 포함 (최소화)
     platforms_dir = os.path.join(plugins_dir, 'platforms')
     if os.path.exists(platforms_dir):
-        datas.append((platforms_dir, 'PyQt6/Qt6/plugins/platforms'))
-        print(f"[GUI] PyQt6 platforms 플러그인 추가: {platforms_dir}")
+        datas.append((platforms_dir, 'PySide6/Qt/plugins/platforms'))
+        print(f"[GUI] PySide6 platforms 플러그인 추가: {platforms_dir}")
         
     # styles 플러그인 추가 (네이티브 룩앤필)
     styles_dir = os.path.join(plugins_dir, 'styles')
     if os.path.exists(styles_dir):
-        datas.append((styles_dir, 'PyQt6/Qt6/plugins/styles'))
+        datas.append((styles_dir, 'PySide6/Qt/plugins/styles'))
 except ImportError:
-    print("[GUI] 경고: PyQt6을 찾을 수 없습니다.")
+    print("[GUI] 경고: PySide6을 찾을 수 없습니다.")
 
 # ============================================================================
-# PyQt6 바이너리 수집
+# PySide6 바이너리 수집
 # ============================================================================
-pyqt_binaries = []
-pyqt_hiddenimports = [
-    'PyQt6',
-    'PyQt6.QtCore',
-    'PyQt6.QtGui',
-    'PyQt6.QtWidgets',
-    'PyQt6.sip',
+pyside_binaries = []
+pyside_hiddenimports = [
+    'PySide6',
+    'PySide6.QtCore',
+    'PySide6.QtGui',
+    'PySide6.QtWidgets',
+    'shiboken6',
 ]
 
 # ============================================================================
@@ -135,8 +135,8 @@ hiddenimports = [
     'app.auth',
 ]
 
-# PyQt6 서브모듈 추가
-hiddenimports += pyqt_hiddenimports
+# PySide6 서브모듈 추가
+hiddenimports += pyside_hiddenimports
 
 # ============================================================================
 # 제외 목록 (대폭 확대 - 핵심 경량화)
@@ -153,9 +153,9 @@ excludes = [
     'accelerate', 'safetensors', 'tokenizers',
     'optimum', 'onnx', 'onnxruntime',
     
-    # === GUI 프레임워크 (PyQt6는 제외하지 않음) ===
+    # === GUI 프레임워크 (PySide6는 제외하지 않음) ===
     'tkinter', 'tk', '_tkinter',
-    'PyQt5', 'PySide2', 'PySide6',  # PyQt6 제외됨
+    'PyQt5', 'PyQt6', 'PySide2',  # PySide6 제외됨
     'wx', 'wxPython',
     
     # === 데이터 분석/시각화 ===
@@ -188,7 +188,7 @@ excludes = [
 a = Analysis(
     ['server_gui.py'],  # ⭐ GUI 엔트리포인트
     pathex=[project_dir],
-    binaries=pyqt_binaries,  # PyQt6 바이너리 포함
+    binaries=pyside_binaries,  # PySide6 바이너리 포함
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -225,8 +225,8 @@ excluded_binaries = [
     # NumPy 2.x 실행에 필수이므로 OpenBLAS는 유지 (제거 시 _multiarray_umath 로드 실패)
     # 'openblas', 'libopenblas',
     
-    # Qt (PyQt6는 필요하므로 제외하지 않음)
-    'qt5', 'pyside',
+    # Qt (PySide6는 필요하므로 제외하지 않음)
+    'qt5', 'pyqt',
     'Qt5',
     
     # TensorFlow

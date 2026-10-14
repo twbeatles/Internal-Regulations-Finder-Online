@@ -5,7 +5,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![Flask](https://img.shields.io/badge/Flask-3.x-green.svg)](https://flask.palletsprojects.com/)
-[![PyQt6](https://img.shields.io/badge/GUI-PyQt6-brightgreen.svg)](https://riverbankcomputing.com/software/pyqt/)
+[![PySide6](https://img.shields.io/badge/GUI-PySide6-brightgreen.svg)](https://wiki.qt.io/Qt_for_Python)
 [![RAG](https://img.shields.io/badge/RAG-Ollama%20%7C%20Cloud%20LLM-blueviolet.svg)](https://ollama.ai/)
 [![ONNX Runtime](https://img.shields.io/badge/Engine-ONNX%20%7C%20PyTorch-orange.svg)](https://onnxruntime.ai/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -20,7 +20,7 @@
 * 📖 **조문 단위 파싱 & 리더 모드**: 제X조/제X장 단위의 스마트 분할, 검색어 하이라이트 순차 이동, 글자 크기 조절 가능한 원문 리더
 * 🔄 **개정 이력 관리 & Diff 비교**: 규정 변경 시 버전별 이력 추적 및 추가/수정/삭제된 조항의 시각적 비교
 * 🔌 **KCSC-MCP 연동 지원**: Model Context Protocol 서버를 내장하여 외부 AI 에이전트(Claude Desktop, Cursor, Grok 등)와 손쉽게 사내 규정 연동
-* 🖥️ **PyQt6 시스템 트레이 GUI & 모던 웹 UI**: 백그라운드 트레이 구동, 윈도우 시작프로그램 등록, RAG 채팅/레거시 검색 탭 전환이 가능한 반응형 UI
+* 🖥️ **PySide6 시스템 트레이 GUI & 모던 웹 UI**: 백그라운드 트레이 구동, 윈도우 시작프로그램 등록, RAG 채팅/레거시 검색 탭 전환이 가능한 반응형 UI
 * ⚡ **완전 오프라인(폐쇄망) 지원**: 인터넷이 차단된 사내망에서도 사전 다운로드된 모델, Ollama 로컬 LLM, 정적 리소스로 100% 로컬 구동 가능
 
 ---
@@ -278,8 +278,8 @@ Python이 설치되지 않은 사용자 PC 배포를 위해 PyInstaller 빌드 �
 
 | Spec 파일 | 대상 환경 | AI 기능 | 예상 크기 | 용도 |
 |-----------|-----------|---------|-----------|------|
-| `regulation_search_gui.spec` | PyQt6 GUI | ✅ RAG + 임베딩 | ~600MB | **일반 권장 배포본** (고성능 AI 검색) |
-| `regulation_search_ultra_lite_gui.spec` | PyQt6 GUI | ❌ BM25만 | 60~100MB | 저사양 PC 및 초경량 배포 |
+| `regulation_search_gui.spec` | PySide6 GUI | ✅ RAG + 임베딩 | ~600MB | **일반 권장 배포본** (고성능 AI 검색) |
+| `regulation_search_ultra_lite_gui.spec` | PySide6 GUI | ❌ BM25만 | 60~100MB | 저사양 PC 및 초경량 배포 |
 | `regulation_search_onefile.spec` | 단일 exe | ❌ BM25만 | 40~60MB | USB 휴대용 단일 파일 |
 
 ```bash
