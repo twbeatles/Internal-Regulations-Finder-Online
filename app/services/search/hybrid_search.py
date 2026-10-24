@@ -153,8 +153,11 @@ class HybridSearchService:
                 return []
 
         def bm25_search():
+            bm25 = qa.bm25
+            if bm25 is None:
+                return []
             try:
-                return qa.bm25.search(query, top_k=fetch_k)
+                return bm25.search(query, top_k=fetch_k)
             except Exception as e:
                 logger.debug(f"BM25 검색 오류: {e}")
                 return []

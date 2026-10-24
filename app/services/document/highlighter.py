@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """검색어 하이라이트."""
 import re
+from collections import Counter
 from typing import List
 
 from app.services.document.patterns import _RE_KEYWORD_EXTRACT

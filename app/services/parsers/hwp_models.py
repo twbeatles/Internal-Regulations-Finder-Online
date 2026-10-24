@@ -135,7 +135,7 @@ class ExtractedTable:
 class ExtractedDocument:
     text: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
-    tables: list[ExtractedTable] = field(default_factory=list)
+    tables: list[Any] = field(default_factory=list)
     diagnostics: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
 

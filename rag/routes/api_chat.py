@@ -288,7 +288,8 @@ def rag_chat_stream():
                     answer_parts.append(str(payload))
                     yield f"event: token\ndata: {json.dumps({'text': payload}, ensure_ascii=False)}\n\n"
                 elif event == "citation":
-                    citations.append(payload)
+                    if isinstance(payload, dict):
+                        citations.append(payload)
                     yield f"event: citation\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 elif event == "replace":
                     # 가드레일 거부 시 스트림 본문 교체

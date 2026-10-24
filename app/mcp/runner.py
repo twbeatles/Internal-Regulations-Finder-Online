@@ -18,8 +18,9 @@ def start_mcp_server_thread() -> bool:
     if _mcp_thread and _mcp_thread.is_alive():
         return True
 
-    settings = get_settings_store().load()
-    mcp_cfg = settings.get("mcp") if isinstance(settings.get("mcp"), dict) else {}
+    settings = get_settings_store().load() or {}
+    raw_mcp = settings.get("mcp")
+    mcp_cfg = raw_mcp if isinstance(raw_mcp, dict) else {}
     if not mcp_cfg.get("enabled", False):
         return False
 

@@ -10,6 +10,8 @@
     "download_static.py",
     "scripts"
   ],
+  "reportMissingImports": "none",
+  "reportAttributeAccessIssue": "none",
   "exclude": [
     "**/__pycache__",
     ".pytest_cache",

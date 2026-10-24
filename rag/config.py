@@ -57,8 +57,9 @@ class RagConfig:
     @classmethod
     def from_settings(cls, settings: dict[str, Any] | None = None) -> "RagConfig":
         if settings is None:
-            settings = get_settings_store().load()
-        rag_raw = settings.get("rag") if isinstance(settings.get("rag"), dict) else {}
+            settings = get_settings_store().load() or {}
+        rag_val = settings.get("rag") if settings else None
+        rag_raw = rag_val if isinstance(rag_val, dict) else {}
         merged = _deep_merge(DEFAULT_RAG_SETTINGS, rag_raw)
         return cls(
             llm=merged.get("llm", {}),
@@ -89,7 +90,8 @@ def save_search_mode(mode: str) -> bool:
 
 def save_rag_config(rag_config: dict[str, Any]) -> bool:
     store = get_settings_store()
-    settings = store.load()
-    current = settings.get("rag") if isinstance(settings.get("rag"), dict) else {}
+    settings = store.load() or {}
+    cur_val = settings.get("rag")
+    current = cur_val if isinstance(cur_val, dict) else {}
     settings["rag"] = _deep_merge(DEFAULT_RAG_SETTINGS, {**current, **rag_config})
     return store.save(settings)
