@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
+
 from app.services.db import db
 from app.utils import logger
+
 
 class TagManager:
     """파일별 태그 관리 (SQLite 기반)"""

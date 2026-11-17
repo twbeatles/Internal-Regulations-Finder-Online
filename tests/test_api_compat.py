@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-import io
 
 
 def test_status_progress_alias():

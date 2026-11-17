@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-import pytest
-
 from typing import Any
+
+import pytest
 
 
 def test_default_model_is_registered() -> None:

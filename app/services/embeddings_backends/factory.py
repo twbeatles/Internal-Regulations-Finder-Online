@@ -9,9 +9,9 @@
 import os
 from typing import Any, Dict, Optional
 
-from app.utils import logger, get_app_directory
 from app.config import AppConfig
 from app.exceptions import ModelLoadError, ModelOfflineError
+from app.utils import get_app_directory, logger
 
 
 def get_model_preset(model_id_or_path: str) -> Dict[str, str]:

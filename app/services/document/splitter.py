@@ -5,6 +5,7 @@ from typing import Dict, List
 
 from app.constants import Limits
 
+
 class DocumentSplitter:
     """대용량 규정집을 개별 규정 파일로 분할
     

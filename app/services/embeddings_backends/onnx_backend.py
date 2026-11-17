@@ -6,16 +6,16 @@ LangChain Embeddings 인터페이스와 호환되는 ONNX 임베딩 클래스
 HuggingFaceEmbeddings(normalize_embeddings=True)와 동일한 출력을 생성
 """
 
+import importlib
 import os
 import threading
-import importlib
-from typing import List, Optional, Any
+from typing import Any, List, Optional
 
 import numpy as np
 
-from app.utils import logger
 from app.config import AppConfig
 from app.exceptions import ModelLoadError
+from app.utils import logger
 
 
 class OnnxEmbeddings:
@@ -99,7 +99,7 @@ class OnnxEmbeddings:
 
             try:
                 transformers_module = importlib.import_module('transformers')
-                auto_tokenizer = getattr(transformers_module, 'AutoTokenizer')
+                auto_tokenizer = transformers_module.AutoTokenizer
 
                 # 오프라인 모드 환경변수 설정
                 if self.offline_mode:
@@ -114,7 +114,7 @@ class OnnxEmbeddings:
 
             except Exception as e:
                 logger.error(f"토크나이저 로드 실패: {e}")
-                raise ModelLoadError(self.model_path, f"토크나이저 로드 실패: {e}")
+                raise ModelLoadError(self.model_path, f"토크나이저 로드 실패: {e}") from e
 
     def _ensure_session(self):
         """ONNX 세션 지연 로드 (double-checked locking)"""
@@ -165,11 +165,11 @@ class OnnxEmbeddings:
 
                 logger.info(f"ONNX 세션 초기화 완료: inputs={self._input_names}, outputs={self._output_names}")
 
-            except ImportError:
-                raise ModelLoadError(self.model_path, "onnxruntime 패키지가 설치되지 않았습니다. pip install onnxruntime")
+            except ImportError as e:
+                raise ModelLoadError(self.model_path, "onnxruntime 패키지가 설치되지 않았습니다. pip install onnxruntime") from e
             except Exception as e:
                 logger.error(f"ONNX 세션 초기화 실패: {e}")
-                raise ModelLoadError(self.model_path, f"ONNX 세션 초기화 실패: {e}")
+                raise ModelLoadError(self.model_path, f"ONNX 세션 초기화 실패: {e}") from e
 
     def _mean_pooling(self, token_embeddings: np.ndarray, attention_mask: np.ndarray) -> np.ndarray:
         """

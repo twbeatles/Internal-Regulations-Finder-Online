@@ -5,7 +5,7 @@
 표준화된 예외 처리를 위한 커스텀 예외 정의
 """
 
-from typing import Optional, Any
+from typing import Any, Optional
 
 
 class RegSearchError(Exception):

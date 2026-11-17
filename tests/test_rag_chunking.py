@@ -3,7 +3,6 @@
 
 from rag.pipeline.chunking import build_chunks_from_text, extract_article_number
 
-
 SAMPLE_REGULATION = """
 제1조(목적) 이 규정은 연차휴가에 관한 사항을 정한다.
 

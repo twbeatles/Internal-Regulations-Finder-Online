@@ -8,7 +8,6 @@ import threading
 from app.services.settings_store import get_settings_store
 from app.utils import logger
 
-
 _mcp_thread: threading.Thread | None = None
 
 

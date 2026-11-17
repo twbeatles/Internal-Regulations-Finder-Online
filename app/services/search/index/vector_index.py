@@ -2,10 +2,7 @@
 """FAISS 벡터 인덱스 재구축."""
 from __future__ import annotations
 
-from typing import Any
-
 import app.services.search as _search_exports
-
 from app.services.search.index.meta import normalize_doc_meta
 from app.utils import logger
 

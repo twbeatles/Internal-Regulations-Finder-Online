@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import builtins
-import importlib.util
 import sys
 from pathlib import Path
 

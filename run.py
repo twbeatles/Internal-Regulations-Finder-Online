@@ -4,12 +4,13 @@ import os
 import signal
 import sys
 import threading
+
 from app import app
 from app.config import AppConfig
-from app.utils import logger, setup_logger
-from app.services.search import qa_system
 from app.services.db import db
+from app.services.search import qa_system
 from app.services.settings_store import get_settings_store
+from app.utils import logger, setup_logger
 
 # Graceful Shutdown 플래그
 _shutdown_event = threading.Event()
@@ -127,7 +128,7 @@ if __name__ == '__main__':
     init_thread.start()
     
     try:
-        serve = getattr(importlib.import_module("waitress"), "serve")
+        serve = importlib.import_module("waitress").serve
         logger.info(f"🚀 Waitress 서버 시작 (Port: {AppConfig.SERVER_PORT}, Threads: {AppConfig.SERVER_THREADS})")
         serve(app, host=AppConfig.SERVER_HOST, port=AppConfig.SERVER_PORT, threads=AppConfig.SERVER_THREADS)
     except ImportError:

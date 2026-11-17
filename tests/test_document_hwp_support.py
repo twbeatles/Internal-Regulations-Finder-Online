@@ -117,8 +117,12 @@ def test_hwpx_extracts_text_tables_and_metadata(tmp_path, monkeypatch) -> None:
 
 
 def test_process_single_file_preserves_parser_details_in_chunk_meta(tmp_path, monkeypatch) -> None:
+    from app.services.parsers.hwp_models import (
+        ExtractedDocument,
+        ExtractedTable,
+        ExtractedTableCell,
+    )
     from app.services.search import RegulationQASystem
-    from app.services.parsers.hwp_models import ExtractedDocument, ExtractedTable, ExtractedTableCell
 
     class _DummySplitter:
         def __init__(self, chunk_size, chunk_overlap):

@@ -25,11 +25,11 @@
     - Qwen3-Embedding-0.6B는 최신 sentence-transformers 권장
 """
 
+import argparse
+import importlib
 import os
 import sys
-import argparse
 import time
-import importlib
 from typing import Dict
 
 from app.config import AppConfig
@@ -73,7 +73,7 @@ def download_model(model_name: str, model_id: str, output_dir: str) -> bool:
     try:
         # sentence-transformers 사용 (가장 안정적인 다운로드 방법)
         sentence_transformers_module = importlib.import_module('sentence_transformers')
-        sentence_transformer_cls = getattr(sentence_transformers_module, 'SentenceTransformer')
+        sentence_transformer_cls = sentence_transformers_module.SentenceTransformer
 
         start_time = time.time()
 
@@ -92,7 +92,7 @@ def download_model(model_name: str, model_id: str, output_dir: str) -> bool:
 
         # 모델 폴더 크기 계산
         total_size = 0
-        for dirpath, dirnames, filenames in os.walk(model_save_path):
+        for dirpath, _dirnames, filenames in os.walk(model_save_path):
             for f in filenames:
                 fp = os.path.join(dirpath, f)
                 if os.path.isfile(fp):
@@ -117,7 +117,7 @@ def download_model(model_name: str, model_id: str, output_dir: str) -> bool:
 
     except ImportError as e:
         print(f"   ❌ 라이브러리 오류: {e}")
-        print(f"      sentence-transformers 설치 필요: pip install sentence-transformers")
+        print("      sentence-transformers 설치 필요: pip install sentence-transformers")
         return False
     except Exception as e:
         print(f"   ❌ 다운로드 실패: {e}")
@@ -138,10 +138,7 @@ def verify_model(model_id: str, output_dir: str) -> bool:
     """
     model_path = os.path.join(output_dir, model_id.replace('/', '--'))
 
-    # 필수 파일 확인
-    required_files = ['config.json', 'pytorch_model.bin', 'tokenizer_config.json']
-    alt_files = ['model.safetensors']  # 대체 파일 (newer format)
-
+    # 필수 파일 확인 (구체 목록은 아래 인라인 검사로 수행)
     if not os.path.exists(model_path):
         return False
 

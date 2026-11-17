@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import json
-import time
 
 from flask import Blueprint, Response, jsonify, request, session, stream_with_context
 

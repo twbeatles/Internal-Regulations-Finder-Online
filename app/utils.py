@@ -1,17 +1,19 @@
 # -*- coding: utf-8 -*-
-import os
-import sys
-import logging
-import json
-import re
 import hashlib
+import json
+import logging
+import os
+import re
+import sys
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Tuple, Dict, Any, List, Union
 from enum import Enum
-from dataclasses import dataclass, field, asdict
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 
 from app.config import AppConfig
+
 
 def get_app_directory() -> str:
     """애플리케이션 실행 디렉토리 반환 (PyInstaller 호환)"""
@@ -193,7 +195,7 @@ class MemoryMonitor:
     def _check_psutil(cls) -> bool:
         if cls._psutil_available is None:
             try:
-                import psutil
+                __import__("psutil")
                 cls._psutil_available = True
             except ImportError:
                 cls._psutil_available = False

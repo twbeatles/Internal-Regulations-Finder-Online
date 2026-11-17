@@ -5,8 +5,9 @@ jsPDF, AutoTable, 글꼴 등을 다운로드하여 static 폴더에 저장합니
 """
 
 import os
+
 import requests
-import time
+
 
 def download_file(url, save_path):
     print(f"다운로드 중: {url} -> {save_path}")

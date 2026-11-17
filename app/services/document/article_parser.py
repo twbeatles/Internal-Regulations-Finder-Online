@@ -10,6 +10,7 @@ from app.services.document.patterns import (
     _RE_PARAGRAPH_SPLIT,
 )
 
+
 class ArticleParser:
     """규정 문서의 조문 구조 파싱
     

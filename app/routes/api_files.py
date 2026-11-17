@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 import os
 import zipfile
-import shutil
 from pathlib import Path
 from typing import Any, Optional, Tuple
+
 from flask import Blueprint, jsonify, request, send_file
-from app.services.search import qa_system
+
+from app.auth import admin_required
+from app.config import AppConfig
+from app.constants import ErrorMessages, HttpStatus
+from app.exceptions import DocumentNotFoundError
 from app.services.files import (
     acquire_file_lock,
     file_lock,
@@ -13,11 +17,8 @@ from app.services.files import (
     is_source_delete_allowed,
     preview_service,
 )
-from app.utils import logger, FileUtils, get_app_directory, api_error, api_success
-from app.config import AppConfig
-from app.constants import ErrorMessages, HttpStatus
-from app.exceptions import DocumentNotFoundError
-from app.auth import admin_required
+from app.services.search import qa_system
+from app.utils import FileUtils, api_error, api_success, get_app_directory, logger
 
 files_bp = Blueprint('files', __name__)
 

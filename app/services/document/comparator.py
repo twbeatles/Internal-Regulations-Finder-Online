@@ -2,6 +2,7 @@
 """문서 diff 비교."""
 from typing import Dict, Tuple
 
+
 class DocumentComparator:
     """두 문서 간 차이점 비교"""
     

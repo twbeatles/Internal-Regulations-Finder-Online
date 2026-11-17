@@ -1,0 +1,14 @@
+# Internal-Regulations-Finder-Online Ruff 단계적 도입 — S1_BASE (2026-11-16)
+# E402 2곳은 순서 의존 부트스트랩이라 이동 불가, 파일 단위 제외:
+# - app/services/search/__init__.py: 패키지 싱글턴(qa_system 인스턴스화) 후 facade 로드 (주석 명시).
+# - tests/test_export_onnx.py: sys.path 삽입 후 scripts/export_onnx 지연 import.
+line-length = 88
+preview = false
+
+[lint]
+select = ["E4", "E7", "E9", "F", "I", "B"]
+fixable = []
+
+[lint.per-file-ignores]
+"app/services/search/__init__.py" = ["E402"]
+"tests/test_export_onnx.py" = ["E402"]

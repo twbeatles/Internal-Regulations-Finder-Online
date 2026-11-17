@@ -6,6 +6,7 @@ from typing import List
 
 from app.services.document.patterns import _RE_KEYWORD_EXTRACT
 
+
 class TextHighlighter:
     # 정규식 패턴 캐시 (v2.6.1 성능 최적화)
     _pattern_cache = {}

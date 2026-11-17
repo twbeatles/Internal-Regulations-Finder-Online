@@ -5,6 +5,7 @@ from typing import Dict
 
 from app.utils import logger
 
+
 class SearchQueue:
     def __init__(self, max_concurrent: int = 10):
         self._semaphore = threading.Semaphore(max_concurrent)

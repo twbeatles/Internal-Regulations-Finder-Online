@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-import sqlite3
 import os
+import sqlite3
 import threading
+
 from app.utils import get_app_directory, logger
+
 
 class DBManager:
     """SQLite 데이터베이스 관리자 (싱글톤, 스레드 안전)

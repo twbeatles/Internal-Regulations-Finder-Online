@@ -3,11 +3,14 @@ import importlib
 import os
 import secrets
 from typing import Any
+
 from flask import Flask, jsonify, render_template, request
 from flask.json.provider import DefaultJSONProvider
+
 from app.config import AppConfig
-from app.utils import logger
 from app.services.db import db
+from app.utils import logger
+
 
 # NumPy 호환 JSON Provider
 class CustomJSONProvider(DefaultJSONProvider):
@@ -30,7 +33,7 @@ class CustomJSONProvider(DefaultJSONProvider):
 
 def _configure_cors(app: Flask, allowed_origins: list[str]) -> None:
     try:
-        cors = getattr(importlib.import_module("flask_cors"), "CORS")
+        cors = importlib.import_module("flask_cors").CORS
     except ImportError:
         if allowed_origins:
             logger.warning("flask-cors not installed; using built-in allowlist CORS fallback")
@@ -149,12 +152,12 @@ def create_app() -> Flask:
 
     # Blueprint 등록 (Lazy Import to avoid circular refs)
     try:
-        from app.routes.main_routes import main_bp
-        from app.routes.api_search import search_bp
         from app.routes.api_files import files_bp
-        from app.routes.api_tags import tags_bp
         from app.routes.api_revisions import revisions_bp
+        from app.routes.api_search import search_bp
         from app.routes.api_system import system_bp
+        from app.routes.api_tags import tags_bp
+        from app.routes.main_routes import main_bp
         from rag.routes import create_rag_blueprint
 
         app.register_blueprint(main_bp)

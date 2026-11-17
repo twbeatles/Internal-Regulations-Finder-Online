@@ -10,7 +10,6 @@ from rag.config import RagConfig
 from rag.llm.base import LLMProvider
 from rag.llm.factory import create_llm_provider
 
-
 SYSTEM_PROMPT = """당신은 사내 규정 전문 AI 어시스턴트입니다.
 
 규칙:

@@ -7,8 +7,8 @@ import threading
 from collections import Counter
 from typing import Dict, List, Tuple
 
-from app.constants import Patterns
 from app.services.search.normalization import prepare_bm25_query_terms
+
 
 class BM25Light:
     """

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from app.utils import TaskResult
-
 from app.services.search.qa_system import RegulationQASystem
+from app.utils import TaskResult
 
 
 class RegulationQAFacade:

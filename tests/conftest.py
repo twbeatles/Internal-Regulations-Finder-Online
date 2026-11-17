@@ -15,7 +15,7 @@ def _reset_shared_limiters():
     except Exception:
         pass
     try:
-        from app.services.search import rate_limiter, search_queue
+        from app.services.search import rate_limiter
 
         rate_limiter.reset()
     except Exception:

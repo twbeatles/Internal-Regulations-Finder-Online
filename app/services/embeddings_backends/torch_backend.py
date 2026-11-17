@@ -5,12 +5,12 @@ Torch 기반 임베딩 백엔드
 기존 search.py의 HuggingFaceEmbeddings 생성 로직을 모듈화
 """
 
-import os
 import importlib
+import os
 from typing import Any, List, Optional
 
-from app.utils import logger
 from app.exceptions import ModelLoadError, ModelOfflineError
+from app.utils import logger
 
 # Lazy import 변수
 HuggingFaceEmbeddings: Any | None = None
@@ -115,7 +115,7 @@ def create_torch_embeddings(
         try:
             torch = importlib.import_module('torch')
         except ImportError as e:
-            raise ModelLoadError(model_path_or_id, f"PyTorch 로드 실패: {e}")
+            raise ModelLoadError(model_path_or_id, f"PyTorch 로드 실패: {e}") from e
 
         # 디바이스 자동 감지
         if device is None:
@@ -174,4 +174,4 @@ def create_torch_embeddings(
         raise
     except Exception as e:
         logger.error(f"Torch 백엔드 초기화 실패: {e}")
-        raise ModelLoadError(model_path_or_id, str(e))
+        raise ModelLoadError(model_path_or_id, str(e)) from e

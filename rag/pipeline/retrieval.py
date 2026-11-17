@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.config import AppConfig
 from app.services.search import RegulationQASystem, qa_system
 from rag.config import RagConfig
 from rag.pipeline.query import ProcessedQuery

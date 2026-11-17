@@ -6,6 +6,7 @@ from typing import Any, Dict
 
 from app.utils import logger
 
+
 class RateLimiter:
     """IP 기반 요청 제한기
     

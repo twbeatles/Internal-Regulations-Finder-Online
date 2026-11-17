@@ -1,40 +1,21 @@
 # -*- coding: utf-8 -*-
 """RegulationQASystem — 인덱싱·검색 파사드."""
-import os
-import time
-import json
-import threading
-import logging
-import traceback
-import math
-import re
 import gc
+import json
+import os
 import shutil
-import importlib
-from dataclasses import dataclass
-from typing import List, Dict, Tuple, Optional, Any
-from collections import Counter
+import threading
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Tuple
 
 from app.config import AppConfig
-from app.utils import logger, FileInfo, FileStatus, TaskResult, FileUtils, get_app_directory
-from app.constants import ErrorMessages, SuccessMessages, InfoMessages, Limits, Weights, Patterns
-from app.exceptions import (
-    ModelNotLoadedError, ModelLoadError, ModelOfflineError,
-    SearchError, SearchTimeoutError, SearchRateLimitError, SearchQueueFullError,
-    DocumentExtractionError, IndexingError, CacheError
-)
-from app.services.db import db
+from app.exceptions import ModelLoadError, ModelOfflineError
 from app.services import search as _search_exports
-from app.services.document import DocumentExtractor, TextHighlighter, ArticleParser
-from app.services.metadata import TagManager
+from app.services.document import ArticleParser, DocumentExtractor, TextHighlighter
 from app.services.file_manager import RevisionTracker
-
-from app.services.search.langchain_lazy import _lazy_import_langchain, CharacterTextSplitter, HuggingFaceEmbeddings
+from app.services.metadata import TagManager
 from app.services.search.bm25 import BM25Light
 from app.services.search.cache import SearchCache
-from app.services.search.rate_limiter import RateLimiter
-from app.services.search.queue import SearchQueue
 from app.services.search.history import SearchHistory
 from app.services.search.hybrid_search import HybridSearchService
 from app.services.search.index import (
@@ -48,6 +29,15 @@ from app.services.search.index import (
     remember_file_details,
     save_cache,
     vector_index_service,
+)
+from app.services.search.langchain_lazy import _lazy_import_langchain
+from app.utils import (
+    FileInfo,
+    FileStatus,
+    FileUtils,
+    TaskResult,
+    get_app_directory,
+    logger,
 )
 
 _hybrid_search = HybridSearchService()
@@ -478,7 +468,8 @@ class RegulationQASystem:
             and os.path.exists(os.path.join(cache_dir, "index.faiss"))
         ):
             try:
-                if progress_cb: progress_cb(10, "캐시 로드...")
+                if progress_cb:
+                    progress_cb(10, "캐시 로드...")
                 from app.services.search.index.cache_store import (
                     get_stored_integrity,
                     verify_cache_integrity,
@@ -519,7 +510,8 @@ class RegulationQASystem:
         
         if not to_process:
             self._build_bm25()
-            if progress_cb: progress_cb(100, "완료!")
+            if progress_cb:
+                progress_cb(100, "완료!")
             return TaskResult(True, f"캐시에서 {len(cached)}개 파일 로드", 
                             {'chunks': len(self.documents), 'cached': len(cached), 'new': 0})
         
@@ -537,7 +529,8 @@ class RegulationQASystem:
                 return fp, fname, e, None
         
         extracted_results = []
-        if progress_cb: progress_cb(15, f"문서 추출 중... (병렬 처리)")
+        if progress_cb:
+            progress_cb(15, "문서 추출 중... (병렬 처리)")
         
         from concurrent.futures import as_completed
 
@@ -562,7 +555,8 @@ class RegulationQASystem:
                     progress = 15 + int((completed / len(to_process)) * 30)
                     progress_cb(progress, f"추출 완료: {completed}/{len(to_process)}")
         
-        if progress_cb: progress_cb(50, "텍스트 청킹 중...")
+        if progress_cb:
+            progress_cb(50, "텍스트 청킹 중...")
         
         for fp, fname, extracted, meta in extracted_results:
             if self._cancel_event.is_set():
@@ -645,7 +639,8 @@ class RegulationQASystem:
             
         # 벡터 인덱스 생성 (AI 모델이 있을 때만)
         if self.embedding_model and _search_exports.FAISS:
-            if progress_cb: progress_cb(75, "벡터 인덱스 생성...")
+            if progress_cb:
+                progress_cb(75, "벡터 인덱스 생성...")
             try:
                 if new_docs:
                     if self.vector_store:
@@ -657,20 +652,24 @@ class RegulationQASystem:
             except Exception as e:
                 logger.warning(f"벡터 인덱스 생성 실패 (BM25만 사용): {e}")
         else:
-            if progress_cb: progress_cb(75, "BM25 전용 모드...")
+            if progress_cb:
+                progress_cb(75, "BM25 전용 모드...")
         if self._cancel_event.is_set():
             return self._cancelled_result(progress_cb)
              
-        if progress_cb: progress_cb(85, "키워드 인덱스 생성...")
+        if progress_cb:
+            progress_cb(85, "키워드 인덱스 생성...")
         self._build_bm25()
         if self._cancel_event.is_set():
             return self._cancelled_result(progress_cb)
         
-        if progress_cb: progress_cb(90, "캐시 저장...")
+        if progress_cb:
+            progress_cb(90, "캐시 저장...")
         self._save_cache(cache_dir, cache_info, new_cache_info)
         
         gc.collect()
-        if progress_cb: progress_cb(100, "완료!")
+        if progress_cb:
+            progress_cb(100, "완료!")
         
         return TaskResult(
             True, f"{len(files) - len(failed)}개 처리 완료",
@@ -740,7 +739,8 @@ class RegulationQASystem:
             try:
                 def cb(p, msg): self._load_progress = f"{p}% {msg}"
                 res = self.process_documents(folder_path, files, cb, force_reindex=force_reindex)
-                if not res.success: self._load_error = res.message
+                if not res.success:
+                    self._load_error = res.message
                 
                 try:
                     os.makedirs(os.path.dirname(stats_path), exist_ok=True)

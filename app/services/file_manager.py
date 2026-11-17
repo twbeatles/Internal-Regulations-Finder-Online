@@ -1,17 +1,16 @@
 # -*- coding: utf-8 -*-
-import os
-import hashlib
-import json
-import threading
 import importlib
+import os
 import re
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
-from app.utils import logger, get_app_directory, FileUtils
+
 from app.config import AppConfig
 from app.services.db import db
 from app.services.document import DocumentComparator
+from app.utils import FileUtils, get_app_directory, logger
+
 
 class RevisionTracker:
     """규정 개정 이력 관리 (SQLite 기반)"""
@@ -188,8 +187,8 @@ class FolderWatcher:
         try:
             observers_module = importlib.import_module('watchdog.observers')
             events_module = importlib.import_module('watchdog.events')
-            observer_cls = getattr(observers_module, 'Observer')
-            file_system_event_handler = getattr(events_module, 'FileSystemEventHandler')
+            observer_cls = observers_module.Observer
+            file_system_event_handler = events_module.FileSystemEventHandler
             
             class RegulationEventHandler(file_system_event_handler):
                 def __init__(self, callback):

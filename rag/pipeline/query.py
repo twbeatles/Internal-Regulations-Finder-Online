@@ -6,7 +6,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from app.services.search.normalization import canonicalize_search_text, expand_search_text_variants
+from app.services.search.normalization import (
+    canonicalize_search_text,
+    expand_search_text_variants,
+)
 from rag.config import RagConfig
 from rag.pipeline.chunking import extract_article_number
 

@@ -1,26 +1,21 @@
 # -*- coding: utf-8 -*-
 """다양한 포맷 문서 텍스트 추출."""
-import os
-import re
-import logging
 import importlib
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.utils import logger, FileUtils
 from app.config import AppConfig
-from app.constants import ErrorMessages, Patterns, Limits
+from app.constants import ErrorMessages
 from app.services.parsers.hwp_adapter import HwpAdapter
-from app.services.parsers.hwpx_adapter import HwpxAdapter
-from app.services.parsers.kordoc_adapter import KordocAdapter
 from app.services.parsers.hwp_models import (
     ExtractedDocument,
     build_basic_metadata,
     build_diagnostics,
 )
-from app.exceptions import (
-    DocumentNotFoundError, DocumentExtractionError,
-    DocumentTypeError, DocumentEmptyError
-)
+from app.services.parsers.hwpx_adapter import HwpxAdapter
+from app.services.parsers.kordoc_adapter import KordocAdapter
+from app.utils import FileUtils, logger
+
 
 class DocumentExtractor:
     def __init__(self):
@@ -289,7 +284,7 @@ class DocumentExtractor:
         try:
             pytesseract = importlib.import_module('pytesseract')
             pdf2image = importlib.import_module('pdf2image')
-            convert_from_path = getattr(pdf2image, 'convert_from_path')
+            convert_from_path = pdf2image.convert_from_path
             
             # PDF를 이미지로 변환
             images = convert_from_path(path, dpi=150)

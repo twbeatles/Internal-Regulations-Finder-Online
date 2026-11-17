@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 from app.config import AppConfig
 from app.utils import logger
 
+
 class SearchCache:
     """LRU 기반 검색 캐시 (OrderedDict 사용으로 O(1) 성능)
     

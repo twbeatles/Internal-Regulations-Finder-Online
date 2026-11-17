@@ -11,7 +11,7 @@ from app.utils import FileUtils
 def normalize_doc_meta(qa) -> None:
     """doc_meta를 정규화합니다. 호출자가 qa._lock을 보유해야 합니다."""
     normalized_meta: List[Dict[str, Any]] = []
-    for doc_id, content in enumerate(qa.documents):
+    for doc_id, _content in enumerate(qa.documents):
         meta = {}
         if doc_id < len(qa.doc_meta) and isinstance(qa.doc_meta[doc_id], dict):
             meta = dict(qa.doc_meta[doc_id])

@@ -7,11 +7,10 @@
     pytest tests/test_search.py -v --cov=app
 """
 
-import pytest
-import time
 import threading
-from typing import Dict, Any, List
-from unittest.mock import MagicMock, patch
+import time
+
+import pytest
 
 
 class TestSearchCache:
@@ -364,7 +363,7 @@ class TestIntegration:
     
     def test_search_flow(self):
         """검색 플로우 통합 테스트"""
-        from app.services.search import SearchCache, RateLimiter, SearchQueue
+        from app.services.search import RateLimiter, SearchCache, SearchQueue
         
         cache = SearchCache(max_size=10, ttl_seconds=60)
         limiter = RateLimiter(requests_per_minute=100)
@@ -405,7 +404,7 @@ class TestLiteMode:
             qa.cleanup()
 
     def test_search_filter_file_id(self):
-        from app.services.search import RegulationQASystem, BM25Light
+        from app.services.search import BM25Light, RegulationQASystem
 
         qa = RegulationQASystem()
         try:
@@ -428,7 +427,7 @@ class TestLiteMode:
             qa.cleanup()
 
     def test_search_filter_file_name_not_polluted_by_unfiltered_cache(self):
-        from app.services.search import RegulationQASystem, BM25Light
+        from app.services.search import BM25Light, RegulationQASystem
 
         qa = RegulationQASystem()
         try:

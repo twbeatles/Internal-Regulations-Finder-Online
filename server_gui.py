@@ -5,28 +5,44 @@
 로그 기능 강화 + 관리자 비밀번호 설정
 """
 
+import hashlib
 import importlib
-import sys
+import json
+import logging
 import os
+import sys
 import threading
 import webbrowser
 import winreg
-import ctypes
-import json
-import hashlib
-import logging
-from typing import Any, Optional
 from datetime import datetime
+from typing import Any, Optional
 
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QAction, QCloseEvent, QColor, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QSystemTrayIcon, QMenu, QMessageBox,
-    QCheckBox, QGroupBox, QTextEdit, QFrame, QLineEdit, QDialog,
-    QDialogButtonBox, QFormLayout, QFileDialog, QSplashScreen, QProgressBar,
-    QComboBox
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSplashScreen,
+    QSystemTrayIcon,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread
-from PySide6.QtGui import QIcon, QAction, QFont, QColor, QPalette, QCloseEvent, QTextCharFormat, QPixmap
 
 # ============================================================================
 # 지연 로딩 패턴 - 무거운 모듈은 스플래시 후에 로드
@@ -46,8 +62,9 @@ def _load_heavy_modules():
     # 서버 모듈 import
     from app import create_app
     from app.config import AppConfig as _AppConfig
-    from app.utils import logger as _logger, get_app_directory
     from app.services.search import qa_system as _qa_system
+    from app.utils import get_app_directory
+    from app.utils import logger as _logger
     
     AppConfig = _AppConfig
     logger = _logger
@@ -388,7 +405,7 @@ class PortDialog(QDialog):
                 QMessageBox.warning(self, "오류", f"포트 {port}는 이미 사용 중입니다.")
                 return
             self.accept()
-        except ValueError as e:
+        except ValueError:
             QMessageBox.warning(self, "오류", "올바른 포트 번호를 입력하세요 (1024~65535).")
     
     def get_port(self) -> int:
@@ -553,7 +570,7 @@ class ServerThread(threading.Thread):
     def run(self):
         try:
             logger.info(f"🚀 서버 스레드 시작 (포트: {self.port})")
-            logger.info(f"🚀 서버 초기화 시작 (백그라운드)...")
+            logger.info("🚀 서버 초기화 시작 (백그라운드)...")
             
             # 서버 초기화 (비동기 실행)
             # 모델 로딩 등으로 인해 시간이 걸리므로 별도 스레드로 실행
@@ -565,7 +582,7 @@ class ServerThread(threading.Thread):
             
             # Waitress로 실행
             try:
-                serve = getattr(importlib.import_module("waitress"), "serve")
+                serve = importlib.import_module("waitress").serve
                 logger.info(f"✅ 서버 시작: http://localhost:{self.port}")
                 serve(
                     app,
@@ -1530,8 +1547,9 @@ class ModuleLoaderThread(QThread):
             self.progress.emit("AI 모델 확인 중...")
             
             # 설정 파일에서 오프라인 모드 확인
-            from app.utils import get_app_directory
             import json
+
+            from app.utils import get_app_directory
             settings_path = os.path.join(get_app_directory(), 'config', 'settings.json')
             
             offline_mode = False

@@ -7,8 +7,6 @@ import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 def _client():
     from app import create_app
@@ -27,7 +25,6 @@ def _login(client, password: str = "pw"):
 def test_initialize_rejects_when_loading(monkeypatch):
     from app.constants import ErrorMessages
     from app.services.search import qa_system
-    from app.utils import TaskResult
 
     monkeypatch.setattr(qa_system, "_is_loading", True, raising=False)
     result = qa_system.initialize("/tmp/does-not-matter-loading")
@@ -169,7 +166,6 @@ def test_validate_folder_path_accepts_real_dir(tmp_path):
 def test_zip_copy_enforces_actual_bytes(tmp_path, monkeypatch):
     """메타 file_size를 속인 ZIP도 실제 바이트로 차단."""
     from app import create_app
-    from app.config import AppConfig
     from app.services.search import qa_system
     from app.utils import TaskResult
 

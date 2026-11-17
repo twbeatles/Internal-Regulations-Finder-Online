@@ -68,8 +68,8 @@ def export_fp32(model_id: str, output_dir: str) -> str:
     try:
         optimum_ort = __import__("optimum.onnxruntime", fromlist=["ORTModelForFeatureExtraction"])
         transformers_module = __import__("transformers", fromlist=["AutoTokenizer"])
-    except ImportError:
-        raise RuntimeError("optimum[onnxruntime]가 필요합니다: pip install optimum[onnxruntime]")
+    except ImportError as e:
+        raise RuntimeError("optimum[onnxruntime]가 필요합니다: pip install optimum[onnxruntime]") from e
 
     os.makedirs(output_dir, exist_ok=True)
     print(f"🔄 ONNX export 중: {model_id} -> {output_dir}")
@@ -89,8 +89,8 @@ def quantize_int8(fp32_path: str, int8_path: str = "") -> str:
         quantization = __import__(
             "onnxruntime.quantization", fromlist=["quantize_dynamic", "QuantType"]
         )
-    except ImportError:
-        raise RuntimeError("onnxruntime이 필요합니다: pip install onnxruntime")
+    except ImportError as e:
+        raise RuntimeError("onnxruntime이 필요합니다: pip install onnxruntime") from e
 
     dest = int8_path or os.path.join(os.path.dirname(fp32_path), INT8_FILENAME)
     print(f"🔄 INT8 양자화 중: {fp32_path} -> {dest}")
@@ -114,7 +114,7 @@ def verify_onnx(model_id: str, output_dir: str, onnx_file: str = FP32_FILENAME) 
         transformers_module = __import__("transformers", fromlist=["AutoTokenizer"])
         ort = __import__("onnxruntime")
     except ImportError as e:
-        raise RuntimeError(f"검증 패키지 부족: {e}")
+        raise RuntimeError(f"검증 패키지 부족: {e}") from e
 
     sentences = [
         "연차 휴가는 1년에 15일이 부여됩니다.",

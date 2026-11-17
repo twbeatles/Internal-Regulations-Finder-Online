@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

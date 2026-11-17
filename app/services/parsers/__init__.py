@@ -1,5 +1,5 @@
-from .hwp_models import ExtractedDocument, ExtractedTable, ExtractedTableCell
 from .hwp_adapter import HwpAdapter
+from .hwp_models import ExtractedDocument, ExtractedTable, ExtractedTableCell
 from .hwpx_adapter import HwpxAdapter
 
 __all__ = [

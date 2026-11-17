@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 from app.services.db import db
 
+
 class SearchHistory:
     def add(self, query: str):
         """검색 히스토리에 쿼리 추가 (5분 내 중복 방지)"""

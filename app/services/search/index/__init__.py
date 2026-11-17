@@ -9,8 +9,15 @@ from app.services.search.index.cache_store import (
     save_cache,
 )
 from app.services.search.index.lifecycle import IndexLifecycle, index_lifecycle
-from app.services.search.index.meta import build_chunk_meta, normalize_doc_meta, remember_file_details
-from app.services.search.index.vector_index import VectorIndexService, vector_index_service
+from app.services.search.index.meta import (
+    build_chunk_meta,
+    normalize_doc_meta,
+    remember_file_details,
+)
+from app.services.search.index.vector_index import (
+    VectorIndexService,
+    vector_index_service,
+)
 
 __all__ = [
     "CACHE_KEY_MODE",

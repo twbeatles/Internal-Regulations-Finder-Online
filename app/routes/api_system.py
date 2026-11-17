@@ -3,13 +3,14 @@ import json
 import os
 
 from flask import Blueprint, jsonify, request, session
+
+from app.auth import admin_required
 from app.config import AppConfig
 from app.constants import ErrorMessages, HttpStatus
-from app.services.search import RateLimiter, qa_system
 from app.services.files.path_validation import validate_folder_path
-from app.utils import logger, get_app_directory
-from app.auth import admin_required
+from app.services.search import RateLimiter, qa_system
 from app.services.settings_store import get_settings_store, verify_admin_password
+from app.utils import logger
 
 system_bp = Blueprint('system', __name__)
 

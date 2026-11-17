@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """RAG 검색 파이프라인 테스트."""
 
-from unittest.mock import MagicMock
-
 from rag.pipeline.query import QueryProcessor
 from rag.pipeline.rerank import ChunkReranker
 from rag.schemas import RetrievedChunk

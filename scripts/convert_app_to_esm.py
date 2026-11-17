@@ -321,10 +321,6 @@ def main() -> None:
     with open(DST, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
 
-    shim = (
-        "/** @deprecated ESM: /static/js/bootstrap/main.js */\n"
-        "export * from './js/legacy/app.js';\n"
-    )
     with open(SRC, "w", encoding="utf-8", newline="\n") as f:
         f.write('/** Re-export shim — use type="module" bootstrap */\nimport "./js/legacy/app.js";\n')
 
