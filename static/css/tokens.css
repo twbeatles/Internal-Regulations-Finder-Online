@@ -1,6 +1,10 @@
 /* Design tokens */
 /* CSS 변수 */
 :root {
+    /* 브라우저 네이티브 UI(스크롤바·폼 컨트롤·캔버스)에 테마 지원 선언 */
+    color-scheme: light dark;
+    accent-color: var(--accent-primary);
+
     /* 색상 팔레트 (다크 테마 - 기본) */
     --bg-primary: #0a0a12;
     --bg-secondary: #12121a;

@@ -69,7 +69,7 @@ export const ChatManager = {
             const res = await fetch('/api/rag/conversations?limit=30', { credentials: 'same-origin' });
             const data = await res.json();
             const items = data?.data?.conversations || data?.conversations || [];
-            this.conversationListEl.innerHTML = '';
+            this.conversationListEl.replaceChildren();
             for (const conv of items) {
                 const li = document.createElement('li');
                 const btn = document.createElement('button');
@@ -97,7 +97,7 @@ export const ChatManager = {
 
             this.conversationId = conversationId;
             this.history = [];
-            this.messagesEl.innerHTML = '';
+            this.messagesEl.replaceChildren();
             this.citations = [];
             if (this.citationsEl) this.citationsEl.hidden = true;
             if (this.welcomeEl) this.welcomeEl.hidden = true;
@@ -118,9 +118,9 @@ export const ChatManager = {
         this.conversationId = null;
         this.history = [];
         this.citations = [];
-        if (this.messagesEl) this.messagesEl.innerHTML = '';
+        if (this.messagesEl) this.messagesEl.replaceChildren();
         if (this.citationsEl) {
-            this.citationsEl.innerHTML = '';
+            this.citationsEl.replaceChildren();
             this.citationsEl.hidden = true;
         }
         if (this.welcomeEl) this.welcomeEl.hidden = false;

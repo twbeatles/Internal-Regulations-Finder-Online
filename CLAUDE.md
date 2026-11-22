@@ -638,6 +638,17 @@ equirements.txt 하한을 2026-09-26 설치·테스트 검증 버전으로 상�
   - python -m pytest -q → 126 passed (시스템 + .venv 동일)
   - pyright 변경 파일 0 errors, *.spec py_compile 정상, ruff 711건은 변경 전후 동일(기존 이슈)
 
+### Maintenance Addendum (2026-11-22) — modern-web-guidance 전면 반영
+- `modern-web-guidance` legacy-scan → 12 findings(4 guides) 중 11건 수정, 1건 DROP(div 모달이라 `closedby` 불가).
+- 1차: 스크롤바 표준 속성+대비 교정(3:1 이상 실측), stagger `sibling-index()` 전환, `innerHTML=''` → `replaceChildren()` 7건.
+- 2차: 카탈로그 전수 조사 후 4종 추가 반영 — IME Enter 오제출 방지 4곳, `color-scheme` 메타·`:root` 선언·토글 동기화, `.modal-overlay` 스크롤 체이닝 격리.
+- 버그 수정: v3.0 리팩터에서 누락된 `highlightSafeText` 정의 복원(검색 렌더링 ReferenceError).
+- 상세: `docs/modern-web-guidance-adoption-plan.md`.
+- 현재 검증 기준:
+  - python -m pytest -q → 126 passed
+  - pyright 0 errors, ruff check 통과, scripts/check_utf8.py 통과, 수정 JS node --check 통과
+  - ruff format --check 미적용 파일 다수 존재(기존 상태, 본 변경 무관 — 수정 파일에 Python 없음)
+
 <!-- SPECKIT-AGENT-GUIDE:START -->
 
 ## Spec Kit / Spec-Driven Development (AI 에이전트 필독)

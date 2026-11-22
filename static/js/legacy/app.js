@@ -1381,6 +1381,8 @@ export const ThemeManager = {
 
     setTheme(theme, save = true) {
         document.documentElement.setAttribute('data-theme', theme);
+        // 네이티브 UI도 사이트 토글과 동기화 (시스템값이 아닌 사이트 테마 추종)
+        document.documentElement.style.colorScheme = theme;
 
         if (save) {
             localStorage.setItem(this.storageKey, theme);
@@ -1538,7 +1540,7 @@ export const Autocomplete = {
         this.dropdown = document.createElement('div');
         this.dropdown.id = 'autocomplete-dropdown';
         this.dropdown.className = 'autocomplete-dropdown';
-        this.dropdown.innerHTML = '';
+        this.dropdown.replaceChildren();
 
         // 검색 박스 컨테이너에 추가
         const searchBox = this.input.closest('.search-box');
@@ -1585,6 +1587,8 @@ export const Autocomplete = {
                 break;
             case 'Enter':
                 if (this.selectedIndex >= 0) {
+                    // IME 조합 중 Enter(확정키) 오선택 방지
+                    if (e.isComposing || e.keyCode === 229) break;
                     e.preventDefault();
                     this.selectCurrent();
                 }
@@ -1902,6 +1906,8 @@ export async function initSearch() {
 
         searchInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && Autocomplete.selectedIndex < 0) {
+                // IME 조합 중 Enter(확정키) 오제출 방지
+                if (e.isComposing || e.keyCode === 229) return;
                 Autocomplete.hide();
                 performSearch();
             }
@@ -2131,9 +2137,8 @@ export function renderSearchResults(results, query) {
         fragment.appendChild(card);
     });
 
-    // 한번의 DOM 조작으로 모두 추가
-    container.innerHTML = '';
-    container.appendChild(fragment);
+    // 한번의 DOM 조작으로 모두 추가 (원자적 교체)
+    container.replaceChildren(fragment);
 
     // 스타거 애니메이션 적용
     StaggerAnimation.apply(container, '.result-card', 0.08);
@@ -2148,6 +2153,34 @@ export function renderSearchResults(results, query) {
     // v2.0 네비게이션 갱신
     SearchResultNavigator.scan();
     HighlightNavigator.scan();
+}
+
+/**
+ * 검색어 안전 하이라이트 (XSS 방지: escape 후 <mark> 삽입)
+ * 미지원 브라우저용 CSS Custom Highlight API 폴백과 동일한 <mark> 방식
+ * @param {string} text - 원문
+ * @param {string} query - 검색어
+ * @returns {string} 하이라이트 HTML
+ */
+export function highlightSafeText(text, query) {
+    const source = String(text || '');
+    const keywords = Array.from(
+        new Set(
+            String(query || '')
+                .split(/\s+/)
+                .map(s => s.trim())
+                .filter(s => s.length >= 2)
+        )
+    ).sort((a, b) => b.length - a.length);
+
+    if (!keywords.length) return escapeHtml(source);
+
+    const pattern = new RegExp(`(${keywords.map(escapeRegExp).join('|')})`, 'gi');
+    const parts = source.split(pattern);
+    return parts.map((part, idx) => {
+        if (idx % 2 === 1) return `<mark>${escapeHtml(part)}</mark>`;
+        return escapeHtml(part);
+    }).join('');
 }
 
 /**
@@ -2316,7 +2349,8 @@ export async function initAdmin(options = {}) {
     const authInput = document.getElementById('auth-password');
     if (authInput && !authInput.dataset.boundEnter) {
         authInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') submitAdminAuth();
+            // IME 조합 중 Enter(확정키) 오제출 방지
+            if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) submitAdminAuth();
         });
         authInput.dataset.boundEnter = '1';
     }
@@ -3118,7 +3152,8 @@ export async function manageTags(fileId, filename = '') {
     };
 
     tagInput.addEventListener('keypress', async (e) => {
-        if (e.key === 'Enter') {
+        // IME 조합 중 Enter(확정키) 오제출 방지
+        if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
             const newTag = tagInput.value.trim();
             if (newTag && !currentTags.includes(newTag)) {
                 currentTags.push(newTag);

@@ -32,23 +32,46 @@ body {
     overflow-x: hidden;
 }
 
-/* 스크롤바 스타일 */
-::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+/* 스크롤바 스타일 (표준 속성 우선 + WebKit 폴백) */
+:root {
+    --scrollbar-thumb: #5b6b82;
+    --scrollbar-track: var(--bg-secondary);
+    --scrollbar-thumb-hover: var(--accent-primary);
 }
 
-::-webkit-scrollbar-track {
-    background: var(--bg-secondary);
+[data-theme="light"] {
+    --scrollbar-thumb: #64748b;
+    --scrollbar-thumb-hover: #e11d48;
 }
 
-::-webkit-scrollbar-thumb {
-    background: var(--accent-secondary);
-    border-radius: 4px;
+html {
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+    scrollbar-width: thin;
 }
 
-::-webkit-scrollbar-thumb:hover {
-    background: var(--accent-primary);
+/* 표준 미지원 브라우저용 폴백 */
+@supports not (scrollbar-color: auto) {
+    html {
+        scrollbar-width: auto;
+    }
+
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: var(--scrollbar-track);
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: var(--scrollbar-thumb);
+        border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: var(--scrollbar-thumb-hover);
+    }
 }
 
 /* 앱 컨테이너 */
@@ -764,6 +787,8 @@ button:focus-visible {
     width: 100%;
     height: 100%;
     background: rgba(0, 0, 0, 0.7);
+    /* 모달 위 스크롤 제스처가 뒤 페이지로 전파되지 않도록 격리 (progressive enhancement) */
+    overscroll-behavior: contain;
     backdrop-filter: blur(5px);
     display: flex;
     justify-content: center;
@@ -2250,45 +2275,59 @@ mark.highlight.active {
     }
 }
 
-/* 결과 카드 등장 stagger 효과 */
-.result-card:nth-child(1) {
-    animation-delay: 0s;
+/* 결과 카드 등장 stagger 효과 (sibling-index 기반, 표준 우선) */
+.result-card {
+    --stagger-time: 0.05s;
 }
 
-.result-card:nth-child(2) {
-    animation-delay: 0.05s;
+/* 지원 브라우저: 형제 순서에 비례한 단일 규칙 (0s 시작, 0.05s 간격 유지) */
+@supports (animation-delay: calc(sibling-index() * 0.05s)) {
+    .result-card {
+        animation-delay: calc((sibling-index() - 1) * var(--stagger-time));
+    }
 }
 
-.result-card:nth-child(3) {
-    animation-delay: 0.1s;
-}
+/* 미지원 브라우저용 폴백: 높은 명시도가 표준 규칙을 덮지 않도록 격리 */
+@supports not (animation-delay: calc(sibling-index() * 0.05s)) {
+    .result-card:nth-child(1) {
+        animation-delay: 0s;
+    }
 
-.result-card:nth-child(4) {
-    animation-delay: 0.15s;
-}
+    .result-card:nth-child(2) {
+        animation-delay: 0.05s;
+    }
 
-.result-card:nth-child(5) {
-    animation-delay: 0.2s;
-}
+    .result-card:nth-child(3) {
+        animation-delay: 0.1s;
+    }
 
-.result-card:nth-child(6) {
-    animation-delay: 0.25s;
-}
+    .result-card:nth-child(4) {
+        animation-delay: 0.15s;
+    }
 
-.result-card:nth-child(7) {
-    animation-delay: 0.3s;
-}
+    .result-card:nth-child(5) {
+        animation-delay: 0.2s;
+    }
 
-.result-card:nth-child(8) {
-    animation-delay: 0.35s;
-}
+    .result-card:nth-child(6) {
+        animation-delay: 0.25s;
+    }
 
-.result-card:nth-child(9) {
-    animation-delay: 0.4s;
-}
+    .result-card:nth-child(7) {
+        animation-delay: 0.3s;
+    }
 
-.result-card:nth-child(10) {
-    animation-delay: 0.45s;
+    .result-card:nth-child(8) {
+        animation-delay: 0.35s;
+    }
+
+    .result-card:nth-child(9) {
+        animation-delay: 0.4s;
+    }
+
+    .result-card:nth-child(10) {
+        animation-delay: 0.45s;
+    }
 }
 
 /* ==========================================================================

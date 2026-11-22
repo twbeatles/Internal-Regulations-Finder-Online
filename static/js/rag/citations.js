@@ -6,7 +6,7 @@ import { escapeHtml } from '../core/utils.js';
 export const CitationRenderer = {
     renderList(citations, container) {
         if (!container) return;
-        container.innerHTML = '';
+        container.replaceChildren();
         if (!citations || !citations.length) {
             container.hidden = true;
             return;
