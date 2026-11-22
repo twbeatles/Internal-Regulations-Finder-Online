@@ -644,6 +644,7 @@ equirements.txt 하한을 2026-09-26 설치·테스트 검증 버전으로 상�
 - 2차: 카탈로그 전수 조사 후 4종 추가 반영 — IME Enter 오제출 방지 4곳, `color-scheme` 메타·`:root` 선언·토글 동기화, `.modal-overlay` 스크롤 체이닝 격리.
 - 버그 수정: v3.0 리팩터에서 누락된 `highlightSafeText` 정의 복원(검색 렌더링 ReferenceError).
 - 상세: `docs/modern-web-guidance-adoption-plan.md`.
+- 환경 이슈 후속 수정(fa45acb): `rag/routes/__init__` 지연 로딩으로 순환 import 해소, 시스템 Python에 `flask-cors`/`waitress` 설치(요구 하한 충족).
 - 현재 검증 기준:
   - python -m pytest -q → 126 passed
   - pyright 0 errors, ruff check 통과, scripts/check_utf8.py 통과, 수정 JS node --check 통과
